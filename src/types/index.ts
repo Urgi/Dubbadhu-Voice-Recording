@@ -19,9 +19,11 @@ export type Series = {
   language: string
 }
 
+export type AuthRole = 'admin' | 'voice'
+
 export type RootStackParamList = {
   Login: undefined
-  ModeSelect: undefined
+  ModeSelect: { role: AuthRole }
   AdminWordInput: undefined
   VoiceActorQueue: undefined
   Recording: undefined

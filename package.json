@@ -1,0 +1,29 @@
+{
+  "name": "dubbadhu-voice-recording",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "@react-navigation/native": "^7.1.34",
+    "@react-navigation/stack": "^7.8.6",
+    "@supabase/supabase-js": "^2.99.3",
+    "expo": "~55.0.8",
+    "expo-av": "^16.0.8",
+    "expo-file-system": "^55.0.11",
+    "expo-status-bar": "~55.0.4",
+    "react": "19.2.0",
+    "react-native": "0.83.2",
+    "react-native-safe-area-context": "^5.7.0",
+    "react-native-screens": "^4.24.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~5.9.2"
+  },
+  "private": true
+}

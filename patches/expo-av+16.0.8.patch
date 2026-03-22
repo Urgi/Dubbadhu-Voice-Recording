@@ -1,0 +1,259 @@
+diff --git a/node_modules/expo-av/ios/EXAV/EXAV.h b/node_modules/expo-av/ios/EXAV/EXAV.h
+index 42a79e1..c4c510d 100644
+--- a/node_modules/expo-av/ios/EXAV/EXAV.h
++++ b/node_modules/expo-av/ios/EXAV/EXAV.h
+@@ -7,7 +7,6 @@
+ #import <ExpoModulesCore/EXModuleRegistryConsumer.h>
+ #import <ExpoModulesCore/EXAppLifecycleListener.h>
+ #import <ExpoModulesCore/EXExportedModule.h>
+-#import <ExpoModulesCore/EXEventEmitter.h>
+ #import <EXAV/EXAVObject.h>
+ 
+ typedef NS_OPTIONS(NSUInteger, EXAudioInterruptionMode)
+@@ -57,7 +56,7 @@ typedef NS_OPTIONS(NSUInteger, EXAudioRecordingOptionBitRateStrategy)
+ 
+ @end
+ 
+-@interface EXAV : EXExportedModule <RCTBridgeModule, EXEventEmitter, EXAppLifecycleListener, EXModuleRegistryConsumer, EXAVInterface>
++@interface EXAV : EXExportedModule <RCTBridgeModule, EXAppLifecycleListener, EXModuleRegistryConsumer, EXAVInterface>
+ 
+ - (void)handleMediaServicesReset:(NSNotification *)notification;
+ - (void)handleAudioSessionInterruption:(NSNotification *)notification;
+diff --git a/node_modules/expo-av/ios/EXAV/EXAV.m b/node_modules/expo-av/ios/EXAV/EXAV.m
+index 7153d28..aff8d98 100644
+--- a/node_modules/expo-av/ios/EXAV/EXAV.m
++++ b/node_modules/expo-av/ios/EXAV/EXAV.m
+@@ -2,11 +2,13 @@
+ 
+ #import <AVFoundation/AVFoundation.h>
+ 
++#import "EXAVCompatMacros.h"
+ #import <ExpoModulesCore/EXUIManager.h>
+-#import <ExpoModulesCore/EXEventEmitterService.h>
++#import <React/RCTBridge.h>
+ #import <ExpoModulesCore/EXAppLifecycleService.h>
+ #import <ExpoModulesCore/EXFileSystemInterface.h>
+ #import <ExpoModulesCore/EXPermissionsInterface.h>
++#import <ExpoModulesCore/EXPermissionsService.h>
+ #import <ExpoModulesCore/EXPermissionsMethodsDelegate.h>
+ #import <ExpoModulesCore/EXJavaScriptContextProvider.h>
+ 
+@@ -78,7 +80,8 @@ NSString *const EXDidUpdateMetadataEventName = @"didUpdateMetadata";
+ @property (nonatomic, assign) int audioRecorderStartTimestamp;
+ 
+ @property (nonatomic, weak) EXModuleRegistry *expoModuleRegistry;
+-@property (nonatomic, weak) id<EXPermissionsInterface> permissionsManager;
++/** Must be strong when falling back to `[EXPermissionsService new]` — a weak ref does not retain and the service deallocates before the next call. */
++@property (nonatomic, strong) id<EXPermissionsInterface> permissionsManager;
+ 
+ @end
+ 
+@@ -144,6 +147,23 @@ EX_EXPORT_MODULE(ExponentAV);
+   };
+ }
+ 
++/// Resolves `EXPermissionsInterface` and registers mic requesters. Safe to call before `setModuleRegistry:` (JS may request permissions first).
++- (void)ensurePermissionsManager
++{
++  if (_permissionsManager != nil) {
++    return;
++  }
++  id<EXPermissionsInterface> resolved = nil;
++  if (_expoModuleRegistry != nil) {
++    resolved = [_expoModuleRegistry getModuleImplementingProtocol:@protocol(EXPermissionsInterface)];
++  }
++  if (resolved == nil) {
++    resolved = [EXPermissionsService new];
++  }
++  _permissionsManager = resolved;
++  [EXPermissionsMethodsDelegate registerRequesters:@[[EXAudioRecordingPermissionRequester new]] withPermissionsManager:_permissionsManager];
++}
++
+ #pragma mark - Expo experience lifecycle
+ 
+ - (void)setModuleRegistry:(EXModuleRegistry *)expoModuleRegistry
+@@ -155,8 +175,7 @@ EX_EXPORT_MODULE(ExponentAV);
+     [_kernelAudioSessionManagerDelegate moduleDidForeground:self];
+   }
+   [[_expoModuleRegistry getModuleImplementingProtocol:@protocol(EXAppLifecycleService)] registerAppLifecycleListener:self];
+-  _permissionsManager = [_expoModuleRegistry getModuleImplementingProtocol:@protocol(EXPermissionsInterface)];
+-  [EXPermissionsMethodsDelegate registerRequesters:@[[EXAudioRecordingPermissionRequester new]] withPermissionsManager:_permissionsManager];
++  [self ensurePermissionsManager];
+ }
+ 
+ - (void)onAppForegrounded
+@@ -751,7 +770,13 @@ EX_EXPORT_METHOD_AS(loadForSound,
+ 
+ - (void)sendEventWithName:(NSString *)eventName body:(NSDictionary *)body
+ {
+-  [[_expoModuleRegistry getModuleImplementingProtocol:@protocol(EXEventEmitterService)] sendEventWithName:eventName body:body];
++  // Expo SDK 55 removed EXEventEmitterService from ExpoModulesCore; emit via the React bridge.
++  if (_bridge) {
++    [_bridge enqueueJSCall:@"RCTDeviceEventEmitter"
++                    method:@"emit"
++                      args:@[eventName, body ?: @{}]
++                completion:NULL];
++  }
+ }
+ 
+ EX_EXPORT_METHOD_AS(unloadForSound,
+@@ -866,6 +891,7 @@ EX_EXPORT_METHOD_AS(getPermissionsAsync,
+                     getPermissionsAsync:(EXPromiseResolveBlock)resolve
+                     rejecter:(EXPromiseRejectBlock)reject)
+ {
++  [self ensurePermissionsManager];
+   [EXPermissionsMethodsDelegate getPermissionWithPermissionsManager:_permissionsManager
+                                                       withRequester:[EXAudioRecordingPermissionRequester class]
+                                                             resolve:resolve
+@@ -876,6 +902,7 @@ EX_EXPORT_METHOD_AS(requestPermissionsAsync,
+                     requestPermissionsAsync:(EXPromiseResolveBlock)resolve
+                     rejecter:(EXPromiseRejectBlock)reject)
+ {
++  [self ensurePermissionsManager];
+   [EXPermissionsMethodsDelegate askForPermissionWithPermissionsManager:_permissionsManager
+                                                          withRequester:[EXAudioRecordingPermissionRequester class]
+                                                                resolve:resolve
+@@ -887,6 +914,7 @@ EX_EXPORT_METHOD_AS(prepareAudioRecorder,
+                     resolver:(EXPromiseResolveBlock)resolve
+                     rejecter:(EXPromiseRejectBlock)reject)
+ {
++  [self ensurePermissionsManager];
+   _mediaServicesDidReset = false;
+   if (![_permissionsManager hasGrantedPermissionUsingRequesterClass:[EXAudioRecordingPermissionRequester class]]) {
+     reject(@"E_MISSING_PERMISSION", @"Missing audio recording permission.", nil);
+@@ -933,6 +961,7 @@ EX_EXPORT_METHOD_AS(startAudioRecording,
+                     startAudioRecording:(EXPromiseResolveBlock)resolve
+                     rejecter:(EXPromiseRejectBlock)reject)
+ {
++  [self ensurePermissionsManager];
+   if (![_permissionsManager hasGrantedPermissionUsingRequesterClass:[EXAudioRecordingPermissionRequester class]]) {
+     reject(@"E_MISSING_PERMISSION", @"Missing audio recording permission.", nil);
+     return;
+@@ -1013,8 +1042,8 @@ EX_EXPORT_METHOD_AS(unloadAudioRecorder,
+ }
+ 
+ EX_EXPORT_METHOD_AS(getAvailableInputs,
+-                    resolver:(UMPromiseResolveBlock)resolve
+-                    rejecter:(UMPromiseRejectBlock)reject)
++                    resolver:(EXPromiseResolveBlock)resolve
++                    rejecter:(EXPromiseRejectBlock)reject)
+ {
+   NSMutableArray *inputs = [NSMutableArray new];
+   for (AVAudioSessionPortDescription *desc in [_kernelAudioSessionManagerDelegate availableInputs]){
+@@ -1028,8 +1057,8 @@ EX_EXPORT_METHOD_AS(getAvailableInputs,
+ }
+ 
+ EX_EXPORT_METHOD_AS(getCurrentInput,
+-                    getCurrentInput:(UMPromiseResolveBlock)resolve
+-                    rejecter:(UMPromiseRejectBlock)reject)
++                    getCurrentInput:(EXPromiseResolveBlock)resolve
++                    rejecter:(EXPromiseRejectBlock)reject)
+ {
+   AVAudioSessionPortDescription *desc = [_kernelAudioSessionManagerDelegate activeInput];
+   if (desc) {
+@@ -1045,8 +1074,8 @@ EX_EXPORT_METHOD_AS(getCurrentInput,
+ 
+ EX_EXPORT_METHOD_AS(setInput,
+                     setInput:(NSString*)input
+-                    resolver:(UMPromiseResolveBlock)resolve
+-                    rejecter:(UMPromiseRejectBlock)reject)
++                    resolver:(EXPromiseResolveBlock)resolve
++                    rejecter:(EXPromiseRejectBlock)reject)
+ {
+   AVAudioSessionPortDescription* preferredInput = nil;
+   for (AVAudioSessionPortDescription *desc in [_kernelAudioSessionManagerDelegate availableInputs]){
+diff --git a/node_modules/expo-av/ios/EXAV/EXAVCompatMacros.h b/node_modules/expo-av/ios/EXAV/EXAVCompatMacros.h
+new file mode 100644
+index 0000000..22bd736
+--- /dev/null
++++ b/node_modules/expo-av/ios/EXAV/EXAVCompatMacros.h
+@@ -0,0 +1,17 @@
++// Shims for macros removed from ExpoModulesCore in SDK 55+ (EXLog*, EXErrorWithMessage).
++#import <Foundation/Foundation.h>
++
++#ifndef EXAVCompatMacros_h
++#define EXAVCompatMacros_h
++
++#define EXLogWarn(...) NSLog(__VA_ARGS__)
++#define EXLogError(...) NSLog(__VA_ARGS__)
++#define EXLogInfo(...) NSLog(__VA_ARGS__)
++
++static inline NSError *EXAVNSErrorFromMessage(NSString *msg) {
++  return [NSError errorWithDomain:@"EXAV" code:0 userInfo:@{NSLocalizedDescriptionKey: msg}];
++}
++
++#define EXErrorWithMessage(msg) EXAVNSErrorFromMessage(msg)
++
++#endif
+diff --git a/node_modules/expo-av/ios/EXAV/EXAVPlayerData.m b/node_modules/expo-av/ios/EXAV/EXAVPlayerData.m
+index 6f6998d..b6312e6 100644
+--- a/node_modules/expo-av/ios/EXAV/EXAVPlayerData.m
++++ b/node_modules/expo-av/ios/EXAV/EXAVPlayerData.m
+@@ -1,6 +1,7 @@
+ // Copyright 2017-present 650 Industries. All rights reserved.
+ 
+ #import <EXAV/EXAVPlayerData.h>
++#import "EXAVCompatMacros.h"
+ #import <MobileCoreServices/MobileCoreServices.h>
+ 
+ // This struct is passed between the MTAudioProcessingTap callbacks.
+diff --git a/node_modules/expo-av/ios/EXAV/EXAVTV.m b/node_modules/expo-av/ios/EXAV/EXAVTV.m
+index b6fccda..938766a 100644
+--- a/node_modules/expo-av/ios/EXAV/EXAVTV.m
++++ b/node_modules/expo-av/ios/EXAV/EXAVTV.m
+@@ -2,8 +2,9 @@
+ 
+ #import <AVFoundation/AVFoundation.h>
+ 
++#import "EXAVCompatMacros.h"
+ #import <ExpoModulesCore/EXUIManager.h>
+-#import <ExpoModulesCore/EXEventEmitterService.h>
++#import <React/RCTBridge.h>
+ #import <ExpoModulesCore/EXAppLifecycleService.h>
+ #import <ExpoModulesCore/EXFileSystemInterface.h>
+ #import <ExpoModulesCore/EXPermissionsInterface.h>
+@@ -547,7 +548,12 @@ EX_EXPORT_METHOD_AS(loadForSound,
+ 
+ - (void)sendEventWithName:(NSString *)eventName body:(NSDictionary *)body
+ {
+-  [[_expoModuleRegistry getModuleImplementingProtocol:@protocol(EXEventEmitterService)] sendEventWithName:eventName body:body];
++  if (_bridge) {
++    [_bridge enqueueJSCall:@"RCTDeviceEventEmitter"
++                    method:@"emit"
++                      args:@[eventName, body ?: @{}]
++                completion:NULL];
++  }
+ }
+ 
+ EX_EXPORT_METHOD_AS(unloadForSound,
+diff --git a/node_modules/expo-av/ios/EXAV/EXAudioRecordingPermissionRequester.m b/node_modules/expo-av/ios/EXAV/EXAudioRecordingPermissionRequester.m
+index 7d8375a..b99ea44 100644
+--- a/node_modules/expo-av/ios/EXAV/EXAudioRecordingPermissionRequester.m
++++ b/node_modules/expo-av/ios/EXAV/EXAudioRecordingPermissionRequester.m
+@@ -27,7 +27,7 @@ static SEL recordRecordPermissionSelector;
+ 
+   NSString *microphoneUsageDescription = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"NSMicrophoneUsageDescription"];
+   if (!microphoneUsageDescription) {
+-    EXFatal(EXErrorWithMessage(@"This app is missing NSMicrophoneUsageDescription, so audio services will fail. Add one of these keys to your bundle's Info.plist."));
++    NSLog(@"[EXAV] Missing NSMicrophoneUsageDescription — add it to Info.plist for audio recording.");
+     systemStatus = AVAudioSessionRecordPermissionDenied;
+   } else {
+     systemStatus = [[AVAudioSession sharedInstance] recordPermission];
+diff --git a/node_modules/expo-av/ios/EXAV/Video/EXVideoView.h b/node_modules/expo-av/ios/EXAV/Video/EXVideoView.h
+index f7ff4ee..0476c48 100644
+--- a/node_modules/expo-av/ios/EXAV/Video/EXVideoView.h
++++ b/node_modules/expo-av/ios/EXAV/Video/EXVideoView.h
+@@ -1,12 +1,11 @@
+ // Copyright 2015-present 650 Industries. All rights reserved.
+ 
+ #import <ExpoModulesCore/EXModuleRegistry.h>
+-#import <ExpoModulesCore/EXLegacyExpoViewProtocol.h>
+ 
+ #import <EXAV/EXAVObject.h>
+ #import <EXAV/EXVideoPlayerViewControllerDelegate.h>
+ 
+-@interface EXVideoView : UIView <EXVideoPlayerViewControllerDelegate, AVPlayerViewControllerDelegate, EXAVObject, EXLegacyExpoViewProtocol>
++@interface EXVideoView : UIView <EXVideoPlayerViewControllerDelegate, AVPlayerViewControllerDelegate, EXAVObject>
+ 
+ typedef NS_OPTIONS(NSUInteger, EXVideoFullscreenUpdate)
+ {

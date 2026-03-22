@@ -1,23 +1,24 @@
 import { createClient } from '@supabase/supabase-js'
-import type { RecordingWord, Series } from '../types'
+import type { RecordingWord } from '../types'
+import { getExpoPublicSupabaseAnonKey, getExpoPublicSupabaseUrl } from './expoPublicEnv'
 
-const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co'
-const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'
+// Use EXPO_PUBLIC_* in .env; also mirrored in app.config.js → extra for native/Xcode embeds.
+const SUPABASE_URL = getExpoPublicSupabaseUrl()
+const SUPABASE_ANON_KEY = getExpoPublicSupabaseAnonKey()
+
+if (__DEV__ && (!SUPABASE_URL || !SUPABASE_ANON_KEY)) {
+  console.warn(
+    '[supabase] Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in .env, then restart Expo.',
+  )
+}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-export const recordingWordsQuery = () => supabase.from('recording_words').select('*')
+export const wordsQuery = () => supabase.from('words').select('*')
 
-export const seriesQuery = () => supabase.from('series').select('*')
-
-export const getRecordingWords = async () => {
-  const { data, error } = await recordingWordsQuery()
+export const getWords = async () => {
+  const { data, error } = await wordsQuery()
   return { data: data as RecordingWord[] | null, error }
-}
-
-export const getSeries = async () => {
-  const { data, error } = await seriesQuery()
-  return { data: data as Series[] | null, error }
 }
 
 export default supabase

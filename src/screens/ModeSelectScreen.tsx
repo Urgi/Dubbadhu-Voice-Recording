@@ -32,7 +32,7 @@ export default function ModeSelectScreen({ navigation, route }: Props) {
 
       <Pressable
         style={[styles.card, !isAdmin && styles.cardDisabled]}
-        onPress={() => navigation.navigate('AdminWordInput')}
+        onPress={() => navigation.navigate('AdminSeriesList')}
         disabled={!isAdmin}
       >
         <Text style={[styles.cardTitle, !isAdmin && styles.textDisabled]}>Admin</Text>
@@ -43,7 +43,7 @@ export default function ModeSelectScreen({ navigation, route }: Props) {
 
       <Pressable
         style={[styles.card, !isVoice && styles.cardDisabled]}
-        onPress={() => navigation.navigate('VoiceActorQueue')}
+        onPress={() => navigation.navigate('VoiceActorDashboard')}
         disabled={!isVoice}
       >
         <Text style={[styles.cardTitle, !isVoice && styles.textDisabled]}>Voice Actor</Text>

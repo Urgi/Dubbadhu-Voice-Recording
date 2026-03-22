@@ -1,9 +1,15 @@
-export type RecordingStatus = 'pending' | 'recorded' | 'approved' | 'rejected'
+/** If Supabase uses an enum for `words.status`, add value `rerecord_requested` there too. */
+export type RecordingStatus =
+  | 'pending'
+  | 'recorded'
+  | 'approved'
+  | 'rejected'
+  | 'rerecord_requested'
 
 export type RecordingWord = {
   id: string
-  series_id: string
   word: string
+  series: string
   language: string
   slow_audio_url: string | null
   fast_audio_url: string | null
@@ -13,19 +19,18 @@ export type RecordingWord = {
   created_at: string
 }
 
-export type Series = {
-  id: string
-  name: string
-  language: string
-}
-
 export type AuthRole = 'admin' | 'voice'
 
 export type RootStackParamList = {
   Login: undefined
   ModeSelect: { role: AuthRole }
-  AdminWordInput: undefined
-  VoiceActorQueue: undefined
-  Recording: undefined
-  Review: undefined
+  AdminSeriesList: undefined
+  AdminSeriesDetail: { seriesName: string; language: string }
+  VoiceActorDashboard: undefined
+  Recording: {
+    words: RecordingWord[]
+    /** When re-recording one word from Review, merge back into this list on finish */
+    mergeIntoSession?: RecordingWord[]
+  }
+  Review: { recordedWords: RecordingWord[] }
 }

@@ -1,13 +1,195 @@
-import { Text, View } from 'react-native'
+import { useLayoutEffect, useState } from 'react'
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
-import type { RootStackParamList } from '../types'
+import { useRemoteAudioUrl } from '../hooks/useRemoteAudioUrl'
+import type { RecordingWord, RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'Review'>
 
-export default function ReviewScreen({}: Props) {
+export default function ReviewScreen({ navigation, route }: Props) {
+  const { recordedWords } = route.params
+  const [submitted, setSubmitted] = useState(false)
+  const { playUrl, stop, playingId } = useRemoteAudioUrl()
+
+  useLayoutEffect(() => {
+    navigation.setOptions({ title: 'Review & Submit' })
+  }, [navigation])
+
+  const onReRecord = (item: RecordingWord) => {
+    void stop()
+    navigation.replace('Recording', {
+      words: [item],
+      mergeIntoSession: recordedWords,
+    })
+  }
+
+  const onSubmitAll = () => {
+    setSubmitted(true)
+  }
+
+  const renderItem = ({ item }: { item: RecordingWord }) => (
+    <View style={styles.row}>
+      <View style={styles.rowMain}>
+        <Text style={styles.word}>{item.word}</Text>
+        <Text style={styles.series}>{item.series}</Text>
+        <View style={styles.actions}>
+          <Pressable
+            style={styles.pillBtn}
+            onPress={() => void playUrl(item.slow_audio_url, `${item.id}-slow`)}
+          >
+            <Text style={styles.pillBtnText}>
+              {playingId === `${item.id}-slow` ? 'Stop slow' : 'Play slow'}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={styles.pillBtn}
+            onPress={() => void playUrl(item.fast_audio_url, `${item.id}-fast`)}
+          >
+            <Text style={styles.pillBtnText}>
+              {playingId === `${item.id}-fast` ? 'Stop fast' : 'Play fast'}
+            </Text>
+          </Pressable>
+        </View>
+        <Pressable onPress={() => onReRecord(item)}>
+          <Text style={styles.reRecord}>Re-record</Text>
+        </Pressable>
+      </View>
+    </View>
+  )
+
+  if (submitted) {
+    return (
+      <View style={styles.screen}>
+        <Text style={styles.successTitle}>
+          {recordedWords.length} recordings submitted! Great work.
+        </Text>
+        <Pressable
+          style={styles.doneBtn}
+          onPress={() => {
+            if (navigation.canGoBack()) {
+              navigation.pop(2)
+            } else {
+              navigation.navigate('VoiceActorDashboard')
+            }
+          }}
+        >
+          <Text style={styles.doneBtnText}>Back to studio</Text>
+        </Pressable>
+      </View>
+    )
+  }
+
   return (
-    <View>
-      <Text>ReviewScreen</Text>
+    <View style={styles.screen}>
+      <Text style={styles.title}>Review & Submit</Text>
+      <Text style={styles.subtitle}>{recordedWords.length} words recorded this session</Text>
+      <FlatList
+        data={recordedWords}
+        keyExtractor={(item) => item.id}
+        renderItem={renderItem}
+        contentContainerStyle={styles.list}
+      />
+      <Pressable style={styles.submitBtn} onPress={onSubmitAll}>
+        <Text style={styles.submitBtnText}>Submit All</Text>
+      </Pressable>
     </View>
   )
 }
+
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: '#0a0a0a',
+    padding: 20,
+    paddingBottom: 28,
+  },
+  title: {
+    color: '#ffffff',
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  subtitle: {
+    color: '#888888',
+    fontSize: 15,
+    marginTop: 6,
+    marginBottom: 16,
+  },
+  list: {
+    paddingBottom: 16,
+  },
+  row: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+  },
+  rowMain: {},
+  word: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  series: {
+    color: '#888888',
+    fontSize: 13,
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  actions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  pillBtn: {
+    backgroundColor: '#2e1064',
+    borderWidth: 1,
+    borderColor: '#7C3AED',
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  pillBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  reRecord: {
+    color: '#888888',
+    fontSize: 14,
+    marginTop: 4,
+  },
+  submitBtn: {
+    backgroundColor: '#7C3AED',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  submitBtnText: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  successTitle: {
+    color: '#ffffff',
+    fontSize: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginTop: 40,
+    marginBottom: 24,
+  },
+  doneBtn: {
+    backgroundColor: '#7C3AED',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    alignSelf: 'center',
+    paddingHorizontal: 32,
+  },
+  doneBtnText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+})

@@ -3,6 +3,7 @@
 ## What we fixed in the repo
 
 - **`patches/expo-modules-core+55.0.17.patch`** – Swift 6 / MainActor fixes for `SwiftUIVirtualView` (same as EAS “Fastlane/Gym” compile step).
+- **`plugins/withIosPodsSwiftConcurrency.js`** – In `post_install`, sets **`SWIFT_VERSION = 5.10`** and **`SWIFT_STRICT_CONCURRENCY = minimal`** for **every** CocoaPods target. RN 0.83 pods (e.g. `RCTSwiftUI`, `RNScreens`) left on Swift 6.0 can fail EAS with *“sending 'self' risks causing data races”* on Xcode 16.4.
 - **`eas.json`** – `EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP=1` on all profiles so **`expo doctor` does not fail the build** when you intentionally use the **Xcode 16.4** image (Expo Doctor otherwise insists on Xcode ≥ 26 for SDK 55).
 - **`package.json`** – removed direct **`expo-modules-core`** dependency (still installed transitively; **`patch-package` still applies**). Added **`expo.doctor.reactNativeDirectoryCheck.exclude`** for `expo-av`.
 

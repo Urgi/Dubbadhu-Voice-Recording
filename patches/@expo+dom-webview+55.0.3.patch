@@ -1,0 +1,105 @@
+diff --git a/node_modules/@expo/dom-webview/ios/DomWebView.swift b/node_modules/@expo/dom-webview/ios/DomWebView.swift
+index 7a38d9f..82047fb 100644
+--- a/node_modules/@expo/dom-webview/ios/DomWebView.swift
++++ b/node_modules/@expo/dom-webview/ios/DomWebView.swift
+@@ -3,6 +3,12 @@
+ import ExpoModulesCore
+ import WebKit
+ 
++/// Swift 6: `runtime.schedule` requires `Sendable` captures; WKWebKit completion handlers are bridged unsafely here.
++private final class DomWebViewSyncCompletionHandlerBox: @unchecked Sendable {
++  let handler: (String?) -> Void
++  init(_ handler: @escaping (String?) -> Void) { self.handler = handler }
++}
++
+ internal final class DomWebView: ExpoView, UIScrollViewDelegate, WKUIDelegate, WKScriptMessageHandler {
+   // swiftlint:disable implicitly_unwrapped_optional
+   private(set) var webView: WKWebView!
+@@ -74,10 +80,12 @@ internal final class DomWebView: ExpoView, UIScrollViewDelegate, WKUIDelegate, W
+     }
+   }
+ 
++  @MainActor
+   func scrollTo(offset: CGPoint, animated: Bool) {
+     webView.scrollView.setContentOffset(offset, animated: animated)
+   }
+ 
++  @MainActor
+   func injectJavaScript(_ script: String) {
+     DispatchQueue.main.async { [weak self] in
+       self?.webView.evaluateJavaScript(script)
+@@ -209,6 +217,7 @@ internal final class DomWebView: ExpoView, UIScrollViewDelegate, WKUIDelegate, W
+       completionHandler("Missing JS Runtime")
+       return
+     }
++    let completionBox = DomWebViewSyncCompletionHandlerBox(completionHandler)
+     try? appContext.runtime.schedule {
+       let wrappedSource = NATIVE_EVAL_WRAPPER_SCRIPT
+         .replacingOccurrences(of: "\"%%DEFERRED_ID%%\"", with: String(deferredId))
+@@ -216,9 +225,9 @@ internal final class DomWebView: ExpoView, UIScrollViewDelegate, WKUIDelegate, W
+         .replacingOccurrences(of: "\"%%SOURCE%%\"", with: source)
+       do {
+         let result = try runtime.eval(wrappedSource)
+-        completionHandler(result.getString())
++        completionBox.handler(result.getString())
+       } catch {
+-        completionHandler("\(error)")
++        completionBox.handler("\(error)")
+       }
+     }
+   }
+diff --git a/node_modules/@expo/dom-webview/ios/DomWebViewModule.swift b/node_modules/@expo/dom-webview/ios/DomWebViewModule.swift
+index 0982402..1b658de 100644
+--- a/node_modules/@expo/dom-webview/ios/DomWebViewModule.swift
++++ b/node_modules/@expo/dom-webview/ios/DomWebViewModule.swift
+@@ -12,7 +12,11 @@ public final class DomWebViewModule: Module {
+ 
+     AsyncFunction("evalJsForWebViewAsync") { (webViewId: Int, source: String) in
+       if let webView = DomWebViewRegistry.shared.get(webViewId: webViewId) {
+-        webView.injectJavaScript(source)
++        DispatchQueue.main.sync {
++          MainActor.assumeIsolated {
++            webView.injectJavaScript(source)
++          }
++        }
+       }
+     }
+ 
+@@ -89,11 +93,19 @@ public final class DomWebViewModule: Module {
+       // MARK: - Imperative methods
+ 
+       AsyncFunction("scrollTo") { (view: DomWebView, param: ScrollToParam) in
+-        view.scrollTo(offset: CGPoint(x: param.x, y: param.y), animated: param.animated)
++        DispatchQueue.main.sync {
++          MainActor.assumeIsolated {
++            view.scrollTo(offset: CGPoint(x: param.x, y: param.y), animated: param.animated)
++          }
++        }
+       }
+ 
+       AsyncFunction("injectJavaScript") { (view: DomWebView, script: String) in
+-        view.injectJavaScript(script)
++        DispatchQueue.main.sync {
++          MainActor.assumeIsolated {
++            view.injectJavaScript(script)
++          }
++        }
+       }
+ 
+       OnViewDidUpdateProps { view in
+diff --git a/node_modules/@expo/dom-webview/ios/DomWebViewRegistry.swift b/node_modules/@expo/dom-webview/ios/DomWebViewRegistry.swift
+index 75180b0..4e6bb86 100644
+--- a/node_modules/@expo/dom-webview/ios/DomWebViewRegistry.swift
++++ b/node_modules/@expo/dom-webview/ios/DomWebViewRegistry.swift
+@@ -5,7 +5,10 @@ private let lockQueue = DispatchQueue(label: "expo.modules.domWebView.RegistryQu
+ internal typealias WebViewId = Int
+ 
+ internal final class DomWebViewRegistry {
+-  static var shared = DomWebViewRegistry()
++  /// Swift 6: singleton registry; access is serialized via `lockQueue`.
++  nonisolated(unsafe) static let shared = DomWebViewRegistry()
++
++  private init() {}
+ 
+   private var registry: [WebViewId: WeakDomWebViewRef] = [:]
+   private var nextWebViewId: WebViewId = 0

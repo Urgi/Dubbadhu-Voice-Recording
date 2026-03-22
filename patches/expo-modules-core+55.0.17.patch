@@ -1,5 +1,86 @@
+diff --git a/node_modules/expo-modules-core/ios/Core/AppContext.swift b/node_modules/expo-modules-core/ios/Core/AppContext.swift
+index 450f568..f163920 100644
+--- a/node_modules/expo-modules-core/ios/Core/AppContext.swift
++++ b/node_modules/expo-modules-core/ios/Core/AppContext.swift
+@@ -68,16 +68,19 @@ public final class AppContext: NSObject, @unchecked Sendable {
+   public var _runtime: ExpoRuntime? {
+     didSet {
+       if _runtime == nil {
++        // Swift 6: avoid capturing `self` into `assumeIsolated` (opaque handle only).
++        let ctxPtr = Unmanaged.passUnretained(self).toOpaque()
+         JavaScriptActor.assumeIsolated {
+           // When the runtime is unpinned from the context (e.g. deallocated),
+           // we should make sure to release all JS objects from the memory.
+           // Otherwise the JSCRuntime asserts may fail on deallocation.
+-          releaseRuntimeObjects()
++          Unmanaged<AppContext>.fromOpaque(ctxPtr).takeUnretainedValue().releaseRuntimeObjects()
+         }
+       } else if _runtime != oldValue {
++        let ctxPtr = Unmanaged.passUnretained(self).toOpaque()
+         JavaScriptActor.assumeIsolated {
+           // Try to install the core object automatically when the runtime changes.
+-          try? prepareRuntime()
++          try? Unmanaged<AppContext>.fromOpaque(ctxPtr).takeUnretainedValue().prepareRuntime()
+         }
+       }
+     }
+@@ -442,8 +445,9 @@ public final class AppContext: NSObject, @unchecked Sendable {
+ 
+     // TODO: Make `registerNativeViews` thread-safe
+     if Thread.isMainThread {
++      let ctxPtr = Unmanaged.passUnretained(self).toOpaque()
+       MainActor.assumeIsolated {
+-        self.registerNativeViews()
++        Unmanaged<AppContext>.fromOpaque(ctxPtr).takeUnretainedValue().registerNativeViews()
+       }
+     } else {
+       Task { @MainActor [weak self] in
+diff --git a/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicRawType.swift b/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicRawType.swift
+index 8fe764a..9dceb10 100644
+--- a/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicRawType.swift
++++ b/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicRawType.swift
+@@ -1,5 +1,12 @@
+ // Copyright 2021-present 650 Industries. All rights reserved.
+ 
++/// Swift 6: `JavaScriptObjectBuilder` is not `Sendable`; bridge into the JS actor with an unchecked box.
++/// Cannot nest types in generic `convertResult`; keep at file scope.
++private final class DynamicRawTypeJavaScriptObjectBuilderBox: @unchecked Sendable {
++  let builder: JavaScriptObjectBuilder
++  init(_ builder: JavaScriptObjectBuilder) { self.builder = builder }
++}
++
+ /**
+  A dynamic type that can wrap any type, but it casts only type-compatible values using `as?` keyword.
+  The innermost type of the other dynamic types like `ArrayArgumentType` and `OptionalArgumentType`.
+@@ -35,8 +42,11 @@ internal struct DynamicRawType<InnerType>: AnyDynamicType {
+     // TODO: Definitions and JS object builders should have its own dynamic type.
+     // We use `DynamicRawType` for this only temporarily.
+     if let objectBuilder = result as? JavaScriptObjectBuilder {
++      let box = DynamicRawTypeJavaScriptObjectBuilderBox(objectBuilder)
++      let ctxPtr = Unmanaged.passUnretained(appContext).toOpaque()
+       return try JavaScriptActor.assumeIsolated {
+-        return try objectBuilder.build(appContext: appContext)
++        let appContext = Unmanaged<AppContext>.fromOpaque(ctxPtr).takeUnretainedValue()
++        return try box.builder.build(appContext: appContext)
+       } as Any
+     }
+     return result
+diff --git a/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicSharedObjectType.swift b/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicSharedObjectType.swift
+index e789dd6..ad150c3 100644
+--- a/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicSharedObjectType.swift
++++ b/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicSharedObjectType.swift
+@@ -96,7 +96,9 @@ internal struct DynamicSharedObjectType: AnyDynamicType {
+ 
+ private func getBaseSharedType(_ appContext: AppContext, nativeType: AnySharedObject.Type) throws -> JavaScriptObject {
+   let isSharedRef = nativeType is AnySharedRef.Type
++  let ctxPtr = Unmanaged.passUnretained(appContext).toOpaque()
+   return try JavaScriptActor.assumeIsolated {
++    let appContext = Unmanaged<AppContext>.fromOpaque(ctxPtr).takeUnretainedValue()
+     return try isSharedRef ? appContext.runtime.getSharedRefClass() : appContext.runtime.getSharedObjectClass()
+   }
+ }
 diff --git a/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicSwiftUIViewType.swift b/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicSwiftUIViewType.swift
-index 586f261..a85cef2 100644
+index 586f261..0eeee82 100644
 --- a/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicSwiftUIViewType.swift
 +++ b/node_modules/expo-modules-core/ios/Core/DynamicTypes/DynamicSwiftUIViewType.swift
 @@ -1,5 +1,15 @@
@@ -18,7 +99,7 @@ index 586f261..a85cef2 100644
  internal struct DynamicSwiftUIViewType<ViewType: ExpoSwiftUIView>: AnyDynamicType {
    let innerType: ViewType.Type
  
-@@ -34,23 +44,25 @@ internal struct DynamicSwiftUIViewType<ViewType: ExpoSwiftUIView>: AnyDynamicTyp
+@@ -34,23 +44,7 @@ internal struct DynamicSwiftUIViewType<ViewType: ExpoSwiftUIView>: AnyDynamicTyp
      guard Thread.isMainThread else {
        throw NonMainThreadException()
      }
@@ -39,28 +120,42 @@ index 586f261..a85cef2 100644
 -      throw Exceptions.SwiftUIViewNotFound((tag: viewTag, type: innerType.self))
 -    }
 -    return view.getContentView()
-+    return try MainActor.assumeIsolated {
-+      // Direct match, the virtual view's content type matches exactly.
-+      // e.g. View(SlotView.self)
-+      if let view = appContext.findView(withTag: viewTag, ofType: ExpoSwiftUI.SwiftUIVirtualView<ViewType.Props, ViewType>.self) {
-+        return MainActorUnsendableBox(view.contentView)
-+      }
-+      // For wrapper types
-+      // e.g. ExpoUIView(SecureFieldView.self)
-+      if let provider = appContext.findView(withTag: viewTag, ofType: ExpoSwiftUI.ViewWrapper.self),
-+         let innerView = provider.getWrappedView() as? ViewType {
-+        return MainActorUnsendableBox(innerView)
-+      }
-+      // For views using WithHostingView protocol.
-+      // e.g. View(HostView.self) where HostView conforms to WithHostingView
-+      guard let view = appContext.findView(withTag: viewTag, ofType: AnyExpoSwiftUIHostingView.self) else {
-+        throw Exceptions.SwiftUIViewNotFound((tag: viewTag, type: innerType.self))
-+      }
-+      return MainActorUnsendableBox(view.getContentView())
-+    }.value
++    return try dynamicSwiftUILookupMainActorView(viewTag: viewTag, appContext: appContext, innerType: innerType)
    }
  
    var description: String {
+@@ -70,3 +64,31 @@ private func findViewTag(_ value: JavaScriptValue) -> Int? {
+   }
+   return nil
+ }
++
++/**
++ Swift 6: `MainActor.assumeIsolated` must not capture `DynamicSwiftUIViewType` `self` (generic struct is not `Sendable`).
++ Keep lookup in a file-scope function so the closure only captures parameters.
++ */
++private func dynamicSwiftUILookupMainActorView<ViewType: ExpoSwiftUIView>(
++  viewTag: Int,
++  appContext: AppContext,
++  innerType: ViewType.Type
++) throws -> Any {
++  // Swift 6 (EAS): do not capture `appContext` directly in the `Sendable` isolation boundary; use `Unmanaged`.
++  let ctxPtr = Unmanaged.passUnretained(appContext).toOpaque()
++  // Swift 6 (EAS): the `assumeIsolated` closure must not return plain `Any` (not Sendable); return the box and unwrap.
++  return try MainActor.assumeIsolated {
++    let appContext = Unmanaged<AppContext>.fromOpaque(ctxPtr).takeUnretainedValue()
++    if let view = appContext.findView(withTag: viewTag, ofType: ExpoSwiftUI.SwiftUIVirtualView<ViewType.Props, ViewType>.self) {
++      return MainActorUnsendableBox(view.contentView)
++    }
++    if let provider = appContext.findView(withTag: viewTag, ofType: ExpoSwiftUI.ViewWrapper.self),
++       let innerView = provider.getWrappedView() as? ViewType {
++      return MainActorUnsendableBox(innerView)
++    }
++    guard let view = appContext.findView(withTag: viewTag, ofType: AnyExpoSwiftUIHostingView.self) else {
++      throw Exceptions.SwiftUIViewNotFound((tag: viewTag, type: innerType.self))
++    }
++    return MainActorUnsendableBox(view.getContentView())
++  }.value
++}
 diff --git a/node_modules/expo-modules-core/ios/Core/Logging/PersistentFileLog.swift b/node_modules/expo-modules-core/ios/Core/Logging/PersistentFileLog.swift
 index 8938578..9eae808 100644
 --- a/node_modules/expo-modules-core/ios/Core/Logging/PersistentFileLog.swift
@@ -74,21 +169,168 @@ index 8938578..9eae808 100644
  public typealias PersistentFileLogCompletionHandler = (Error?) -> Void
  
  /**
+diff --git a/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObject.swift b/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObject.swift
+index 3e81f83..f236764 100644
+--- a/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObject.swift
++++ b/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObject.swift
+@@ -1,5 +1,22 @@
+ // Copyright 2022-present 650 Industries. All rights reserved.
+ 
++/// Swift 6: argument pairs are not `Sendable`; cannot nest in generic `emit(event:arguments:)`.
++private final class SharedObjectEmitArgumentPairsBox: @unchecked Sendable {
++  let pairs: [(AnyArgument, AnyDynamicType)]
++  init(_ pairs: [(AnyArgument, AnyDynamicType)]) { self.pairs = pairs }
++}
++
++/// Swift 6: `runtime.schedule` requires a `@Sendable` closure; do not capture `self` / `AppContext` directly (use weak boxes).
++private final class SharedObjectWeakBox: @unchecked Sendable {
++  weak var object: SharedObject?
++  init(_ object: SharedObject) { self.object = object }
++}
++
++private final class AppContextWeakBox: @unchecked Sendable {
++  weak var context: AppContext?
++  init(_ context: AppContext) { self.context = context }
++}
++
+ public protocol AnySharedObject: AnyArgument, AnyObject {
+   var sharedObjectId: SharedObjectId { get }
+ }
+@@ -80,15 +97,24 @@ public extension SharedObject { // swiftlint:disable:this no_grouping_extension
+     var argumentPairs: [(AnyArgument, AnyDynamicType)] = []
+     repeat argumentPairs.append((each arguments, ~(each A).self))
+ 
++    // Swift 6: `argumentPairs` is not `Sendable`; the runtime queue closure must not capture it directly.
++    let argumentPairsBox = SharedObjectEmitArgumentPairsBox(argumentPairs)
++    let selfBox = SharedObjectWeakBox(self)
++    let appContextBox = AppContextWeakBox(appContext)
++
+     // Schedule the event to be asynchronously emitted from the runtime's thread
+-    runtime.schedule { [weak self, weak appContext] in
+-      guard let appContext, let runtime = try? appContext.runtime, let jsObject = self?.getJavaScriptObject() else {
+-        log.warn("Trying to send event '\(event)' to \(type(of: self)), but the JS object is no longer associated with the native instance")
++    runtime.schedule { [argumentPairsBox, selfBox, appContextBox] in
++      guard let appContext = appContextBox.context, let runtime = try? appContext.runtime else {
++        log.warn("Trying to send event '\(event)', but the JS runtime has been lost")
++        return
++      }
++      guard let strongSelf = selfBox.object, let jsObject = strongSelf.getJavaScriptObject() else {
++        log.warn("Trying to send event '\(event)', but the JS object is no longer associated with the native instance")
+         return
+       }
+ 
+       // Convert native arguments to JS, just like function results
+-      let arguments = argumentPairs.map { argument, dynamicType in
++      let arguments = argumentPairsBox.pairs.map { argument, dynamicType in
+         return Conversions.convertFunctionResult(argument, appContext: appContext, dynamicType: dynamicType)
+       }
+ 
 diff --git a/node_modules/expo-modules-core/ios/Core/Views/ComponentData.swift b/node_modules/expo-modules-core/ios/Core/Views/ComponentData.swift
-index d632a6e..eb6e81a 100644
+index d632a6e..22bcf28 100644
 --- a/node_modules/expo-modules-core/ios/Core/Views/ComponentData.swift
 +++ b/node_modules/expo-modules-core/ios/Core/Views/ComponentData.swift
-@@ -59,7 +59,9 @@ public final class ComponentData: RCTComponentDataSwiftAdapter {
+@@ -2,6 +2,24 @@
+ 
+ import React
+ 
++// Swift 6: values passed into `MainActor.assumeIsolated` must not capture non-Sendable `self` / views indirectly.
++private final class ComponentDataHostingViewBox: @unchecked Sendable {
++  let view: ExpoSwiftUI.AnyHostingView
++  init(_ view: ExpoSwiftUI.AnyHostingView) { self.view = view }
++}
++private final class ComponentDataPropsDictBox: @unchecked Sendable {
++  let props: [String: Any]
++  init(_ props: [String: Any]) { self.props = props }
++}
++private final class ComponentDataUIViewBox: @unchecked Sendable {
++  let view: UIView
++  init(_ view: UIView) { self.view = view }
++}
++private final class ComponentDataViewDefinitionBox: @unchecked Sendable {
++  let definition: AnyViewDefinition
++  init(_ definition: AnyViewDefinition) { self.definition = definition }
++}
++
+ /**
+  Custom component data extending `RCTComponentData`. Its main purpose is to handle event-based props (callbacks),
+  but it also simplifies capturing the view config so we can omit some reflections that React Native executes.
+@@ -59,7 +77,12 @@ public final class ComponentData: RCTComponentDataSwiftAdapter {
  
      // Props are set differently in SwiftUI hosting views – delegate the work to `ExpoSwiftUI.HostingView`.
      if let hostingView = view as? ExpoSwiftUI.AnyHostingView {
 -      hostingView.updateProps(props)
++      // Swift 6: `[String: Any]` / view references are not `Sendable`; use unchecked boxes for `assumeIsolated`.
++      let hostingBox = ComponentDataHostingViewBox(hostingView)
++      let propsBox = ComponentDataPropsDictBox(props)
 +      MainActor.assumeIsolated {
-+        hostingView.updateProps(props)
++        hostingBox.view.updateProps(propsBox.props)
 +      }
  
        // Pass props to React too, to apply layout and styles for the hosting view.
        super.setProps(props, forView: view)
+@@ -86,8 +109,10 @@ public final class ComponentData: RCTComponentDataSwiftAdapter {
+     // Let the base class `RCTComponentData` handle all remaining props.
+     super.setProps(remainingProps, forView: view)
+ 
++    let viewBox = ComponentDataUIViewBox(view)
++    let definitionBox = ComponentDataViewDefinitionBox(viewDefinition)
+     MainActor.assumeIsolated {
+-      viewDefinition.callLifecycleMethods(withType: .didUpdateProps, forView: AppleView.uikit(view))
++      definitionBox.definition.callLifecycleMethods(withType: .didUpdateProps, forView: AppleView.uikit(viewBox.view))
+     }
+   }
+ 
+diff --git a/node_modules/expo-modules-core/ios/Core/Views/ConcreteViewProp.swift b/node_modules/expo-modules-core/ios/Core/Views/ConcreteViewProp.swift
+index 028a853..e918f1b 100644
+--- a/node_modules/expo-modules-core/ios/Core/Views/ConcreteViewProp.swift
++++ b/node_modules/expo-modules-core/ios/Core/Views/ConcreteViewProp.swift
+@@ -47,18 +47,27 @@ public final class ConcreteViewProp<ViewType: UIView, PropType: AnyArgument>: An
+     // Method's signature must be type-erased to conform to `AnyViewProp` protocol.
+     // Given view must be castable to the generic `ViewType` type.
+     nonisolated(unsafe) let value = value
++    // Swift 6: avoid capturing `self` into `assumeIsolated` (copy stored members).
++    let propName = name
++    let dynamicType = propType
++    let defaultVal = defaultValue
++    let setterFn = setter
++    let ctxPtr = Unmanaged.passUnretained(appContext).toOpaque()
++    let viewPtr = Unmanaged.passUnretained(view).toOpaque()
+ 
+     try MainActor.assumeIsolated {
++      let appContext = Unmanaged<AppContext>.fromOpaque(ctxPtr).takeUnretainedValue()
++      let view = Unmanaged<UIView>.fromOpaque(viewPtr).takeUnretainedValue()
+       guard let view = view as? ViewType else {
+-        throw IncompatibleViewException((propName: name, viewType: ViewType.self))
++        throw IncompatibleViewException((propName: propName, viewType: ViewType.self))
+       }
+-      if Optional.isNil(value), let defaultValue {
+-        return setter(view, defaultValue)
++      if Optional.isNil(value), let defaultVal {
++        return setterFn(view, defaultVal)
+       }
+-      guard let value = try propType.cast(value, appContext: appContext) as? PropType else {
++      guard let castValue = try dynamicType.cast(value, appContext: appContext) as? PropType else {
+         throw Conversions.CastingException<PropType>(value)
+       }
+-      setter(view, value)
++      setterFn(view, castValue)
+     }
+   }
+ }
+diff --git a/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/ExpoSwiftUI.swift b/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/ExpoSwiftUI.swift
+index b376a98..2f014b1 100644
+--- a/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/ExpoSwiftUI.swift
++++ b/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/ExpoSwiftUI.swift
+@@ -22,7 +22,9 @@ extension ExpoSwiftUI {
+   /**
+    Protocol for wrapper views (e.g., UIBaseView) that wrap an inner view.
+    Used by DynamicSwiftUIViewType to resolve the underlying view through wrapper layers.
++   Marked MainActor: conformers are often SwiftUI-backed and satisfy this alongside SwiftUI.View isolation (Swift 6).
+    */
++  @MainActor
+   public protocol ViewWrapper {
+     func getWrappedView() -> Any
+   }
 diff --git a/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIHostingView.swift b/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIHostingView.swift
 index b1c9f8b..0310c69 100644
 --- a/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIHostingView.swift
@@ -117,18 +359,45 @@ index b1c9f8b..0310c69 100644
       Props object that stores all the props for this particular view.
       It's an environment object that is observed by the content view.
 diff --git a/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIViewDefinition.swift b/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIViewDefinition.swift
-index fa947e5..84dcc94 100644
+index fa947e5..e5f0db3 100644
 --- a/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIViewDefinition.swift
 +++ b/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIViewDefinition.swift
-@@ -47,7 +47,7 @@ public extension ExpoSwiftUIView {
+@@ -47,7 +47,12 @@ public extension ExpoSwiftUIView {
          Group {
            if let hostingView = child as? ExpoSwiftUI.UIViewHost,
              let hostingUIView = hostingView.view as? (any ExpoSwiftUI.AnyHostingView) {
 -            let content = hostingUIView.getContentView()
-+            let content = MainActor.assumeIsolated { hostingUIView.getContentView() }
++            // Swift 6: avoid capturing `hostingUIView` into `assumeIsolated` (can imply `self` / non-Sendable refs).
++            let hostingPtr = Unmanaged.passUnretained(hostingUIView as AnyObject).toOpaque()
++            let content = MainActor.assumeIsolated {
++              let hv = Unmanaged<AnyObject>.fromOpaque(hostingPtr).takeUnretainedValue() as! any ExpoSwiftUI.AnyHostingView
++              return hv.getContentView()
++            }
              transform(
                AnyView(
                  content
+@@ -101,7 +106,12 @@ extension ExpoSwiftUI {
+       // It's assumed that this function is called only from the main thread.
+       // In the ideal scenario it would be marked as `@MainActor`, but then `ViewModuleWrapper`
+       // would be incompatible with `RCTViewManager` as it doesn't specify the actor.
++      // Swift 6: avoid capturing `self` into `assumeIsolated` (use `Unmanaged`).
++      let selfPtr = Unmanaged.passUnretained(self).toOpaque()
++      let ctxPtr = Unmanaged.passUnretained(appContext).toOpaque()
+       return MainActor.assumeIsolated {
++        let viewDefinition = Unmanaged<ViewDefinition<Props, ViewType>>.fromOpaque(selfPtr).takeUnretainedValue()
++        let appContext = Unmanaged<AppContext>.fromOpaque(ctxPtr).takeUnretainedValue()
+         let props = Props()
+         props.appContext = appContext
+ 
+@@ -113,7 +123,7 @@ extension ExpoSwiftUI {
+           return AppleView.from(view)
+         }
+ 
+-        let view = SwiftUIVirtualView(viewType: ViewType.self, props: props, viewDefinition: self, appContext: appContext)
++        let view = SwiftUIVirtualView(viewType: ViewType.self, props: props, viewDefinition: viewDefinition, appContext: appContext)
+         // Set up events to call view's `dispatchEvent` method.
+         // This is supported only on the new architecture, `dispatchEvent` exists only there.
+         props.setUpEvents { [weak view] eventName, payload in view?.dispatchEvent(eventName, payload: payload) }
 diff --git a/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIViewFrameObserver.swift b/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIViewFrameObserver.swift
 index d62091c..5a5ddcc 100644
 --- a/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIViewFrameObserver.swift
@@ -156,10 +425,160 @@ index d62091c..5a5ddcc 100644
      }
    }
 diff --git a/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIVirtualView.swift b/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIVirtualView.swift
-index 6d65323..092a3ea 100644
+index 6d65323..8a80dbd 100644
 --- a/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIVirtualView.swift
 +++ b/node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIVirtualView.swift
-@@ -193,7 +193,7 @@ extension ExpoSwiftUI {
+@@ -2,6 +2,15 @@
+ 
+ import SwiftUI
+ 
++/**
++ Swift 6: Values captured by `MainActor.assumeIsolated` must be `Sendable`; Expo view/prop types are not.
++ Only use while the boxed reference is confined to the main thread (Fabric calls these on main).
++ */
++private final class UnsafeSendableBox<Value>: @unchecked Sendable {
++  let value: Value
++  init(_ value: Value) { self.value = value }
++}
++
+ extension ExpoSwiftUI {
+   /**
+    An NSObject acting as a fake UIView for RCTMountingManager to represent a SwiftUI view.
+@@ -81,14 +90,22 @@ extension ExpoSwiftUI {
+      Updates the environment object with props, based on the given dictionary with raw props.
+      */
+     override func updateProps(_ rawProps: [String: Any]) {
+-      guard let appContext else {
+-        log.error("AppContext is not available, view props cannot be updated for \(self)")
+-        return
+-      }
+-      do {
+-        try props.updateRawProps(rawProps, appContext: appContext)
+-      } catch let error {
+-        log.error("Updating props for \(self) has failed: \(error.localizedDescription)")
++      // ExpoSwiftUIView inherits SwiftUI.View (MainActor); ObjC-bridged overrides stay nonisolated.
++      // Fabric calls these on the main thread — align with the compiler using assumeIsolated.
++      // Swift 6: do not capture `self` into `assumeIsolated` (use `Unmanaged`); `rawProps` uses an unchecked box.
++      let rawBox = UnsafeSendableBox(rawProps)
++      let selfPtr = Unmanaged.passUnretained(self).toOpaque()
++      MainActor.assumeIsolated {
++        let view = Unmanaged<SwiftUIVirtualView<Props, ContentView>>.fromOpaque(selfPtr).takeUnretainedValue()
++        guard let appContext = view.appContext else {
++          log.error("AppContext is not available, view props cannot be updated for \(view)")
++          return
++        }
++        do {
++          try view.props.updateRawProps(rawBox.value, appContext: appContext)
++        } catch let error {
++          log.error("Updating props for \(view) has failed: \(error.localizedDescription)")
++        }
+       }
+     }
+ 
+@@ -127,50 +144,72 @@ extension ExpoSwiftUI {
+      Fabric calls this function when mounting (attaching) a child component view.
+      */
+     override func mountChildComponentView(_ childComponentView: UIView, index: Int) {
+-      var children = props.children ?? []
+-      let child: any AnyChild
+-      if let view = childComponentView as AnyObject as? (any ExpoSwiftUI.View) {
+-        child = view
+-      } else {
+-        child = UIViewHost(view: childComponentView)
+-      }
+-      children.insert(child, at: index)
++      let selfPtr = Unmanaged.passUnretained(self).toOpaque()
++      let childPtr = Unmanaged.passUnretained(childComponentView).toOpaque()
++      let childIndex = index
++      MainActor.assumeIsolated {
++        let view = Unmanaged<SwiftUIVirtualView<Props, ContentView>>.fromOpaque(selfPtr).takeUnretainedValue()
++        let childComponentView = Unmanaged<UIView>.fromOpaque(childPtr).takeUnretainedValue()
++        var children = view.props.children ?? []
++        let child: any AnyChild
++        if let v = childComponentView as AnyObject as? (any ExpoSwiftUI.View) {
++          child = v
++        } else {
++          child = UIViewHost(view: childComponentView)
++        }
++        children.insert(child, at: childIndex)
+ 
+-      props.children = children
+-      props.objectWillChange.send()
++        view.props.children = children
++        view.props.objectWillChange.send()
++      }
+     }
+ 
+     /**
+      Fabric calls this function when unmounting (detaching) a child component view.
+      */
+-    override func unmountChildComponentView(_ childComponentView: UIView, index: Int) {
+-      // Make sure the view has no superview, React Native asserts against this.
+-      childComponentView.removeFromSuperview()
+-
+-      let childViewId: ObjectIdentifier
+-      if let child = childComponentView as AnyObject as? (any AnyChild) {
+-        childViewId = child.id
+-      } else {
+-        childViewId = ObjectIdentifier(childComponentView)
+-      }
++    override func unmountChildComponentView(_ childComponentView: UIView, index _: Int) {
++      let selfPtr = Unmanaged.passUnretained(self).toOpaque()
++      let childPtr = Unmanaged.passUnretained(childComponentView).toOpaque()
++      MainActor.assumeIsolated {
++        let view = Unmanaged<SwiftUIVirtualView<Props, ContentView>>.fromOpaque(selfPtr).takeUnretainedValue()
++        let childComponentView = Unmanaged<UIView>.fromOpaque(childPtr).takeUnretainedValue()
++        // Make sure the view has no superview, React Native asserts against this.
++        childComponentView.removeFromSuperview()
++
++        let childViewId: ObjectIdentifier
++        if let child = childComponentView as AnyObject as? (any AnyChild) {
++          childViewId = child.id
++        } else {
++          childViewId = ObjectIdentifier(childComponentView)
++        }
+ 
+-      if let children = props.children {
+-        props.children = children.filter({ $0.id != childViewId })
+-        #if DEBUG
+-        assert(props.children?.count == children.count - 1, "Failed to remove child view")
+-        #endif
+-        props.objectWillChange.send()
++        if let children = view.props.children {
++          view.props.children = children.filter({ $0.id != childViewId })
++          #if DEBUG
++          assert(view.props.children?.count == children.count - 1, "Failed to remove child view")
++          #endif
++          view.props.objectWillChange.send()
++        }
+       }
+     }
+ 
+     // MARK: - Privates
+ 
+     override func removeFromSuperview() {
+-      // When the view is unmounted, the focus on TextFieldView stays active and it causes a crash, so we blur it here
+-      // UIView does something similar to resign the first responder in removeFromSuperview, so we do the same for our virtual view
+-      if let focusableView = contentView as? any ExpoSwiftUI.FocusableView {
+-        focusableView.forceResignFirstResponder()
++      let selfPtr = Unmanaged.passUnretained(self).toOpaque()
++      MainActor.assumeIsolated {
++        let view = Unmanaged<SwiftUIVirtualView<Props, ContentView>>.fromOpaque(selfPtr).takeUnretainedValue()
++        // When the view is unmounted, the focus on TextFieldView stays active and it causes a crash, so we blur it here
++        // UIView does something similar to resign the first responder in removeFromSuperview, so we do the same for our virtual view
++        if let focusableView = view.contentView as? any ExpoSwiftUI.FocusableView {
++          focusableView.forceResignFirstResponder()
++        }
++        view.removeFromSuperviewUsingSuperImplementation()
+       }
++    }
++
++    /// Calls `super.removeFromSuperview()`; used from `MainActor.assumeIsolated` where `super` is not directly available.
++    private func removeFromSuperviewUsingSuperImplementation() {
+       super.removeFromSuperview()
+     }
+ 
+@@ -193,7 +232,7 @@ extension ExpoSwiftUI {
  
  // MARK: - ViewWrapper
  
@@ -169,10 +588,27 @@ index 6d65323..092a3ea 100644
      if let wrapper = contentView as? ExpoSwiftUI.ViewWrapper {
        return wrapper.getWrappedView()
 diff --git a/node_modules/expo-modules-core/ios/Core/Views/ViewDefinition.swift b/node_modules/expo-modules-core/ios/Core/Views/ViewDefinition.swift
-index 5dc73e3..67b7b8e 100644
+index 5dc73e3..6e68bce 100644
 --- a/node_modules/expo-modules-core/ios/Core/Views/ViewDefinition.swift
 +++ b/node_modules/expo-modules-core/ios/Core/Views/ViewDefinition.swift
-@@ -118,7 +118,8 @@ extension ConcurrentFunctionDefinition: ViewDefinitionFunctionElement {
+@@ -54,10 +54,15 @@ public class ViewDefinition<ViewType>: ObjectDefinition, AnyViewDefinition, @unc
+     // It's assumed that this function is called only from the main thread.
+     // In the ideal scenario it would be marked as `@MainActor`, but then `ViewModuleWrapper`
+     // would be incompatible with `RCTViewManager` as it doesn't specify the actor.
++    // Swift 6: avoid capturing `self` into `assumeIsolated` (use `Unmanaged`).
++    let selfPtr = Unmanaged.passUnretained(self).toOpaque()
++    let ctxPtr = Unmanaged.passUnretained(appContext).toOpaque()
+     return MainActor.assumeIsolated {
++      let viewDefinition = Unmanaged<ViewDefinition<ViewType>>.fromOpaque(selfPtr).takeUnretainedValue()
++      let appContext = Unmanaged<AppContext>.fromOpaque(ctxPtr).takeUnretainedValue()
+       if let expoViewType = ViewType.self as? AnyExpoView.Type {
+         if let fabricViewType = ViewType.self as? ExpoFabricView.Type {
+-          return AppleView.from(ExpoFabricView.create(viewType: fabricViewType, viewDefinition: self, appContext: appContext))
++          return AppleView.from(ExpoFabricView.create(viewType: fabricViewType, viewDefinition: viewDefinition, appContext: appContext))
+         }
+         return AppleView.from(expoViewType.init(appContext: appContext))
+       }
+@@ -118,7 +123,8 @@ extension ConcurrentFunctionDefinition: ViewDefinitionFunctionElement {
    public typealias ViewType = FirstArgType
  }
  

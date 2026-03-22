@@ -1,3 +1,65 @@
+diff --git a/node_modules/expo-image-picker/ios/ImagePickerHandler.swift b/node_modules/expo-image-picker/ios/ImagePickerHandler.swift
+index 476910d..3c12245 100644
+--- a/node_modules/expo-image-picker/ios/ImagePickerHandler.swift
++++ b/node_modules/expo-image-picker/ios/ImagePickerHandler.swift
+@@ -20,6 +20,7 @@ protocol OnMediaPickingResultHandler {
+  because it already inherits from `Module` class and Swift language does not allow multiple inheritance,
+  2) it separates some logic from the main module class and hopefully makes it cleaner.
+  */
++@MainActor
+ internal class ImagePickerHandler: NSObject,
+                                    PHPickerViewControllerDelegate,
+                                    UINavigationControllerDelegate,
+diff --git a/node_modules/expo-image-picker/ios/ImagePickerModule.swift b/node_modules/expo-image-picker/ios/ImagePickerModule.swift
+index 4b7bf34..810bfa2 100644
+--- a/node_modules/expo-image-picker/ios/ImagePickerModule.swift
++++ b/node_modules/expo-image-picker/ios/ImagePickerModule.swift
+@@ -85,6 +85,21 @@ public class ImagePickerModule: Module, OnMediaPickingResultHandler {
+   }
+ 
+   private func launchImagePicker(sourceType: UIImagePickerController.SourceType, options: ImagePickerOptions, promise: Promise) {
++    // Swift 6 / EAS: UIKit pickers require MainActor; `runOnQueue(.main)` is not enough for actor isolation.
++    let run = {
++      MainActor.assumeIsolated {
++        self.launchImagePickerOnMainActor(sourceType: sourceType, options: options, promise: promise)
++      }
++    }
++    if Thread.isMainThread {
++      run()
++    } else {
++      DispatchQueue.main.sync(execute: run)
++    }
++  }
++
++  @MainActor
++  private func launchImagePickerOnMainActor(sourceType: UIImagePickerController.SourceType, options: ImagePickerOptions, promise: Promise) {
+     let imagePickerDelegate = ImagePickerHandler(onMediaPickingResultHandler: self, hideStatusBarWhenPresented: options.allowsEditing && !options.allowsMultipleSelection)
+ 
+     let pickingContext = PickingContext(promise: promise,
+@@ -98,6 +113,7 @@ public class ImagePickerModule: Module, OnMediaPickingResultHandler {
+     }
+   }
+ 
++  @MainActor
+   private func launchLegacyImagePicker(sourceType: UIImagePickerController.SourceType, pickingContext: PickingContext) {
+     let options = pickingContext.options
+ 
+@@ -151,6 +167,7 @@ public class ImagePickerModule: Module, OnMediaPickingResultHandler {
+     }
+   }
+ 
++  @MainActor
+   private func launchMultiSelectPicker(pickingContext: PickingContext) {
+     var configuration = PHPickerConfiguration(photoLibrary: PHPhotoLibrary.shared())
+     let options = pickingContext.options
+@@ -166,6 +183,7 @@ public class ImagePickerModule: Module, OnMediaPickingResultHandler {
+     presentPickerUI(picker, pickingContext: pickingContext)
+   }
+ 
++  @MainActor
+   private func presentPickerUI(_ picker: PickerUIController, pickingContext context: PickingContext) {
+     guard let currentViewController = self.appContext?.utilities?.currentViewController() else {
+       return context.promise.reject(MissingCurrentViewControllerException())
 diff --git a/node_modules/expo-image-picker/ios/MediaHandler.swift b/node_modules/expo-image-picker/ios/MediaHandler.swift
 index a0e3a44..e7c5930 100644
 --- a/node_modules/expo-image-picker/ios/MediaHandler.swift
@@ -25,4 +87,16 @@ index a0e3a44..e7c5930 100644
 +    let utType: UTType? = UTType(resource.uniformTypeIdentifier) ?? UTType(filenameExtension: fileExtension)
      return utType?.preferredMIMEType
    }
+ 
+diff --git a/node_modules/expo-image-picker/ios/StatusBarVisibilityController.swift b/node_modules/expo-image-picker/ios/StatusBarVisibilityController.swift
+index 907af58..82dd0e5 100644
+--- a/node_modules/expo-image-picker/ios/StatusBarVisibilityController.swift
++++ b/node_modules/expo-image-picker/ios/StatusBarVisibilityController.swift
+@@ -6,6 +6,7 @@
+  Hiding StatusBar during picking process solves the displacement issue.
+  See https://forums.developer.apple.com/thread/98274
+  */
++@MainActor
+ internal class StatusBarVisibilityController {
+   private var shouldRestoreStatusBarVisibility = false
  

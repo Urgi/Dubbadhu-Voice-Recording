@@ -7,17 +7,32 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "env": {
+        "EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP": "1"
+      },
       "ios": {
-        "simulator": true
+        "simulator": true,
+        "image": "macos-sequoia-15.6-xcode-16.4"
       }
     },
     "preview": {
       "distribution": "internal",
+      "env": {
+        "EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP": "1"
+      },
       "ios": {
-        "simulator": false
+        "simulator": false,
+        "image": "macos-sequoia-15.6-xcode-16.4"
       }
     },
-    "production": {}
+    "production": {
+      "env": {
+        "EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP": "1"
+      },
+      "ios": {
+        "image": "macos-sequoia-15.6-xcode-16.4"
+      }
+    }
   },
   "submit": {
     "production": {}

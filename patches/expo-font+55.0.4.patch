@@ -1,0 +1,45 @@
+diff --git a/node_modules/expo-font/ios/FontFamilyAliasManager.swift b/node_modules/expo-font/ios/FontFamilyAliasManager.swift
+index f785185..c5444b0 100644
+--- a/node_modules/expo-font/ios/FontFamilyAliasManager.swift
++++ b/node_modules/expo-font/ios/FontFamilyAliasManager.swift
+@@ -3,12 +3,13 @@ import ExpoModulesCore
+ /**
+  A registry of font family aliases mapped to their real font family names.
+  */
+-private var fontFamilyAliases = [String: String]()
++// Swift 6: protected by `queue`; `nonisolated(unsafe)` silences global-mutable-state errors for this legacy pattern.
++private nonisolated(unsafe) var fontFamilyAliases = [String: String]()
+ 
+ /**
+  A flag that is set to `true` when the ``UIFont.fontNames(forFamilyName:)`` is already swizzled.
+  */
+-private var hasSwizzled = false
++private nonisolated(unsafe) var hasSwizzled = false
+ 
+ /**
+  Queue to protect shared resources
+diff --git a/node_modules/expo-font/ios/FontUtilsModule.swift b/node_modules/expo-font/ios/FontUtilsModule.swift
+index 9aa7376..07b08e2 100644
+--- a/node_modules/expo-font/ios/FontUtilsModule.swift
++++ b/node_modules/expo-font/ios/FontUtilsModule.swift
+@@ -48,11 +48,19 @@ public final class FontUtilsModule: Module {
+ 
+       do {
+         try data.write(to: outputURL, options: .atomic)
++        let screenScale: CGFloat = {
++          if Thread.isMainThread {
++            return MainActor.assumeIsolated { UIScreen.main.scale }
++          }
++          return DispatchQueue.main.sync {
++            MainActor.assumeIsolated { UIScreen.main.scale }
++          }
++        }()
+         promise.resolve([
+           "uri": outputURL.absoluteString,
+           "width": image.size.width,
+           "height": image.size.height,
+-          "scale": UIScreen.main.scale
++          "scale": screenScale
+         ])
+       } catch {
+         promise.reject(SaveImageException(outputURL.absoluteString))

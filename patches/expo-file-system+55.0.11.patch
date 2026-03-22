@@ -1,0 +1,125 @@
+diff --git a/node_modules/expo-file-system/ios/FilePickingHandler.swift b/node_modules/expo-file-system/ios/FilePickingHandler.swift
+index db4e2ca..39c453e 100644
+--- a/node_modules/expo-file-system/ios/FilePickingHandler.swift
++++ b/node_modules/expo-file-system/ios/FilePickingHandler.swift
+@@ -13,6 +13,7 @@ internal class FilePickingHandler: FilePickingResultHandler {
+     self.module = module
+   }
+ 
++  @MainActor
+   func presentDocumentPicker(
+     picker: UIDocumentPickerViewController,
+     isDirectory: Bool,
+diff --git a/node_modules/expo-file-system/ios/FilePickingUtils.swift b/node_modules/expo-file-system/ios/FilePickingUtils.swift
+index 06016ad..656a2a9 100644
+--- a/node_modules/expo-file-system/ios/FilePickingUtils.swift
++++ b/node_modules/expo-file-system/ios/FilePickingUtils.swift
+@@ -64,6 +64,7 @@ internal class FilePickingDelegate: NSObject, UIDocumentPickerDelegate, UIAdapti
+   }
+ }
+ 
++@MainActor
+ internal func createFilePicker(initialUri: URL?, mimeType: String?) -> UIDocumentPickerViewController {
+   if #available(iOS 14.0, *) {
+     let utTypes: [UTType]
+@@ -102,6 +103,7 @@ internal func createFilePicker(initialUri: URL?, mimeType: String?) -> UIDocumen
+   return picker
+ }
+ 
++@MainActor
+ internal func createDirectoryPicker(initialUri: URL?) -> UIDocumentPickerViewController {
+   if #available(iOS 14.0, *) {
+     // Use UTType.folder for directory access as per Apple's documentation
+diff --git a/node_modules/expo-file-system/ios/FileSystemModule.swift b/node_modules/expo-file-system/ios/FileSystemModule.swift
+index d69a9f1..ada0738 100644
+--- a/node_modules/expo-file-system/ios/FileSystemModule.swift
++++ b/node_modules/expo-file-system/ios/FileSystemModule.swift
+@@ -112,13 +112,18 @@ public final class FileSystemModule: Module {
+ 
+     AsyncFunction("pickDirectoryAsync") { (initialUri: URL?, promise: Promise) in
+       #if os(iOS)
+-      filePickingHandler.presentDocumentPicker(
+-        picker: createDirectoryPicker(initialUri: initialUri),
+-        isDirectory: true,
+-        initialUri: initialUri,
+-        mimeType: nil,
+-        promise: promise
+-      )
++      let run = { [self] in
++        MainActor.assumeIsolated {
++          self.filePickingHandler.presentDocumentPicker(
++            picker: createDirectoryPicker(initialUri: initialUri),
++            isDirectory: true,
++            initialUri: initialUri,
++            mimeType: nil,
++            promise: promise
++          )
++        }
++      }
++      if Thread.isMainThread { run() } else { DispatchQueue.main.sync(execute: run) }
+       #else
+       promise.reject(FeatureNotAvailableOnPlatformException())
+       #endif
+@@ -126,13 +131,18 @@ public final class FileSystemModule: Module {
+ 
+     AsyncFunction("pickFileAsync") { (initialUri: URL?, mimeType: String?, promise: Promise) in
+       #if os(iOS)
+-      filePickingHandler.presentDocumentPicker(
+-        picker: createFilePicker(initialUri: initialUri, mimeType: mimeType),
+-        isDirectory: false,
+-        initialUri: initialUri,
+-        mimeType: mimeType,
+-        promise: promise
+-      )
++      let run = { [self] in
++        MainActor.assumeIsolated {
++          self.filePickingHandler.presentDocumentPicker(
++            picker: createFilePicker(initialUri: initialUri, mimeType: mimeType),
++            isDirectory: false,
++            initialUri: initialUri,
++            mimeType: mimeType,
++            promise: promise
++          )
++        }
++      }
++      if Thread.isMainThread { run() } else { DispatchQueue.main.sync(execute: run) }
+       #else
+       promise.reject(FeatureNotAvailableOnPlatformException())
+       #endif
+diff --git a/node_modules/expo-file-system/ios/Legacy/FileSystemBackgroundSessionHandler.swift b/node_modules/expo-file-system/ios/Legacy/FileSystemBackgroundSessionHandler.swift
+index 5d47fa4..efd1bed 100644
+--- a/node_modules/expo-file-system/ios/Legacy/FileSystemBackgroundSessionHandler.swift
++++ b/node_modules/expo-file-system/ios/Legacy/FileSystemBackgroundSessionHandler.swift
+@@ -5,23 +5,29 @@ import ExpoModulesCore
+ public final class FileSystemBackgroundSessionHandler: ExpoAppDelegateSubscriber, EXSessionHandlerProtocol {
+   public typealias BackgroundSessionCompletionHandler = () -> Void
+ 
++  private let completionHandlersLock = NSLock()
+   private var completionHandlers: [String: BackgroundSessionCompletionHandler] = [:]
+ 
+-  public func invokeCompletionHandler(forSessionIdentifier identifier: String) {
+-    guard let completionHandler = completionHandlers[identifier] else {
++  /// Swift 6: `EXSessionHandlerProtocol` requires a nonisolated entry point; keep storage access locked.
++  public nonisolated func invokeCompletionHandler(forSessionIdentifier identifier: String) {
++    completionHandlersLock.lock()
++    let completionHandler = completionHandlers.removeValue(forKey: identifier)
++    completionHandlersLock.unlock()
++    guard let completionHandler else {
+       return
+     }
+     DispatchQueue.main.async {
+       completionHandler()
+     }
+-    completionHandlers.removeValue(forKey: identifier)
+   }
+ 
+   // MARK: - ExpoAppDelegateSubscriber
+ 
+   #if os(iOS) || os(tvOS)
+   public func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
++    completionHandlersLock.lock()
+     completionHandlers[identifier] = completionHandler
++    completionHandlersLock.unlock()
+   }
+   #endif
+ }

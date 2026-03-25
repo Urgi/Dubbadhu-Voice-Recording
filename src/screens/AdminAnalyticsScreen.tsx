@@ -135,7 +135,6 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
   const [activeToday, setActiveToday] = useState<number | null>(null)
   const [retention, setRetention] = useState<RetentionRow[]>([])
   const [waitlistByLang, setWaitlistByLang] = useState<{ language: string; count: number }[]>([])
-  const [dailySummary, setDailySummary] = useState<Record<string, unknown>[]>([])
   const [events, setEvents] = useState<AnalyticsEventRow[]>([])
   const [loadErrors, setLoadErrors] = useState<string[]>([])
   const [insights, setInsights] = useState('')
@@ -215,14 +214,6 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
       )
     }
 
-    const dailyRes = await supabase.from('daily_event_summary').select('*').limit(120)
-    if (dailyRes.error) {
-      setDailySummary([])
-      if (!dailyRes.error.message.includes('does not exist')) {
-        errs.push(`daily_event_summary: ${dailyRes.error.message}`)
-      }
-    } else setDailySummary((dailyRes.data as Record<string, unknown>[]) ?? [])
-
     const evRes = await supabase
       .from('analytics_events')
       .select('id, user_id, event_name, properties, created_at')
@@ -292,7 +283,7 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
     setInsightsSource('')
     setInsightsLoading(true)
     try {
-      const out = await runGeminiAnalyticsInsights(events, dailySummary)
+      const out = await runGeminiAnalyticsInsights(events)
       if (out.ok) {
         setInsights(out.text)
         setInsightsSource(out.sourceLabel)
@@ -304,7 +295,7 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
     } finally {
       setInsightsLoading(false)
     }
-  }, [events, dailySummary])
+  }, [events])
 
   const onRetentionInfo = useCallback(() => {
     Alert.alert(
@@ -460,18 +451,12 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
             ? 'Asking Gemini…'
             : events.length > 0
               ? 'Gemini: insights on last 100 events'
-              : dailySummary.length > 0
-                ? 'Gemini: insights from daily summary'
-                : 'Gemini: insights (no event data)'}
+              : 'Gemini: insights (need analytics events)'}
         </Text>
       </Pressable>
-      <Text style={styles.aiSub}>
-        Uses daily_event_summary when raw analytics_events are blocked (RLS)
-      </Text>
-      {events.length === 0 && dailySummary.length === 0 ? (
-        <Text style={styles.mutedSmall}>
-          Allow SELECT on analytics_events or daily_event_summary for the anon key, then refresh.
-        </Text>
+      <Text style={styles.aiSub}>Uses the last 100 rows from analytics_events only.</Text>
+      {events.length === 0 ? (
+        <Text style={styles.mutedSmall}>Allow SELECT on analytics_events for the anon key, then pull to refresh.</Text>
       ) : null}
 
       {insightsError ? <Text style={styles.errorText}>{insightsError}</Text> : null}

@@ -12,73 +12,17 @@ import {
   View,
 } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
-import { StatusPill } from '../components/StatusPill'
+import { SeriesTileCard } from '../components/SeriesTileCard'
+import {
+  aggregateWordRows,
+  type SeriesSummary,
+  type WordAggRow,
+} from '../lib/seriesAggregation'
 import supabase from '../lib/supabase'
-import type { RecordingStatus, RootStackParamList } from '../types'
+import { normalizeRecordingStatus } from '../lib/wordStatus'
+import type { RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminSeriesList'>
-
-type WordAggRow = {
-  series: string
-  language: string
-  status: RecordingStatus
-}
-
-type SeriesSummary = {
-  key: string
-  series: string
-  language: string
-  pending: number
-  recorded: number
-  approved: number
-  rejected: number
-  rerecordRequested: number
-  total: number
-}
-
-function aggregateWordRows(rows: WordAggRow[]): SeriesSummary[] {
-  const map = new Map<
-    string,
-    {
-      series: string
-      language: string
-      pending: number
-      recorded: number
-      approved: number
-      rejected: number
-      rerecordRequested: number
-      total: number
-    }
-  >()
-
-  for (const row of rows) {
-    const key = `${row.series}\u0000${row.language}`
-    let entry = map.get(key)
-    if (!entry) {
-      entry = {
-        series: row.series,
-        language: row.language,
-        pending: 0,
-        recorded: 0,
-        approved: 0,
-        rejected: 0,
-        rerecordRequested: 0,
-        total: 0,
-      }
-      map.set(key, entry)
-    }
-    entry.total += 1
-    if (row.status === 'pending') entry.pending += 1
-    else if (row.status === 'recorded') entry.recorded += 1
-    else if (row.status === 'approved') entry.approved += 1
-    else if (row.status === 'rejected') entry.rejected += 1
-    else if (row.status === 'rerecord_requested') entry.rerecordRequested += 1
-  }
-
-  return Array.from(map.entries())
-    .map(([key, v]) => ({ key, ...v }))
-    .sort((a, b) => a.series.localeCompare(b.series) || a.language.localeCompare(b.language))
-}
 
 const DEFAULT_NEW_LANGUAGE = 'afaan oromo'
 
@@ -103,15 +47,36 @@ export default function AdminSeriesListScreen({ navigation }: Props) {
       return
     }
 
-    const rows = (data as WordAggRow[] | null) ?? []
+    const rows = ((data as WordAggRow[] | null) ?? []).map((r) => ({
+      ...r,
+      status: normalizeRecordingStatus(r.status),
+    }))
     setSummaries(aggregateWordRows(rows))
   }, [])
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: 'Word Manager',
+      title: 'Voice Recording',
+      headerTitleAlign: 'center',
+      headerLeft: () => (
+        <Pressable
+          onPress={() => navigation.navigate('AdminHome')}
+          style={styles.headerBack}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Back to admin"
+        >
+          <Text style={styles.headerBackText}>‹ Admin</Text>
+        </Pressable>
+      ),
       headerRight: () => (
-        <Pressable onPress={() => setCreateOpen(true)} style={styles.headerBtn} hitSlop={8}>
+        <Pressable
+          onPress={() => setCreateOpen(true)}
+          style={styles.headerPlusBtn}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="New series"
+        >
           <Text style={styles.headerPlus}>+</Text>
         </Pressable>
       ),
@@ -154,51 +119,16 @@ export default function AdminSeriesListScreen({ navigation }: Props) {
 
   const renderItem = useCallback(
     ({ item }: { item: SeriesSummary }) => (
-      <Pressable
-        style={styles.card}
+      <SeriesTileCard
+        item={item}
+        showUnapprovedWords
         onPress={() =>
           navigation.navigate('AdminSeriesDetail', {
             seriesName: item.series,
             language: item.language,
           })
         }
-      >
-        <Text style={styles.cardTitle}>{item.series}</Text>
-        <Text style={styles.cardLanguage}>{item.language}</Text>
-        <View style={styles.pillRow}>
-          {item.pending > 0 ? (
-            <View style={styles.pillWithCount}>
-              <StatusPill status="pending" compact />
-              <Text style={styles.pillCount}>{item.pending}</Text>
-            </View>
-          ) : null}
-          {item.recorded > 0 ? (
-            <View style={styles.pillWithCount}>
-              <StatusPill status="recorded" compact />
-              <Text style={styles.pillCount}>{item.recorded}</Text>
-            </View>
-          ) : null}
-          {item.approved > 0 ? (
-            <View style={styles.pillWithCount}>
-              <StatusPill status="approved" compact />
-              <Text style={styles.pillCount}>{item.approved}</Text>
-            </View>
-          ) : null}
-          {item.rejected > 0 ? (
-            <View style={styles.pillWithCount}>
-              <StatusPill status="rejected" compact />
-              <Text style={styles.pillCount}>{item.rejected}</Text>
-            </View>
-          ) : null}
-          {item.rerecordRequested > 0 ? (
-            <View style={styles.pillWithCount}>
-              <StatusPill status="rerecord_requested" compact />
-              <Text style={styles.pillCount}>{item.rerecordRequested}</Text>
-            </View>
-          ) : null}
-        </View>
-        <Text style={styles.total}>{item.total} words</Text>
-      </Pressable>
+      />
     ),
     [navigation],
   )
@@ -214,7 +144,20 @@ export default function AdminSeriesListScreen({ navigation }: Props) {
   return (
     <View style={styles.screen}>
       {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
+      <Pressable
+        style={({ pressed }) => [styles.reviewAudioBar, pressed && styles.reviewAudioBarPressed]}
+        onPress={() => navigation.navigate('AdminAudioReview')}
+        accessibilityRole="button"
+        accessibilityLabel="Review recorded words awaiting approval"
+      >
+        <View style={styles.reviewAudioBarTextCol}>
+          <Text style={styles.reviewAudioBarTitle}>Review Audio</Text>
+          <Text style={styles.reviewAudioBarSub}>Recorded words awaiting approval</Text>
+        </View>
+        <Text style={styles.reviewAudioBarChevron}>›</Text>
+      </Pressable>
       <FlatList
+        style={styles.listFlex}
         data={summaries}
         keyExtractor={(item) => item.key}
         renderItem={renderItem}
@@ -259,6 +202,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0a0a0a',
   },
+  listFlex: {
+    flex: 1,
+  },
   centered: {
     flex: 1,
     backgroundColor: '#0a0a0a',
@@ -266,19 +212,68 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   listContent: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 0,
     paddingBottom: 32,
   },
   emptyList: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
   },
-  headerBtn: {
-    marginRight: 8,
-    paddingHorizontal: 8,
-    minWidth: 36,
+  reviewAudioBar: {
+    flexDirection: 'row',
     alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: '#1f2937',
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  reviewAudioBarPressed: {
+    opacity: 0.88,
+  },
+  reviewAudioBarTextCol: {
+    flex: 1,
+  },
+  reviewAudioBarTitle: {
+    color: '#f4f4f5',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  reviewAudioBarSub: {
+    color: '#9ca3af',
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  reviewAudioBarChevron: {
+    color: '#6b7280',
+    fontSize: 22,
+    fontWeight: '300',
+    marginLeft: 12,
+  },
+  headerBack: {
+    marginLeft: 4,
+    paddingVertical: 8,
+    paddingRight: 8,
+  },
+  headerBackText: {
+    color: '#a1a1aa',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  headerPlusBtn: {
+    marginRight: 6,
+    minWidth: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
   },
   headerPlus: {
     color: '#7C3AED',
@@ -291,47 +286,6 @@ const styles = StyleSheet.create({
     padding: 12,
     textAlign: 'center',
     fontSize: 14,
-  },
-  card: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-  },
-  cardTitle: {
-    color: '#ffffff',
-    fontSize: 22,
-    fontWeight: '700',
-  },
-  cardLanguage: {
-    color: '#a1a1aa',
-    fontSize: 14,
-    marginTop: 4,
-    marginBottom: 10,
-    textTransform: 'capitalize',
-  },
-  pillRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  pillWithCount: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: 8,
-    marginBottom: 6,
-  },
-  pillCount: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '600',
-    marginLeft: 4,
-  },
-  total: {
-    color: '#d4d4d8',
-    fontSize: 14,
-    marginTop: 8,
   },
   emptyText: {
     color: '#a1a1aa',

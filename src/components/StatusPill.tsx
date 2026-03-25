@@ -8,7 +8,6 @@ const STATUS_THEME: Record<
   pending: { backgroundColor: '#3a3a3a', color: '#888888', label: 'Pending' },
   recorded: { backgroundColor: '#3a2500', color: '#f59e0b', label: 'Recorded' },
   approved: { backgroundColor: '#0a2a0a', color: '#22c55e', label: 'Approved' },
-  rejected: { backgroundColor: '#2a0a0a', color: '#ef4444', label: 'Rejected' },
   rerecord_requested: {
     backgroundColor: '#1e1b4b',
     color: '#c4b5fd',

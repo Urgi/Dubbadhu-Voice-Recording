@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import type { RecordingWord } from '../types'
+import { normalizeRecordingWords } from './wordStatus'
 import { getExpoPublicSupabaseAnonKey, getExpoPublicSupabaseUrl } from './expoPublicEnv'
 
 // Use EXPO_PUBLIC_* in .env; also mirrored in app.config.js → extra for native/Xcode embeds.
@@ -18,7 +19,7 @@ export const wordsQuery = () => supabase.from('words').select('*')
 
 export const getWords = async () => {
   const { data, error } = await wordsQuery()
-  return { data: data as RecordingWord[] | null, error }
+  return { data: data ? normalizeRecordingWords(data) : null, error }
 }
 
 export default supabase

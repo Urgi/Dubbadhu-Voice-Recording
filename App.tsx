@@ -1,13 +1,15 @@
 import { Suspense, lazy } from 'react'
-import { ActivityIndicator, View } from 'react-native'
+import { ActivityIndicator, Platform, StatusBar, View } from 'react-native'
 import { NavigationContainer } from '@react-navigation/native'
 import { createStackNavigator } from '@react-navigation/stack'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { SafeAreaProvider } from 'react-native-safe-area-context'
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
 import LoginScreen from './src/screens/LoginScreen'
-import ModeSelectScreen from './src/screens/ModeSelectScreen'
+import AdminHomeScreen from './src/screens/AdminHomeScreen'
+import AdminAnalyticsScreen from './src/screens/AdminAnalyticsScreen'
 import AdminSeriesListScreen from './src/screens/AdminSeriesListScreen'
 import AdminSeriesDetailScreen from './src/screens/AdminSeriesDetailScreen'
+import AdminAudioReviewScreen from './src/screens/AdminAudioReviewScreen'
 import VoiceActorDashboardScreen from './src/screens/VoiceActorDashboardScreen'
 import { AuthProvider } from './src/context/AuthContext'
 import type { RootStackParamList } from './src/types'
@@ -18,42 +20,54 @@ const ReviewScreen = lazy(() => import('./src/screens/ReviewScreen'))
 
 const Stack = createStackNavigator<RootStackParamList>()
 
+function AppStack() {
+  const insets = useSafeAreaInsets()
+  const statusBarHeight =
+    Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : Math.max(insets.top, 0)
+  return (
+    <Suspense
+      fallback={
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0a0a0a' }}>
+          <ActivityIndicator color="#fff" />
+        </View>
+      }
+    >
+      <Stack.Navigator
+        initialRouteName="Login"
+        screenOptions={{
+          headerStyle: { backgroundColor: '#0a0a0a' },
+          headerTintColor: '#ffffff',
+          headerTitleStyle: { fontSize: 16, fontWeight: '600' },
+          headerShadowVisible: false,
+          cardStyle: { backgroundColor: '#0a0a0a' },
+          headerStatusBarHeight: statusBarHeight,
+        }}
+      >
+        <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="AdminHome" component={AdminHomeScreen} options={{ title: 'Admin' }} />
+        <Stack.Screen name="AdminAnalytics" component={AdminAnalyticsScreen} />
+        <Stack.Screen name="AdminSeriesList" component={AdminSeriesListScreen} options={{ title: 'Voice Recording' }} />
+        <Stack.Screen name="AdminSeriesDetail" component={AdminSeriesDetailScreen} />
+        <Stack.Screen name="AdminAudioReview" component={AdminAudioReviewScreen} />
+        <Stack.Screen
+          name="VoiceActorDashboard"
+          component={VoiceActorDashboardScreen}
+          options={{ title: 'Recording Studio' }}
+        />
+        <Stack.Screen name="Recording" component={RecordingScreen} options={{ title: 'Recording' }} />
+        <Stack.Screen name="Review" component={ReviewScreen} options={{ title: 'Review' }} />
+      </Stack.Navigator>
+    </Suspense>
+  )
+}
+
 export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
         <SafeAreaProvider>
           <NavigationContainer>
-            <Suspense
-              fallback={
-                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0a0a0a' }}>
-                  <ActivityIndicator color="#fff" />
-                </View>
-              }
-            >
-              <Stack.Navigator
-                initialRouteName="Login"
-                screenOptions={{
-                  headerStyle: { backgroundColor: '#0a0a0a' },
-                  headerTintColor: '#ffffff',
-                  headerTitleStyle: { fontSize: 16, fontWeight: '600' },
-                  headerShadowVisible: false,
-                  cardStyle: { backgroundColor: '#0a0a0a' },
-                }}
-              >
-                <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
-                <Stack.Screen name="ModeSelect" component={ModeSelectScreen} options={{ title: 'Select Mode' }} />
-                <Stack.Screen name="AdminSeriesList" component={AdminSeriesListScreen} options={{ title: 'Word Manager' }} />
-                <Stack.Screen name="AdminSeriesDetail" component={AdminSeriesDetailScreen} />
-                <Stack.Screen
-                  name="VoiceActorDashboard"
-                  component={VoiceActorDashboardScreen}
-                  options={{ title: 'Recording Studio' }}
-                />
-                <Stack.Screen name="Recording" component={RecordingScreen} options={{ title: 'Recording' }} />
-                <Stack.Screen name="Review" component={ReviewScreen} options={{ title: 'Review' }} />
-              </Stack.Navigator>
-            </Suspense>
+            <AppStack />
           </NavigationContainer>
         </SafeAreaProvider>
       </AuthProvider>

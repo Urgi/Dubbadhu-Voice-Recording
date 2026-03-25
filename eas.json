@@ -26,6 +26,7 @@
       }
     },
     "production": {
+      "autoIncrement": true,
       "env": {
         "EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP": "1"
       },
@@ -35,6 +36,10 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "ascAppId": "6760959040"
+      }
+    }
   }
 }

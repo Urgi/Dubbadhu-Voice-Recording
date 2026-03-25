@@ -66,11 +66,10 @@ export default function ReviewScreen({ navigation, route }: Props) {
         <Pressable
           style={styles.doneBtn}
           onPress={() => {
-            if (navigation.canGoBack()) {
-              navigation.pop(2)
-            } else {
-              navigation.navigate('VoiceActorDashboard')
-            }
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'VoiceActorDashboard' }],
+            })
           }}
         >
           <Text style={styles.doneBtnText}>Back to studio</Text>

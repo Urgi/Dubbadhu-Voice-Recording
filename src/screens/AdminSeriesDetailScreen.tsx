@@ -20,6 +20,7 @@ import { StatusPill } from '../components/StatusPill'
 import { useRemoteAudioUrl } from '../hooks/useRemoteAudioUrl'
 import { extractWordsFromDocument } from '../lib/gemini'
 import supabase from '../lib/supabase'
+import { normalizeRecordingWords } from '../lib/wordStatus'
 import type { RecordingWord, RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminSeriesDetail'>
@@ -113,7 +114,7 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
       setWords([])
       return
     }
-    setWords((data as RecordingWord[] | null) ?? [])
+    setWords(normalizeRecordingWords(data ?? []))
   }, [seriesName, language])
 
   useLayoutEffect(() => {
@@ -287,6 +288,16 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
     await loadWords()
   }
 
+  const acceptRecording = async (w: RecordingWord) => {
+    swipeRefs.current[w.id]?.close()
+    const { error } = await supabase.from('words').update({ status: 'approved' }).eq('id', w.id)
+    if (error) {
+      Alert.alert('Error', error.message)
+      return
+    }
+    await loadWords()
+  }
+
   const doRequestRerecord = async (w: RecordingWord) => {
     const noteLine = `[${new Date().toISOString().slice(0, 10)}] Re-record requested`
     const nextNotes = w.notes?.trim() ? `${w.notes.trim()}\n${noteLine}` : noteLine
@@ -417,8 +428,7 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
     const hasSlow = Boolean(item.slow_audio_url)
     const hasFast = Boolean(item.fast_audio_url)
     const hasAnyAudio = hasSlow || hasFast
-    const canRequestRerecord =
-      item.status === 'recorded' || item.status === 'approved' || item.status === 'rejected'
+    const canRequestRerecord = item.status === 'recorded' || item.status === 'approved'
     const showRerecordRow = canRequestRerecord || item.status === 'rerecord_requested'
 
     return (
@@ -462,6 +472,13 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
                   </Text>
                 </Pressable>
               ) : null}
+            </View>
+          ) : null}
+          {item.status === 'recorded' ? (
+            <View style={styles.adminActionsRow}>
+              <Pressable style={styles.acceptBtn} onPress={() => void acceptRecording(item)}>
+                <Text style={styles.acceptBtnText}>Accept recording</Text>
+              </Pressable>
             </View>
           ) : null}
           {showRerecordRow ? (
@@ -776,6 +793,24 @@ const styles = StyleSheet.create({
     color: '#e9d5ff',
     fontSize: 13,
     fontWeight: '600',
+  },
+  adminActionsRow: {
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+  acceptBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#14532d',
+    borderWidth: 1,
+    borderColor: '#22c55e',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  acceptBtnText: {
+    color: '#bbf7d0',
+    fontSize: 14,
+    fontWeight: '700',
   },
   rerecordRow: {
     paddingHorizontal: 16,

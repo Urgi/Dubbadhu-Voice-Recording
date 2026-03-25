@@ -15,8 +15,8 @@ const VOICE_RECORDING_OPTIONS = {
   ios: {
     extension: '.m4a',
     outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-    /** MEDIUM prepares faster than HIGH; still fine for voice. */
-    audioQuality: Audio.IOSAudioQuality.MEDIUM,
+    /** LOW prepares faster than MEDIUM/HIGH — sufficient for voice and reduces tap-to-record delay. */
+    audioQuality: Audio.IOSAudioQuality.LOW,
     sampleRate: 44100,
     numberOfChannels: 1,
     bitRate: 128000,
@@ -292,6 +292,10 @@ export function useAudioRecorder() {
             setIsPlaying(false)
             setPlaybackPositionMs(s.durationMillis ?? s.positionMillis ?? 0)
             clearPlaybackPoll()
+            // Next tap to record skips a slow setAudioMode hop (was playback mode).
+            void setModeForRecording().then(() => {
+              recordingModePrimedRef.current = true
+            })
           }
         },
       )
@@ -339,6 +343,9 @@ export function useAudioRecorder() {
             setIsPlaying(false)
             if (dur > 0) setPlaybackPositionMs(dur)
             clearPlaybackPoll()
+            void setModeForRecording().then(() => {
+              recordingModePrimedRef.current = true
+            })
           }
         } catch {
           clearPlaybackPoll()

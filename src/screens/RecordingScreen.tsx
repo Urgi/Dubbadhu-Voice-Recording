@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
@@ -65,7 +65,7 @@ function WaveformBars({ mode }: { mode: 'idle' | 'ready' | 'recording' | 'playin
 }
 
 export default function RecordingScreen({ navigation, route }: Props) {
-  const { words: initialWords, mergeIntoSession } = route.params
+  const { words: initialWords, mergeIntoSession, seriesSession } = route.params
   const audio = useAudioRecorder()
 
   const initialTotalRef = useRef(initialWords.length)
@@ -148,8 +148,9 @@ export default function RecordingScreen({ navigation, route }: Props) {
       }
 
       try {
-        await audio.ensureIdle()
+        // Show recording UI immediately; cleanup + prepare still run right after.
         setRecordingSlot(slot)
+        await audio.ensureIdle()
         await audio.startRecording()
       } catch (e) {
         setRecordingSlot(null)
@@ -351,6 +352,14 @@ export default function RecordingScreen({ navigation, route }: Props) {
 
   return (
     <View style={styles.screen}>
+      {seriesSession ? (
+        <View style={styles.seriesSessionBanner}>
+          <Text style={styles.seriesSessionLang}>{seriesSession.language}</Text>
+          <Text style={styles.seriesSessionLeft}>
+            {queue.length} word{queue.length === 1 ? '' : 's'} left in this series
+          </Text>
+        </View>
+      ) : null}
       <View style={styles.topMeta}>
         <Text style={styles.progressText}>
           Word {wordNum} of {totalWords}
@@ -408,6 +417,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emptyText: { color: '#888', fontSize: 16 },
+  seriesSessionBanner: {
+    backgroundColor: '#1a1525',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#4c1d95',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  seriesSessionLang: {
+    color: '#c4b5fd',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  seriesSessionLeft: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
   topMeta: { marginBottom: 16 },
   progressText: {
     color: '#ffffff',

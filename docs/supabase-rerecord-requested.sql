@@ -3,6 +3,9 @@
 --
 -- The app sets status to 'rerecord_requested' for "Request re-record". Your table
 -- must allow that value in the CHECK constraint.
+--
+-- 'rejected' is optional legacy: the app no longer uses it (legacy rows are shown as pending).
+-- You can omit 'rejected' from the CHECK if you migrate old rows to another status first.
 
 -- Optional: see the old definition
 -- SELECT conname, pg_get_constraintdef(oid)

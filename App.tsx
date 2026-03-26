@@ -52,7 +52,7 @@ function AppStack() {
         <Stack.Screen
           name="VoiceActorDashboard"
           component={VoiceActorDashboardScreen}
-          options={{ title: 'Recording Studio' }}
+          options={{ title: 'Home' }}
         />
         <Stack.Screen name="Recording" component={RecordingScreen} options={{ title: 'Recording' }} />
         <Stack.Screen name="Review" component={ReviewScreen} options={{ title: 'Review' }} />

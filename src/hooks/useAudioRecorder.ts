@@ -65,17 +65,24 @@ async function getDurationMillisFromFileUri(fileUri: string): Promise<number> {
 }
 
 async function setModeForPlayback() {
-  // MixWithOthers routes to speaker more reliably after recording on some iOS builds (vs earpiece).
+  // Prefer full-volume, non-ducked playback.
   await Audio.setAudioModeAsync({
     allowsRecordingIOS: false,
     playsInSilentModeIOS: true,
-    interruptionModeIOS:
-      Platform.OS === 'ios' ? InterruptionModeIOS.MixWithOthers : InterruptionModeIOS.DuckOthers,
-    shouldDuckAndroid: true,
-    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+    shouldDuckAndroid: false,
+    interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
     playThroughEarpieceAndroid: false,
     staysActiveInBackground: false,
   })
+}
+
+function normalizePlayableUri(input: string): string {
+  const s = String(input ?? '')
+  if (s.startsWith('file://')) return s
+  if (s.startsWith('file:/')) return s.replace(/^file:\/*/, 'file:///')
+  if (s.startsWith('/')) return `file://${s}`
+  return s
 }
 
 export function useAudioRecorder() {
@@ -268,8 +275,9 @@ export function useAudioRecorder() {
 
   const startPlayback = useCallback(
     async (sourceUri?: string | null) => {
-      const target = sourceUri ?? uri
-      if (!target) return
+      const raw = sourceUri ?? uri
+      if (!raw) return
+      const target = normalizePlayableUri(raw)
       setPlaybackPositionMs(0)
       setPlaybackDurationMs(0)
       // With allowsRecordingIOS=true, iOS may route playback to the earpiece — set playback mode BEFORE loading sound.
@@ -277,6 +285,7 @@ export function useAudioRecorder() {
       recordingModePrimedRef.current = false
       await unloadRecording()
       await unloadSound()
+      console.log('[audio][playback] startPlayback', { raw, target })
       const { sound, status } = await Audio.Sound.createAsync(
         { uri: target },
         { shouldPlay: true, volume: 1, progressUpdateIntervalMillis: 50 },
@@ -301,8 +310,17 @@ export function useAudioRecorder() {
       )
       if (!status.isLoaded) {
         const err = 'error' in status ? status.error : undefined
+        console.log('[audio][playback] load failed', { raw, target, err })
         throw new Error(err ?? 'Could not load audio for playback')
       }
+      console.log('[audio][playback] loaded', {
+        raw,
+        target,
+        durationMillis: status.durationMillis ?? null,
+        isMuted: 'isMuted' in status ? (status as any).isMuted : undefined,
+        volume: 'volume' in status ? (status as any).volume : undefined,
+        shouldPlay: status.shouldPlay,
+      })
       if (status.durationMillis != null && status.durationMillis > 0) {
         setPlaybackDurationMs(status.durationMillis)
       }
@@ -312,6 +330,20 @@ export function useAudioRecorder() {
         /* ignore */
       }
       await sound.playAsync()
+      try {
+        const st = await sound.getStatusAsync()
+        if (st.isLoaded) {
+          console.log('[audio][playback] after playAsync', {
+            isPlaying: st.isPlaying,
+            positionMillis: st.positionMillis ?? null,
+            durationMillis: st.durationMillis ?? null,
+            isMuted: (st as any).isMuted,
+            volume: (st as any).volume,
+          })
+        }
+      } catch {
+        /* ignore */
+      }
       try {
         await sound.setProgressUpdateIntervalAsync(50)
       } catch {
@@ -355,6 +387,131 @@ export function useAudioRecorder() {
     [uri, unloadRecording, unloadSound, clearPlaybackPoll],
   )
 
+  /**
+   * Play a bounded segment of a clip (non-destructive trim preview).
+   * Ensures playback starts at startMs and stops at endMs.
+   */
+  const playSegment = useCallback(
+    async (sourceUri: string, startMs: number, endMs: number) => {
+      const raw = sourceUri
+      if (!raw) return
+      const target = normalizePlayableUri(raw)
+      const start = Math.max(0, Math.floor(startMs))
+      const end = Math.max(start, Math.floor(endMs))
+
+      setPlaybackPositionMs(start)
+      setPlaybackDurationMs(0)
+
+      await setModeForPlayback()
+      recordingModePrimedRef.current = false
+      await unloadRecording()
+      await unloadSound()
+      console.log('[audio][playback] playSegment', { raw, target, start, end })
+
+      const { sound, status } = await Audio.Sound.createAsync(
+        { uri: target },
+        { shouldPlay: false, volume: 1, progressUpdateIntervalMillis: 50 },
+        (s) => {
+          if (!s.isLoaded) return
+          setIsPlaying(s.isPlaying)
+          if (s.durationMillis != null && s.durationMillis > 0) {
+            setPlaybackDurationMs(s.durationMillis)
+          }
+          setPlaybackPositionMs(s.positionMillis ?? 0)
+        },
+      )
+
+      if (!status.isLoaded) {
+        const err = 'error' in status ? status.error : undefined
+        console.log('[audio][playback] segment load failed', { raw, target, err })
+        throw new Error(err ?? 'Could not load audio for playback')
+      }
+      console.log('[audio][playback] segment loaded', {
+        raw,
+        target,
+        durationMillis: status.durationMillis ?? null,
+        isMuted: (status as any).isMuted,
+        volume: (status as any).volume,
+      })
+
+      const dur = status.durationMillis ?? 0
+      if (dur > 0) setPlaybackDurationMs(dur)
+
+      // Clamp end to duration when known
+      const boundedEnd = dur > 0 ? Math.min(end, dur) : end
+
+      try {
+        await sound.setVolumeAsync(1)
+      } catch {
+        /* ignore */
+      }
+      try {
+        await sound.setPositionAsync(start)
+      } catch {
+        /* ignore */
+      }
+
+      soundRef.current = sound
+      setIsPlaying(true)
+      await sound.playAsync()
+      try {
+        const st = await sound.getStatusAsync()
+        if (st.isLoaded) {
+          console.log('[audio][playback] segment after playAsync', {
+            isPlaying: st.isPlaying,
+            positionMillis: st.positionMillis ?? null,
+            durationMillis: st.durationMillis ?? null,
+            isMuted: (st as any).isMuted,
+            volume: (st as any).volume,
+          })
+        }
+      } catch {
+        /* ignore */
+      }
+
+      clearPlaybackPoll()
+      playbackPollRef.current = setInterval(async () => {
+        const snd = soundRef.current
+        if (!snd) {
+          clearPlaybackPoll()
+          return
+        }
+        try {
+          const st = await snd.getStatusAsync()
+          if (!st.isLoaded) return
+          const pos = st.positionMillis ?? 0
+          const d = st.durationMillis ?? 0
+          if (d > 0) setPlaybackDurationMs(d)
+          setPlaybackPositionMs(pos)
+          setIsPlaying(st.isPlaying)
+
+          if (pos >= boundedEnd || st.didJustFinish) {
+            try {
+              await snd.stopAsync()
+            } catch {
+              /* ignore */
+            }
+            try {
+              await snd.unloadAsync()
+            } catch {
+              /* ignore */
+            }
+            soundRef.current = null
+            setIsPlaying(false)
+            setPlaybackPositionMs(boundedEnd)
+            clearPlaybackPoll()
+            void setModeForRecording().then(() => {
+              recordingModePrimedRef.current = true
+            })
+          }
+        } catch {
+          clearPlaybackPoll()
+        }
+      }, 80)
+    },
+    [unloadRecording, unloadSound, clearPlaybackPoll],
+  )
+
   const stopPlayback = useCallback(async () => {
     clearPlaybackPoll()
     if (soundRef.current) {
@@ -387,6 +544,7 @@ export function useAudioRecorder() {
     startRecording,
     stopRecording,
     startPlayback,
+    playSegment,
     stopSoundOnly,
     stopPlayback,
     isRecording,

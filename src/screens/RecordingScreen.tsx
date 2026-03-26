@@ -7,9 +7,11 @@ import {
   StyleSheet,
   Text,
   View,
+  PanResponder,
 } from 'react-native'
+import Slider from '@react-native-community/slider'
+import { trim as nativeTrim } from 'react-native-video-trim'
 import type { StackScreenProps } from '@react-navigation/stack'
-import { StatusPill } from '../components/StatusPill'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
 import supabase from '../lib/supabase'
 import { uploadVoiceM4a, voiceStoragePaths } from '../lib/voiceUpload'
@@ -19,7 +21,17 @@ type Props = StackScreenProps<RootStackParamList, 'Recording'>
 
 type Slot = 'slow' | 'fast' | null
 
-const BASE_WAVE_HEIGHTS = [12, 20, 16, 24, 14, 22, 18, 26, 15, 21, 17, 23, 14, 20, 16, 22, 18, 24, 14, 19]
+const BASE_WAVE_HEIGHTS = [
+  12, 20, 16, 24, 14, 22, 18, 26, 15, 21, 17, 23, 14, 20, 16, 22, 18, 24, 14, 19, 15, 22, 17, 25, 13, 21, 18,
+  24, 16, 20, 14, 23,
+]
+const ACCENT_ORANGE = '#f59e0b'
+const ACCENT_GREEN = '#22c55e'
+const ACCENT_YELLOW = '#facc15'
+const PILL_PURPLE_BG = '#1e1b4b'
+const PILL_PURPLE_TEXT = '#c4b5fd'
+const TRIM_SNAP_MS = 20
+const TRIM_MIN_GAP_MS = 150
 
 /** Static bars when clip is ready; animated bars while audio is playing. */
 function WaveformBars({ mode }: { mode: 'idle' | 'ready' | 'recording' | 'playing' }) {
@@ -55,11 +67,126 @@ function WaveformBars({ mode }: { mode: 'idle' | 'ready' | 'recording' | 'playin
             {
               height: h,
               opacity: active ? 0.92 : 0.35,
-              backgroundColor: mode === 'playing' ? '#a78bfa' : '#7C3AED',
+              backgroundColor: mode === 'playing' ? ACCENT_GREEN : ACCENT_ORANGE,
             },
           ]}
         />
       ))}
+    </View>
+  )
+}
+
+function TrimWaveEditor({
+  ms,
+  trimStartMs,
+  trimEndMs,
+  setTrimStartMs,
+  setTrimEndMs,
+}: {
+  ms: number
+  trimStartMs: number
+  trimEndMs: number
+  setTrimStartMs: (v: number) => void
+  setTrimEndMs: (v: number) => void
+}) {
+  const wrapRef = useRef<View>(null)
+  const widthRef = useRef(0)
+
+  const msRef = useRef(ms)
+  const startRef = useRef(trimStartMs)
+  const endRef = useRef(trimEndMs)
+  const startAtGrantRef = useRef(0)
+  const endAtGrantRef = useRef(0)
+  const startAtGrantForEndRef = useRef(0)
+
+  useEffect(() => {
+    msRef.current = ms
+  }, [ms])
+  useEffect(() => {
+    startRef.current = trimStartMs
+  }, [trimStartMs])
+  useEffect(() => {
+    endRef.current = trimEndMs
+  }, [trimEndMs])
+
+  const measureWidth = useCallback(() => {
+    wrapRef.current?.measure((_x, _y, w) => {
+      widthRef.current = w
+    })
+  }, [])
+
+  const startPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: () => {
+          measureWidth()
+          startAtGrantRef.current = startRef.current
+        },
+        onPanResponderMove: (_e, gesture) => {
+          const w = widthRef.current
+          const dur = msRef.current
+          if (!w || !dur) return
+
+          const deltaMs = (gesture.dx / w) * dur
+          const raw = startAtGrantRef.current + deltaMs
+          const stepped = Math.round(raw / TRIM_SNAP_MS) * TRIM_SNAP_MS
+
+          const end = endRef.current
+          const next = Math.max(0, Math.min(stepped, end - TRIM_MIN_GAP_MS))
+          setTrimStartMs(next)
+        },
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [measureWidth, setTrimStartMs],
+  )
+
+  const endPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: () => {
+          measureWidth()
+          endAtGrantRef.current = endRef.current
+          startAtGrantForEndRef.current = startRef.current
+        },
+        onPanResponderMove: (_e, gesture) => {
+          const w = widthRef.current
+          const dur = msRef.current
+          if (!w || !dur) return
+
+          const deltaMs = (gesture.dx / w) * dur
+          const raw = endAtGrantRef.current + deltaMs
+          const stepped = Math.round(raw / TRIM_SNAP_MS) * TRIM_SNAP_MS
+
+          const start = startAtGrantForEndRef.current
+          const minEnd = start + TRIM_MIN_GAP_MS
+          const next = Math.min(dur, Math.max(stepped, minEnd))
+          setTrimEndMs(next)
+        },
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [measureWidth, setTrimEndMs],
+  )
+
+  const startPct = ms > 0 ? (trimStartMs / ms) * 100 : 0
+  const endPct = ms > 0 ? (trimEndMs / ms) * 100 : 100
+
+  return (
+    <View ref={wrapRef} style={styles.inlineWaveWrap}>
+      <View pointerEvents="none">
+        <WaveformBars mode="ready" />
+      </View>
+
+      <View style={[styles.inlineShade, styles.inlineShadeLeft, { width: `${startPct}%` }]} />
+      <View
+        style={[styles.inlineShade, styles.inlineShadeRight, { width: `${Math.max(0, 100 - endPct)}%` }]}
+      />
+
+      <View {...startPanResponder.panHandlers} style={[styles.inlineHandle, { left: `${startPct}%` }]} />
+      <View {...endPanResponder.panHandlers} style={[styles.inlineHandle, { left: `${endPct}%` }]} />
     </View>
   )
 }
@@ -77,14 +204,33 @@ export default function RecordingScreen({ navigation, route }: Props) {
   const [fastUri, setFastUri] = useState<string | null>(null)
   const [slowMs, setSlowMs] = useState(0)
   const [fastMs, setFastMs] = useState(0)
+  const [slowTrim, setSlowTrim] = useState<{ startMs: number; endMs: number } | null>(null)
+  const [fastTrim, setFastTrim] = useState<{ startMs: number; endMs: number } | null>(null)
   const [recordingSlot, setRecordingSlot] = useState<Slot>(null)
   /** Which slot is currently playing back (for waveform + timer). */
   const [playingSlot, setPlayingSlot] = useState<Slot>(null)
   /** True while startPlayback is in flight — avoids clearing playingSlot when isPlaying is still false (race with useEffect). */
   const [playbackPending, setPlaybackPending] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [inlineTrimSlot, setInlineTrimSlot] = useState<Exclude<Slot, null> | null>(null)
+  const [trimSlot, setTrimSlot] = useState<Exclude<Slot, null> | null>(null)
+  const [trimStartMs, setTrimStartMs] = useState(0)
+  const [trimEndMs, setTrimEndMs] = useState(0)
 
   const pulse = useRef(new Animated.Value(1)).current
+  const [waveWidth, setWaveWidth] = useState(0)
+  const waveWidthRef = useRef(0)
+  const trimStartMsRef = useRef(trimStartMs)
+  const trimEndMsRef = useRef(trimEndMs)
+  const trimStartAtGrantRef = useRef(0)
+  const trimEndAtGrantRef = useRef(0)
+
+  useEffect(() => {
+    trimStartMsRef.current = trimStartMs
+  }, [trimStartMs])
+  useEffect(() => {
+    trimEndMsRef.current = trimEndMs
+  }, [trimEndMs])
 
   useEffect(() => {
     if (!audio.isPlaying && !playbackPending) {
@@ -118,10 +264,21 @@ export default function RecordingScreen({ navigation, route }: Props) {
     setFastUri(null)
     setSlowMs(0)
     setFastMs(0)
+    setSlowTrim(null)
+    setFastTrim(null)
     setRecordingSlot(null)
   }, [audio])
 
   const bothReady = Boolean(slowUri && fastUri)
+
+  const titleCase = useCallback((s: string) => {
+    return String(s ?? '')
+      .trim()
+      .split(/\s+/g)
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ')
+  }, [])
 
   const toggleRecord = useCallback(
     async (slot: 'slow' | 'fast') => {
@@ -136,9 +293,11 @@ export default function RecordingScreen({ navigation, route }: Props) {
           } else if (slot === 'slow') {
             setSlowUri(u)
             setSlowMs(ms)
+            setSlowTrim({ startMs: 0, endMs: ms })
           } else {
             setFastUri(u)
             setFastMs(ms)
+            setFastTrim({ startMs: 0, endMs: ms })
           }
         } catch (e) {
           Alert.alert('Recording', messageFromUnknownError(e))
@@ -164,11 +323,28 @@ export default function RecordingScreen({ navigation, route }: Props) {
     async (slot: 'slow' | 'fast') => {
       const uri = slot === 'slow' ? slowUri : fastUri
       if (!uri) return
+      const playingThis = playingSlot === slot && (audio.isPlaying || playbackPending)
+      if (playingThis) {
+        try {
+          await audio.stopPlayback()
+        } catch {
+          /* ignore */
+        } finally {
+          setPlaybackPending(false)
+          setPlayingSlot(null)
+        }
+        return
+      }
+      const t = slot === 'slow' ? slowTrim : fastTrim
       try {
         await audio.stopSoundOnly()
         setPlayingSlot(slot)
         setPlaybackPending(true)
-        await audio.startPlayback(uri)
+        if (t && t.endMs > t.startMs) {
+          await audio.playSegment(uri, t.startMs, t.endMs)
+        } else {
+          await audio.startPlayback(uri)
+        }
       } catch (e) {
         setPlayingSlot(null)
         Alert.alert('Playback', messageFromUnknownError(e))
@@ -176,7 +352,142 @@ export default function RecordingScreen({ navigation, route }: Props) {
         setPlaybackPending(false)
       }
     },
-    [audio, fastUri, slowUri],
+    [audio, fastTrim, fastUri, playbackPending, playingSlot, slowTrim, slowUri],
+  )
+
+  const openTrim = useCallback(
+    async (slot: 'slow' | 'fast') => {
+      const uri = slot === 'slow' ? slowUri : fastUri
+      const ms = slot === 'slow' ? slowMs : fastMs
+      if (!uri || ms <= 0) return
+      const t = slot === 'slow' ? slowTrim : fastTrim
+      try {
+        await audio.stopSoundOnly()
+      } catch {
+        /* ignore */
+      }
+      setTrimSlot(slot)
+      setTrimStartMs(t?.startMs ?? 0)
+      setTrimEndMs(t?.endMs ?? ms)
+      setInlineTrimSlot(slot)
+    },
+    [audio, fastMs, fastTrim, fastUri, slowMs, slowTrim, slowUri],
+  )
+
+  const closeTrim = useCallback(async () => {
+    try {
+      await audio.stopSoundOnly()
+    } catch {
+      /* ignore */
+    }
+    setInlineTrimSlot(null)
+    setTrimSlot(null)
+    setTrimStartMs(0)
+    setTrimEndMs(0)
+  }, [audio])
+
+  const previewTrim = useCallback(async () => {
+    if (!trimSlot) return
+    const uri = trimSlot === 'slow' ? slowUri : fastUri
+    if (!uri) return
+    const playingThis = playingSlot === trimSlot && (audio.isPlaying || playbackPending)
+    if (playingThis) {
+      try {
+        await audio.stopPlayback()
+      } catch {
+        /* ignore */
+      } finally {
+        setPlaybackPending(false)
+        setPlayingSlot(null)
+      }
+      return
+    }
+    const start = Math.max(0, Math.min(trimStartMs, trimEndMs))
+    const end = Math.max(start, trimEndMs)
+    try {
+      await audio.stopSoundOnly()
+      setPlayingSlot(trimSlot)
+      setPlaybackPending(true)
+      await audio.playSegment(uri, start, end)
+    } catch (e) {
+      setPlayingSlot(null)
+      Alert.alert('Trim preview', messageFromUnknownError(e))
+    } finally {
+      setPlaybackPending(false)
+    }
+  }, [
+    audio,
+    fastUri,
+    playbackPending,
+    playingSlot,
+    slowUri,
+    trimEndMs,
+    trimSlot,
+    trimStartMs,
+  ])
+
+  const applyTrim = useCallback(async () => {
+    if (!trimSlot) return
+    const uri = trimSlot === 'slow' ? slowUri : fastUri
+    const ms = trimSlot === 'slow' ? slowMs : fastMs
+    if (!uri || ms <= 0) return
+
+    const start = Math.max(0, Math.min(trimStartMs, trimEndMs))
+    const end = Math.max(start, Math.min(trimEndMs, ms))
+    if (end - start < 150) {
+      Alert.alert('Trim', 'Trim range is too small. Please keep at least 0.2s.')
+      return
+    }
+    try {
+      const result = await nativeTrim(uri, {
+        type: 'audio',
+        outputExt: 'm4a',
+        saveToPhoto: false,
+        removeAfterSavedToPhoto: false,
+        removeAfterFailedToSavePhoto: false,
+        enableRotation: false,
+        rotationAngle: 0,
+        startTime: Math.floor(start),
+        endTime: Math.floor(end),
+      })
+
+      if (!result?.success || !result?.outputPath) {
+        throw new Error('Native trim did not return an output file.')
+      }
+
+      const rawOutPath = String(result.outputPath)
+      const outUri = (() => {
+        if (rawOutPath.startsWith('file://')) return rawOutPath
+        if (rawOutPath.startsWith('file:/')) return rawOutPath.replace(/^file:\/*/, 'file:///')
+        if (rawOutPath.startsWith('/')) return `file://${rawOutPath}`
+        return rawOutPath
+      })()
+
+      // `end-start` is in our UI units (ms). Use it to avoid unit mismatches in native duration.
+      const newMs = Math.max(0, Math.floor(end - start))
+
+      if (trimSlot === 'slow') {
+        setSlowUri(outUri)
+        setSlowMs(newMs)
+        setSlowTrim({ startMs: 0, endMs: newMs })
+      } else {
+        setFastUri(outUri)
+        setFastMs(newMs)
+        setFastTrim({ startMs: 0, endMs: newMs })
+      }
+      await closeTrim()
+    } catch (e) {
+      Alert.alert('Trim failed', messageFromUnknownError(e))
+    }
+  }, [closeTrim, fastMs, fastUri, slowMs, slowUri, trimEndMs, trimSlot, trimStartMs])
+
+  const onTrimStartChange = useCallback(
+    (v: number) => {
+      // Keep end handle fixed visually; only clamp start to remain before end.
+      const next = Math.max(0, Math.min(v, trimEndMs - 50))
+      setTrimStartMs(next)
+    },
+    [trimEndMs],
   )
 
   const reRecordSlot = useCallback(
@@ -186,17 +497,25 @@ export default function RecordingScreen({ navigation, route }: Props) {
       } catch {
         /* ignore */
       }
+      if (trimSlot === slot || inlineTrimSlot === slot) {
+        setInlineTrimSlot(null)
+        setTrimSlot(null)
+        setTrimStartMs(0)
+        setTrimEndMs(0)
+      }
       if (slot === 'slow') {
         setSlowUri(null)
         setSlowMs(0)
+        setSlowTrim(null)
       } else {
         setFastUri(null)
         setFastMs(0)
+        setFastTrim(null)
       }
       setRecordingSlot(null)
       await audio.resetClip()
     },
-    [audio],
+    [audio, inlineTrimSlot, trimSlot],
   )
 
   const uploadCurrentWord = useCallback(async () => {
@@ -293,9 +612,21 @@ export default function RecordingScreen({ navigation, route }: Props) {
     const playingThis = playingSlot === slot && (audio.isPlaying || playbackPending)
     const totalPlaybackMs =
       audio.playbackDurationMs > 0 ? audio.playbackDurationMs : ms
+    const trim = slot === 'slow' ? slowTrim : fastTrim
+    const effectiveMs = trim ? Math.max(0, trim.endMs - trim.startMs) : ms
+    const inTrimMode = inlineTrimSlot === slot
+    const trimDur = Math.max(0, trimEndMs - trimStartMs)
+    const trimStartPct = ms > 0 ? (trimStartMs / ms) * 100 : 0
+    const trimEndPct = ms > 0 ? (trimEndMs / ms) * 100 : 100
+    const handleHalfPx = 17
+    const halfPct = waveWidthRef.current > 0 ? (handleHalfPx / waveWidthRef.current) * 100 : 0
+    const safeStartPct = Math.max(0, Math.min(100, Math.max(halfPct, trimStartPct)))
+    const safeEndPct = Math.max(0, Math.min(100, Math.min(100 - halfPct, trimEndPct)))
+    const TRIM_SNAP_MS = 20
+    const TRIM_MIN_GAP_MS = 150
     const timeLabel = playingThis
       ? `${formatDurationMs(audio.playbackPositionMs)} / ${formatDurationMs(totalPlaybackMs)}`
-      : formatDurationMs(ms)
+      : formatDurationMs(effectiveMs)
     const waveMode =
       isRec ? 'recording' : playingThis ? 'playing' : uri ? 'ready' : 'idle'
 
@@ -316,7 +647,53 @@ export default function RecordingScreen({ navigation, route }: Props) {
             {isRec ? (
               <Text style={styles.timer}>{formatDurationMs(audio.durationMs)}</Text>
             ) : uri ? (
-              <>
+              inTrimMode ? (
+                <>
+                  <View style={styles.trimHeadRow}>
+                    <Pressable style={styles.playCircleSmall} onPress={() => void previewTrim()}>
+                      <Text style={styles.playTriSmall}>{playingThis ? '⏹' : '▶'}</Text>
+                    </Pressable>
+                    <View style={styles.trimHeadInfo}>
+                      <Text style={styles.trimHeadDuration}>
+                        {formatDurationMs(trimDur)} · {playingThis ? 'playing' : 'trimming'}
+                      </Text>
+                      <Text style={styles.trimHeadHint}>drag start/end to trim</Text>
+                    </View>
+                  </View>
+
+                  <TrimWaveEditor
+                    ms={ms}
+                    trimStartMs={trimStartMs}
+                    trimEndMs={trimEndMs}
+                    setTrimStartMs={setTrimStartMs}
+                    setTrimEndMs={setTrimEndMs}
+                  />
+
+                  <View style={styles.waveEdgeTimes}>
+                    <Text style={styles.waveEdgeTime}>Start {formatDurationMs(trimStartMs)}</Text>
+                    <Text style={styles.waveEdgeTime}>End {formatDurationMs(trimEndMs)}</Text>
+                  </View>
+
+                  <View style={styles.trimInlineActions}>
+                    <Pressable style={styles.trimInlineBtnGhost} onPress={() => void closeTrim()}>
+                      <Text style={styles.trimInlineBtnGhostText} numberOfLines={1}>
+                        Cancel
+                      </Text>
+                    </Pressable>
+                    <Pressable style={styles.trimInlineBtnGhost} onPress={() => void reRecordSlot(slot)}>
+                      <Text style={styles.trimInlineBtnGhostText} numberOfLines={1}>
+                        Re-record
+                      </Text>
+                    </Pressable>
+                    <Pressable style={styles.trimInlineBtnApply} onPress={() => void applyTrim()}>
+                      <Text style={styles.trimInlineBtnApplyText} numberOfLines={1}>
+                        Apply
+                      </Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <>
                 <WaveformBars mode={waveMode} />
                 <Text style={styles.durText}>{timeLabel}</Text>
                 {playingThis ? (
@@ -326,13 +703,17 @@ export default function RecordingScreen({ navigation, route }: Props) {
                 )}
                 <View style={styles.playRow}>
                   <Pressable style={styles.playCircle} onPress={() => void playSlot(slot)}>
-                    <Text style={styles.playTri}>▶</Text>
+                    <Text style={styles.playTri}>{playingThis ? '⏹' : '▶'}</Text>
+                  </Pressable>
+                  <Pressable onPress={() => void openTrim(slot)} disabled={uploading}>
+                    <Text style={[styles.reRecordText, uploading && styles.disabledText]}>Trim</Text>
                   </Pressable>
                   <Pressable onPress={() => void reRecordSlot(slot)}>
                     <Text style={styles.reRecordText}>Re-record</Text>
                   </Pressable>
                 </View>
               </>
+              )
             ) : (
               <Text style={styles.hint}>Tap circle to record</Text>
             )}
@@ -354,9 +735,12 @@ export default function RecordingScreen({ navigation, route }: Props) {
     <View style={styles.screen}>
       {seriesSession ? (
         <View style={styles.seriesSessionBanner}>
-          <Text style={styles.seriesSessionLang}>{seriesSession.language}</Text>
+          <Text style={styles.seriesSessionLang}>
+            {titleCase(seriesSession.language)}
+            {current?.series ? ` · ${current.series}` : ''}
+          </Text>
           <Text style={styles.seriesSessionLeft}>
-            {queue.length} word{queue.length === 1 ? '' : 's'} left in this series
+            {queue.length} {queue.length === 1 ? 'Word' : 'Words'} Left
           </Text>
         </View>
       ) : null}
@@ -370,11 +754,19 @@ export default function RecordingScreen({ navigation, route }: Props) {
         </View>
       </View>
 
-      <Text style={styles.wordText}>{current.word}</Text>
-      <Text style={styles.seriesHint}>{current.series}</Text>
-      <View style={styles.badgeWrap}>
-        <StatusPill status={current.status} compact />
+      <View style={styles.wordRow}>
+        <Text style={styles.wordText} numberOfLines={2}>
+          {current.word}
+        </Text>
+        <Pressable
+          style={[styles.wordRerecordPill, (!slowUri && !fastUri) && styles.wordRerecordPillDisabled]}
+          onPress={() => void clearSlots()}
+          disabled={!slowUri && !fastUri}
+        >
+          <Text style={styles.wordRerecordPillText}>Re-record</Text>
+        </Pressable>
       </View>
+      {/* Status pill removed from this screen; re-record is now handled by the word-level action pill. */}
 
       {slotCard('slow', 'Slow')}
       {slotCard('fast', 'Fast')}
@@ -418,16 +810,16 @@ const styles = StyleSheet.create({
   },
   emptyText: { color: '#888', fontSize: 16 },
   seriesSessionBanner: {
-    backgroundColor: '#1a1525',
+    backgroundColor: '#1a1a1a',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#4c1d95',
+    borderColor: '#3f3f46',
     paddingVertical: 12,
     paddingHorizontal: 14,
     marginBottom: 16,
   },
   seriesSessionLang: {
-    color: '#c4b5fd',
+    color: ACCENT_GREEN,
     fontSize: 14,
     fontWeight: '600',
     marginBottom: 4,
@@ -452,23 +844,38 @@ const styles = StyleSheet.create({
   },
   fill: {
     height: '100%',
-    backgroundColor: '#7C3AED',
+    backgroundColor: ACCENT_ORANGE,
     borderRadius: 4,
   },
   wordText: {
     color: '#ffffff',
     fontSize: 32,
     fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 6,
+    flexShrink: 1,
   },
-  seriesHint: {
-    color: '#888888',
-    fontSize: 14,
-    textAlign: 'center',
+  wordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
     marginBottom: 10,
   },
-  badgeWrap: { alignItems: 'center', marginBottom: 16 },
+  wordRerecordPill: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: PILL_PURPLE_BG,
+    borderWidth: 1,
+    borderColor: '#312e81',
+  },
+  wordRerecordPillDisabled: {
+    opacity: 0.5,
+  },
+  wordRerecordPillText: {
+    color: PILL_PURPLE_TEXT,
+    fontSize: 14,
+    fontWeight: '700',
+  },
   card: {
     backgroundColor: '#1a1a1a',
     borderRadius: 12,
@@ -524,12 +931,13 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     height: 32,
     marginBottom: 6,
+    width: '100%',
   },
   waveBar: {
-    width: 4,
-    marginRight: 3,
+    flex: 1,
+    marginRight: 2,
     borderRadius: 2,
-    backgroundColor: '#7C3AED',
+    backgroundColor: ACCENT_ORANGE,
   },
   durText: {
     color: '#e4e4e7',
@@ -551,7 +959,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#7C3AED',
+    backgroundColor: ACCENT_ORANGE,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -564,9 +972,12 @@ const styles = StyleSheet.create({
     color: '#888888',
     fontSize: 14,
   },
+  disabledText: {
+    opacity: 0.4,
+  },
   nextBtn: {
     marginTop: 8,
-    backgroundColor: '#7C3AED',
+    backgroundColor: ACCENT_GREEN,
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
@@ -575,7 +986,7 @@ const styles = StyleSheet.create({
     opacity: 0.4,
   },
   nextBtnText: {
-    color: '#ffffff',
+    color: '#0a0a0a',
     fontSize: 17,
     fontWeight: '700',
   },
@@ -585,7 +996,78 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   skipText: {
-    color: '#888888',
+    color: ACCENT_YELLOW,
     fontSize: 15,
   },
+  trimHeadRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
+  playCircleSmall: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: ACCENT_ORANGE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playTriSmall: { color: '#fff', fontSize: 13, marginLeft: 2 },
+  trimHeadInfo: { flex: 1 },
+  trimHeadDuration: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  trimHeadHint: { color: '#71717a', fontSize: 11 },
+  inlineWaveWrap: {
+    height: 56,
+    backgroundColor: '#111',
+    borderRadius: 8,
+    marginBottom: 8,
+    overflow: 'visible',
+    position: 'relative',
+  },
+  inlineShade: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.28)',
+  },
+  inlineShadeLeft: { left: 0 },
+  inlineShadeRight: { right: 0 },
+  inlineHandle: {
+    position: 'absolute',
+    top: 11,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: ACCENT_ORANGE,
+    marginLeft: -17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inlineHandleTime: { display: 'none' },
+  trimSliderRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  trimSliderHalf: { flex: 1 },
+  trimMiniLabel: { color: '#a1a1aa', fontSize: 10, marginBottom: -4 },
+  waveEdgeTimes: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: -2,
+    marginBottom: 8,
+    paddingHorizontal: 2,
+  },
+  waveEdgeTime: { color: '#9ca3af', fontSize: 10, fontVariant: ['tabular-nums'] },
+  trimInlineActions: { flexDirection: 'row', gap: 6, marginTop: 8, alignItems: 'center' },
+  trimInlineBtnGhost: {
+    flex: 1,
+    borderRadius: 8,
+    backgroundColor: '#2a2a2a',
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trimInlineBtnGhostText: { color: '#a1a1aa', fontSize: 11, fontWeight: '600', textAlign: 'center' },
+  trimInlineBtnApply: {
+    flex: 1,
+    borderRadius: 8,
+    backgroundColor: ACCENT_ORANGE,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trimInlineBtnApplyText: { color: '#0a0a0a', fontSize: 11, fontWeight: '700', textAlign: 'center' },
 })

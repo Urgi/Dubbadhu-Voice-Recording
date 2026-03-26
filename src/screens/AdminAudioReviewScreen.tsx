@@ -45,8 +45,17 @@ export default function AdminAudioReviewScreen({ navigation }: Props) {
     setIndex(0)
   }, [])
 
+  const titleCase = useCallback((s: string) => {
+    return String(s ?? '')
+      .trim()
+      .split(/\s+/g)
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ')
+  }, [])
+
   useEffect(() => {
-    navigation.setOptions({ title: 'Review recorded audio' })
+    navigation.setOptions({ title: 'Audio Approval Queue' })
   }, [navigation])
 
   useEffect(() => {
@@ -172,7 +181,7 @@ export default function AdminAudioReviewScreen({ navigation }: Props) {
     return (
       <View style={styles.centered}>
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        <Text style={styles.doneTitle}>No recorded words left in the queue.</Text>
+        <Text style={styles.doneTitle}>No recorded words left in the Audio Approval Queue.</Text>
         <Pressable style={styles.doneBtn} onPress={() => navigation.goBack()}>
           <Text style={styles.doneBtnText}>Back to Voice Recording</Text>
         </Pressable>
@@ -186,7 +195,7 @@ export default function AdminAudioReviewScreen({ navigation }: Props) {
       <Text style={styles.progress}>{progressLabel}</Text>
       <Text style={styles.word}>{current.word}</Text>
       <Text style={styles.meta}>
-        {current.series} · {current.language}
+        {current.series} · {titleCase(current.language)}
       </Text>
 
       <View style={styles.playRow}>
@@ -264,7 +273,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   meta: {
-    color: '#888',
+    color: '#22c55e',
     marginTop: 6,
     marginBottom: 18,
     fontSize: 14,

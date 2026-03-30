@@ -146,6 +146,14 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
     setRefreshing(false)
   }, [loadWords])
 
+  const hasRecordedQueue = useMemo(
+    () =>
+      words.some(
+        (w) => w.status === 'recorded' && Boolean(w.slow_audio_url?.trim() || w.fast_audio_url?.trim()),
+      ),
+    [words],
+  )
+
   useEffect(() => {
     if (!editOpen || !editWord) return
     const ensureSeries = editWord.series
@@ -508,6 +516,26 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
   return (
     <View style={styles.screen}>
       {listError ? <Text style={styles.errorBanner}>{listError}</Text> : null}
+      <Pressable
+        style={({ pressed }) => [
+          styles.seriesReviewQueueBar,
+          !hasRecordedQueue && styles.seriesReviewQueueBarDisabled,
+          pressed && styles.seriesReviewQueueBarPressed,
+        ]}
+        onPress={() =>
+          navigation.navigate('AdminSeriesAudioReview', {
+            seriesName,
+            language,
+          })
+        }
+        disabled={!hasRecordedQueue}
+      >
+        <View style={styles.seriesReviewQueueTextCol}>
+          <Text style={styles.seriesReviewQueueTitle}>Review Series Audio</Text>
+          <Text style={styles.seriesReviewQueueSub}>Recorded words awaiting approval</Text>
+        </View>
+        <Text style={styles.seriesReviewQueueChevron}>›</Text>
+      </Pressable>
       <FlatList
         data={words}
         keyExtractor={(item) => item.id}
@@ -757,6 +785,43 @@ const styles = StyleSheet.create({
     padding: 12,
     textAlign: 'center',
     fontSize: 14,
+  },
+  seriesReviewQueueBar: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 6,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: '#1f2937',
+    borderWidth: 1,
+    borderColor: '#374151',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  seriesReviewQueueBarPressed: {
+    opacity: 0.88,
+  },
+  seriesReviewQueueBarDisabled: {
+    opacity: 0.45,
+  },
+  seriesReviewQueueTextCol: { flex: 1 },
+  seriesReviewQueueTitle: {
+    color: '#f4f4f5',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  seriesReviewQueueSub: {
+    color: '#9ca3af',
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  seriesReviewQueueChevron: {
+    color: '#6b7280',
+    fontSize: 22,
+    fontWeight: '300',
+    marginLeft: 12,
   },
   rowWrap: {
     backgroundColor: '#0a0a0a',

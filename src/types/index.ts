@@ -18,15 +18,20 @@ export type RecordingWord = {
   created_at: string
 }
 
-export type AuthRole = 'admin' | 'voice'
+export type AuthRole = 'admin' | 'voice' | 'professor'
 
 export type RootStackParamList = {
   Login: undefined
+  ProfessorHome: undefined
   AdminHome: undefined
   AdminAnalytics: undefined
+  LessonConfig: undefined
+  LessonConfigSeries: { seriesId: string }
+  LessonConfigDetail: { lessonId: string }
   AdminSeriesList: undefined
   AdminSeriesDetail: { seriesName: string; language: string }
   AdminAudioReview: undefined
+  AdminSeriesAudioReview: { seriesName: string; language: string }
   VoiceActorDashboard: undefined
   Recording: {
     words: RecordingWord[]

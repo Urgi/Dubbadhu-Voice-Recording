@@ -9,6 +9,7 @@ type Props = StackScreenProps<RootStackParamList, 'Login'>
 const PIN_LENGTH = 4
 const ADMIN_PIN = '5139'
 const VOICE_PIN = '3142'
+const PROFESSOR_PIN = '4126'
 
 const KEYPAD_ROWS: (string | null)[][] = [
   ['1', '2', '3'],
@@ -36,6 +37,13 @@ export default function LoginScreen({ navigation }: Props) {
         setError('')
         setPin('')
         navigation.reset({ index: 0, routes: [{ name: 'VoiceActorDashboard' }] })
+        return
+      }
+      if (fullPin === PROFESSOR_PIN) {
+        setRole('professor')
+        setError('')
+        setPin('')
+        navigation.reset({ index: 0, routes: [{ name: 'ProfessorHome' }] })
         return
       }
       setError('Incorrect PIN')

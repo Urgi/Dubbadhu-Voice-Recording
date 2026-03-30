@@ -5,11 +5,16 @@ import { createStackNavigator } from '@react-navigation/stack'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
 import LoginScreen from './src/screens/LoginScreen'
+import ProfessorHomeScreen from './src/screens/ProfessorHomeScreen'
 import AdminHomeScreen from './src/screens/AdminHomeScreen'
 import AdminAnalyticsScreen from './src/screens/AdminAnalyticsScreen'
 import AdminSeriesListScreen from './src/screens/AdminSeriesListScreen'
 import AdminSeriesDetailScreen from './src/screens/AdminSeriesDetailScreen'
 import AdminAudioReviewScreen from './src/screens/AdminAudioReviewScreen'
+import AdminSeriesAudioReviewScreen from './src/screens/AdminSeriesAudioReviewScreen'
+import LessonConfigScreen from './src/screens/LessonConfigScreen'
+import LessonConfigSeriesScreen from './src/screens/LessonConfigSeriesScreen'
+import LessonConfigDetailScreen from './src/screens/LessonConfigDetailScreen'
 import VoiceActorDashboardScreen from './src/screens/VoiceActorDashboardScreen'
 import { AuthProvider } from './src/context/AuthContext'
 import type { RootStackParamList } from './src/types'
@@ -44,11 +49,16 @@ function AppStack() {
         }}
       >
         <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="AdminHome" component={AdminHomeScreen} options={{ title: 'Admin' }} />
+        <Stack.Screen name="ProfessorHome" component={ProfessorHomeScreen} />
+        <Stack.Screen name="AdminHome" component={AdminHomeScreen} options={{ title: 'Admin Control Center' }} />
+        <Stack.Screen name="LessonConfig" component={LessonConfigScreen} options={{ title: 'Series Config' }} />
+        <Stack.Screen name="LessonConfigSeries" component={LessonConfigSeriesScreen} />
+        <Stack.Screen name="LessonConfigDetail" component={LessonConfigDetailScreen} />
         <Stack.Screen name="AdminAnalytics" component={AdminAnalyticsScreen} />
         <Stack.Screen name="AdminSeriesList" component={AdminSeriesListScreen} options={{ title: 'Voice Recording' }} />
         <Stack.Screen name="AdminSeriesDetail" component={AdminSeriesDetailScreen} />
         <Stack.Screen name="AdminAudioReview" component={AdminAudioReviewScreen} />
+        <Stack.Screen name="AdminSeriesAudioReview" component={AdminSeriesAudioReviewScreen} />
         <Stack.Screen
           name="VoiceActorDashboard"
           component={VoiceActorDashboardScreen}

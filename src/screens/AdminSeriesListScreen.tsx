@@ -19,12 +19,13 @@ import {
   type WordAggRow,
 } from '../lib/seriesAggregation'
 import supabase from '../lib/supabase'
+import { VOICE_BANK_LANGUAGE } from '../lib/voiceBankLabels'
 import { normalizeRecordingStatus } from '../lib/wordStatus'
 import type { RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminSeriesList'>
 
-const DEFAULT_NEW_LANGUAGE = 'afaan oromo'
+const DEFAULT_NEW_LANGUAGE = VOICE_BANK_LANGUAGE
 
 export default function AdminSeriesListScreen({ navigation }: Props) {
   const [summaries, setSummaries] = useState<SeriesSummary[]>([])

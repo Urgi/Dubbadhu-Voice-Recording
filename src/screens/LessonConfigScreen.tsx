@@ -21,6 +21,8 @@ import {
   AdminPlusIcon,
   AdminSectionHeader,
 } from '../components/lesson-config/AdminLessonConfigChrome'
+import { useAuth } from '../context/AuthContext'
+import { seriesStatusLabel, normalizeSeriesStatus } from '../lib/lessonSeriesStatus'
 import supabase from '../lib/supabase'
 import type { RootStackParamList } from '../types'
 
@@ -34,6 +36,7 @@ type SeriesRow = {
   approved: boolean | null
   /** From `lesson_series.audio_recorded`; null when series id only exists on lessons. */
   audio_recorded: boolean | null
+  series_status: string | null
 }
 
 /** Next `series1`-style id: max existing `seriesN` + 1, skipping collisions. */
@@ -62,6 +65,7 @@ function seriesNumberFromId(id: string, fallback: number): number {
 }
 
 export default function LessonConfigScreen({ navigation }: Props) {
+  const { role } = useAuth()
   const [seriesList, setSeriesList] = useState<SeriesRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -93,7 +97,7 @@ export default function LessonConfigScreen({ navigation }: Props) {
 
     const { data: seriesData, error: seriesErr } = await supabase
       .from('lesson_series')
-      .select('id,title,sort_order,approved,audio_recorded')
+      .select('id,title,sort_order,approved,audio_recorded,series_status')
       .order('sort_order', { ascending: true })
 
     if (!seriesErr && seriesData && seriesData.length > 0) {
@@ -102,6 +106,7 @@ export default function LessonConfigScreen({ navigation }: Props) {
           ...r,
           approved: typeof r.approved === 'boolean' ? r.approved : false,
           audio_recorded: typeof r.audio_recorded === 'boolean' ? r.audio_recorded : false,
+          series_status: typeof r.series_status === 'string' ? r.series_status : null,
         })),
       )
       setLoading(false)
@@ -132,6 +137,7 @@ export default function LessonConfigScreen({ navigation }: Props) {
         sort_order: null,
         approved: null,
         audio_recorded: null,
+        series_status: null,
       })),
     )
     setLoading(false)
@@ -158,12 +164,14 @@ export default function LessonConfigScreen({ navigation }: Props) {
     const id = nextSeriesId(seriesList.map((s) => s.id))
 
     setSaving(true)
+    const initialStatus = role === 'admin' ? 'admin_draft' : 'draft'
     const { error: insErr } = await supabase.from('lesson_series').insert({
       id,
       title,
       sort_order: suggestedSort,
       approved: false,
       audio_recorded: false,
+      series_status: initialStatus,
     })
     setSaving(false)
 
@@ -175,7 +183,7 @@ export default function LessonConfigScreen({ navigation }: Props) {
     setLoading(true)
     void load()
     navigation.navigate('LessonConfigSeries', { seriesId: id })
-  }, [seriesList, newTitle, suggestedSort, load, navigation])
+  }, [seriesList, newTitle, suggestedSort, load, navigation, role])
 
   if (loading && seriesList.length === 0) {
     return (
@@ -214,6 +222,15 @@ export default function LessonConfigScreen({ navigation }: Props) {
         }
         renderItem={({ item, index }) => {
           const order = item.sort_order != null && item.sort_order > 0 ? item.sort_order : index + 1
+          const ls =
+            item.series_status != null && item.series_status.trim()
+              ? normalizeSeriesStatus(item.series_status)
+              : item.audio_recorded === true && item.approved === true
+                ? 'complete'
+                : item.approved === true
+                  ? 'approved'
+                  : 'draft'
+          const statusLine = seriesStatusLabel(ls)
           return (
             <Pressable
               style={({ pressed }) => [styles.rowCard, pressed && styles.rowPressed]}
@@ -228,13 +245,8 @@ export default function LessonConfigScreen({ navigation }: Props) {
                   <Text style={styles.rowTitle} numberOfLines={2}>
                     {item.title || item.id}
                   </Text>
-                  <Text
-                    style={
-                      item.approved === true ? styles.statusApproved : styles.statusNotApproved
-                    }
-                    numberOfLines={1}
-                  >
-                    {item.approved === true ? 'Approved' : 'Not approved'}
+                  <Text style={styles.statusLifecycle} numberOfLines={1}>
+                    {statusLine}
                   </Text>
                   <Text
                     style={
@@ -242,7 +254,7 @@ export default function LessonConfigScreen({ navigation }: Props) {
                     }
                     numberOfLines={1}
                   >
-                    {item.audio_recorded === true ? 'Audio recorded' : 'Audio not recorded'}
+                    {item.audio_recorded === true ? 'Audio complete' : 'Audio not complete'}
                   </Text>
                 </View>
                 <AdminChevronRight size={10} color="#636366" />
@@ -334,6 +346,7 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 11, fontWeight: '600', color: ADMIN_ACCENT_GOLD },
   rowText: { flex: 1, minWidth: 0 },
   rowTitle: { fontSize: 14, fontWeight: '500', color: '#fff' },
+  statusLifecycle: { fontSize: 12, fontWeight: '600', color: ADMIN_ACCENT_GOLD, marginTop: 4 },
   statusApproved: { fontSize: 12, fontWeight: '600', color: '#34c759', marginTop: 4 },
   statusNotApproved: { fontSize: 12, fontWeight: '500', color: '#a8a29e', marginTop: 4 },
   statusAudioOn: { fontSize: 12, fontWeight: '600', color: '#38bdf8', marginTop: 2 },

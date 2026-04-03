@@ -19,6 +19,7 @@ import type { StackScreenProps } from '@react-navigation/stack'
 import { StatusPill } from '../components/StatusPill'
 import { useRemoteAudioUrl } from '../hooks/useRemoteAudioUrl'
 import { extractWordsFromDocument } from '../lib/gemini'
+import { approveWordRecording } from '../lib/approveWordRecording'
 import supabase from '../lib/supabase'
 import { normalizeRecordingWords } from '../lib/wordStatus'
 import type { RecordingWord, RootStackParamList } from '../types'
@@ -287,6 +288,9 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
         status: 'pending',
         slow_audio_url: null,
         fast_audio_url: null,
+        fast_waveform_envelope: null,
+        slow_waveform_envelope: null,
+        waveform_pending: false,
       })
       .eq('id', w.id)
     if (error) {
@@ -298,7 +302,7 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
 
   const acceptRecording = async (w: RecordingWord) => {
     swipeRefs.current[w.id]?.close()
-    const { error } = await supabase.from('words').update({ status: 'approved' }).eq('id', w.id)
+    const { error } = await approveWordRecording(w.id)
     if (error) {
       Alert.alert('Error', error.message)
       return

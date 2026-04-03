@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { useRemoteAudioUrl } from '../hooks/useRemoteAudioUrl'
+import { approveWordRecording } from '../lib/approveWordRecording'
 import supabase from '../lib/supabase'
 import { normalizeRecordingWords } from '../lib/wordStatus'
 import type { RecordingWord, RootStackParamList } from '../types'
@@ -92,7 +93,7 @@ export default function AdminSeriesAudioReviewScreen({ navigation, route }: Prop
   const approveAndNext = useCallback(async () => {
     if (!current || saving) return
     setSaving(true)
-    const { error: updateError } = await supabase.from('words').update({ status: 'approved' }).eq('id', current.id)
+    const { error: updateError } = await approveWordRecording(current.id)
     setSaving(false)
     if (updateError) {
       setError(updateError.message)

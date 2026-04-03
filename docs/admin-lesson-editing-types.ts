@@ -23,6 +23,7 @@ export type ScreenType =
   | "speakingPractice"
   | "audioExposure"
   | "audioDiscrimination"
+  | "wordDiscriminationQuiz"
   | "communityBoard"
   | "word-breakdown";
 
@@ -88,6 +89,49 @@ export type QuizContent = {
   options?: QuizOption[];
   correctAnswer?: number;
   answer?: number;
+  [k: string]: unknown;
+};
+
+export type WordDiscriminationWordEntry = {
+  text: string;
+  definition?: string;
+  word_id?: string;
+  oromo?: string;
+  [k: string]: unknown;
+};
+
+export type WordDiscriminationScene = {
+  /** Public URL from bucket `word-comparison-images` when set. */
+  image: string;
+  /** When no `image` yet: description for a pending asset; shown in the learner app. */
+  imageRequestDescription?: string;
+  correctWordIndex: number;
+  explanation: string;
+  /** @deprecated use top-level `question` on quiz content */
+  question?: string;
+  /** @deprecated not used; omit from new content */
+  caption?: string;
+  title?: string;
+  prompt?: string;
+  /** @deprecated use correctWordIndex */
+  correct?: "A" | "B";
+  [k: string]: unknown;
+};
+
+export type WordDiscriminationQuizContent = {
+  /** One question for every scene; shown above images in the learner app. */
+  question: string;
+  words: WordDiscriminationWordEntry[];
+  scenes: WordDiscriminationScene[];
+  /** Derived on save; learner uses words.length when `words` is present. */
+  streakTarget?: number;
+  /** @deprecated migrated to `words` */
+  wordA?: string;
+  wordB?: string;
+  definitionA?: string;
+  definitionB?: string;
+  wordA_id?: string;
+  wordB_id?: string;
   [k: string]: unknown;
 };
 

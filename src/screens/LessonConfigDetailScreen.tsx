@@ -20,15 +20,24 @@ import {
   AdminSectionHeader,
 } from '../components/lesson-config/AdminLessonConfigChrome'
 import { LessonScreenEditModal } from '../components/lesson-editor/LessonScreenEditModal'
+import { useAuth } from '../context/AuthContext'
 import {
   type LessonContentDraft,
   type LessonScreen,
   SCREEN_TYPE_OPTIONS,
   defaultScreen,
   parseLessonContent,
-  screenSummary,
+  screenSubtitleLines,
+  syncCelebrateScreensWithAudioExposure,
 } from '../lib/lessonEditor'
+import {
+  isLessonStructureFrozen,
+  isProfessorLessonEditingAllowed,
+  normalizeSeriesStatus,
+  type LessonSeriesStatus,
+} from '../lib/lessonSeriesStatus'
 import supabase from '../lib/supabase'
+import { seriesKey, VOICE_BANK_LANGUAGE, wordsBankSeriesLabelFromSeriesId } from '../lib/voiceBankLabels'
 import type { RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'LessonConfigDetail'>
@@ -94,6 +103,150 @@ function stripNextNavFromAllScreens(content: Record<string, unknown>): void {
   }
 }
 
+function isHttpUrl(v: unknown): boolean {
+  return typeof v === 'string' && /^https?:\/\//i.test(v.trim())
+}
+
+function canonicalWordBankLanguage(v: string): string {
+  const s = v.trim()
+  if (!s) return VOICE_BANK_LANGUAGE.toLowerCase()
+  return s.toLowerCase()
+}
+
+type WordBankAudioRow = {
+  series?: string | null
+  fast_audio_url?: string | null
+  slow_audio_url?: string | null
+  /** Optional; column may not exist until migration is applied. */
+  fast_waveform_envelope?: unknown
+  slow_waveform_envelope?: unknown
+}
+
+function normalizeEnvelopeArray(v: unknown): number[] | null {
+  if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'number')) return v as number[]
+  if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+    const env = (v as { envelope?: unknown }).envelope
+    if (Array.isArray(env) && env.length > 0 && env.every((x) => typeof x === 'number')) return env as number[]
+  }
+  return null
+}
+
+async function lookupWordAudioRow(args: {
+  seriesId: string
+  language: string
+  word: string
+}): Promise<WordBankAudioRow | null> {
+  const word = args.word.trim()
+  if (!word) return null
+
+  const canonicalSeries = seriesKey(args.seriesId)
+  const language = canonicalWordBankLanguage(args.language)
+
+  const { data, error } = await supabase
+    .from('words')
+    .select('*')
+    .ilike('language', language)
+    .ilike('word', word)
+    .limit(10)
+
+  if (error || !data || data.length === 0) return null
+
+  const rows = data as WordBankAudioRow[]
+  const sameSeries = rows.find((r) => seriesKey(String(r.series ?? '')) === canonicalSeries)
+  const pick =
+    sameSeries ??
+    rows.find((r) => Boolean(r.fast_audio_url?.trim() || r.slow_audio_url?.trim())) ??
+    rows[0]
+  return pick ?? null
+}
+
+/**
+ * Hydrate legacy / missing audio refs inside a lesson from the `words` table.
+ * This ensures Dubbadhu can play per-word audio even if the editor only stored text.
+ */
+async function hydrateAudioRefsFromWordBank(content: Record<string, unknown>, seriesId: string | null, language: string): Promise<void> {
+  const sid = (seriesId ?? '').trim()
+  if (!sid) return
+  const lang = canonicalWordBankLanguage(language)
+
+  const screens = content.screens
+  if (!Array.isArray(screens) || screens.length === 0) return
+
+  const cache = new Map<string, WordBankAudioRow | null>()
+  const getRow = async (text: string): Promise<WordBankAudioRow | null> => {
+    const key = text.trim()
+    if (!key) return null
+    if (cache.has(key)) return cache.get(key) ?? null
+    const row = await lookupWordAudioRow({ seriesId: sid, language: lang, word: key })
+    cache.set(key, row)
+    return row
+  }
+
+  const applyWordRowToToken = (wr: Record<string, unknown>, row: WordBankAudioRow | null) => {
+    if (!row) return
+    const fast = row.fast_audio_url?.trim() || null
+    const slow = row.slow_audio_url?.trim() || null
+    if (fast) {
+      wr.fastAudioRef = fast
+      wr.audioRef = fast
+    } else if (slow) {
+      wr.audioRef = slow
+    }
+    if (slow) wr.slowAudioRef = slow
+    const fe = normalizeEnvelopeArray(row.fast_waveform_envelope)
+    const se = normalizeEnvelopeArray(row.slow_waveform_envelope)
+    if (fe?.length) wr.waveformEnvelope = fe
+    if (se?.length) wr.slowWaveformEnvelope = se
+  }
+
+  for (const s of screens) {
+    if (s == null || typeof s !== 'object' || Array.isArray(s)) continue
+    const sr = s as Record<string, unknown>
+    const type = sr.type
+    const c = sr.content
+    if (c == null || typeof c !== 'object' || Array.isArray(c)) continue
+    const cr = c as Record<string, unknown>
+
+    if (type === 'audioExposure') {
+      const words = cr.words
+      if (Array.isArray(words)) {
+        const next = await Promise.all(
+          (words as unknown[]).map(async (w) => {
+            if (w == null || typeof w !== 'object' || Array.isArray(w)) return w
+            const wr = { ...(w as Record<string, unknown>) }
+            const text = String(wr.oromo ?? wr.word ?? '').trim()
+            const row = text ? await getRow(text) : null
+            if (row) applyWordRowToToken(wr, row)
+            return wr
+          }),
+        )
+        cr.words = next
+      }
+      const titleWord = String(cr.word ?? '').trim()
+      if (titleWord && !isHttpUrl(cr.audioRef)) {
+        const row = await getRow(titleWord)
+        if (row?.fast_audio_url?.trim()) cr.audioRef = row.fast_audio_url.trim()
+      }
+    }
+
+    if (type === 'speakingPractice') {
+      const prompt = String(cr.prompt ?? '').trim()
+      const expected = String(cr.expectedAnswer ?? '').trim()
+      const phrase = String(cr.phrase ?? '').trim()
+      const lookupText = prompt && expected ? expected : phrase
+      if (lookupText) {
+        const wrow = await getRow(lookupText)
+        if (wrow) {
+          const fast = wrow.fast_audio_url?.trim()
+          const slow = wrow.slow_audio_url?.trim()
+          if (fast) cr.targetAudioRef = fast
+          else if (slow) cr.targetAudioRef = slow
+        }
+      }
+    }
+  }
+}
+
 async function fetchNextLessonIdInSeries(seriesId: string | null, lessonNumber: number | null): Promise<string | null> {
   if (!seriesId?.trim() || lessonNumber == null || lessonNumber < 1) return null
   const nextNum = lessonNumber + 1
@@ -108,6 +261,7 @@ async function fetchNextLessonIdInSeries(seriesId: string | null, lessonNumber: 
 }
 
 export default function LessonConfigDetailScreen({ navigation, route }: Props) {
+  const { role } = useAuth()
   const { lessonId } = route.params
   const [row, setRow] = useState<LessonRecord | null>(null)
   const [draft, setDraft] = useState<LessonContentDraft | null>(null)
@@ -120,6 +274,39 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
   const [error, setError] = useState('')
   const [pickTypeOpen, setPickTypeOpen] = useState(false)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
+  const [viewIndex, setViewIndex] = useState<number | null>(null)
+  const [seriesStatus, setSeriesStatus] = useState<LessonSeriesStatus>('draft')
+
+  const unsavedRef = useRef(false)
+  const markUnsaved = useCallback(() => {
+    unsavedRef.current = true
+  }, [])
+  const clearUnsaved = useCallback(() => {
+    unsavedRef.current = false
+  }, [])
+
+  useEffect(() => {
+    const sub = navigation.addListener('beforeRemove', (e) => {
+      if (!unsavedRef.current) return
+      e.preventDefault()
+      Alert.alert(
+        'Discard changes?',
+        'You have unsaved changes to this lesson.',
+        [
+          { text: 'Keep editing', style: 'cancel' },
+          {
+            text: 'Leave without saving',
+            style: 'destructive',
+            onPress: () => {
+              unsavedRef.current = false
+              navigation.dispatch(e.data.action)
+            },
+          },
+        ],
+      )
+    })
+    return sub
+  }, [navigation])
 
   const load = useCallback(async () => {
     setError('')
@@ -135,15 +322,43 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
       setRow(null)
       setDraft(null)
       setLoading(false)
+      clearUnsaved()
       return
     }
     const r = data as LessonRecord | null
     setRow(r)
     if (!r) {
       setDraft(null)
+      setSeriesStatus('draft')
       setLoading(false)
+      clearUnsaved()
       return
     }
+
+    let resolvedSeriesStatus: LessonSeriesStatus = 'draft'
+    const sid = (r.series_id ?? '').trim()
+    if (sid) {
+      const { data: lsRow, error: lsErr } = await supabase
+        .from('lesson_series')
+        .select('series_status,approved,audio_recorded')
+        .eq('id', sid)
+        .maybeSingle()
+      if (!lsErr && lsRow) {
+        const sr = lsRow as {
+          series_status?: string | null
+          approved?: boolean | null
+          audio_recorded?: boolean | null
+        }
+        const raw = sr.series_status
+        if (typeof raw === 'string' && raw.trim()) {
+          resolvedSeriesStatus = normalizeSeriesStatus(raw)
+        } else if (sr.audio_recorded === true && sr.approved === true) resolvedSeriesStatus = 'complete'
+        else if (sr.approved === true) resolvedSeriesStatus = 'approved'
+        else resolvedSeriesStatus = 'draft'
+      }
+    }
+    setSeriesStatus(resolvedSeriesStatus)
+
     const parsed = parseLessonContent(r.content, r.id)
     if (parsed) {
       setDraft(parsed)
@@ -163,15 +378,26 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
       )
     }
     setLoading(false)
-  }, [lessonId])
+    clearUnsaved()
+  }, [lessonId, clearUnsaved])
 
   useEffect(() => {
     setLoading(true)
     void load()
   }, [load])
 
+  const lessonContentEditable = useMemo(() => {
+    if (role === 'professor') return isProfessorLessonEditingAllowed(seriesStatus)
+    if (role === 'admin') return !isLessonStructureFrozen(seriesStatus)
+    return false
+  }, [role, seriesStatus])
+
   const save = useCallback(async () => {
     if (!row) return
+    if (!lessonContentEditable) {
+      Alert.alert('View only', 'This lesson cannot be edited while the series is in this status.')
+      return
+    }
     setSaving(true)
     setError('')
     try {
@@ -187,9 +413,12 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
         if (!d) {
           throw new Error('Invalid lesson content: need non-empty screens array with valid screen types.')
         }
-        content = stripUndefined({ ...d, id: row.id }) as Record<string, unknown>
+        const screensSynced = syncCelebrateScreensWithAudioExposure(d.screens)
+        content = stripUndefined({ ...d, id: row.id, screens: screensSynced }) as Record<string, unknown>
+        content.series = wordsBankSeriesLabelFromSeriesId(row.series_id ?? '')
         stripNextNavFromLessonContent(content)
         stripNextNavFromAllScreens(content)
+        await hydrateAudioRefsFromWordBank(content, row.series_id, VOICE_BANK_LANGUAGE)
         title = typeof (parsed as Record<string, unknown>).title === 'string' ? (parsed as Record<string, unknown>).title as string : row.title ?? row.id
       } else {
         if (!draft) {
@@ -207,9 +436,12 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
           ...draft,
           id: row.id,
           title: draft.title.trim() || row.title || row.id,
+          series: wordsBankSeriesLabelFromSeriesId(row.series_id ?? ''),
+          screens: syncCelebrateScreensWithAudioExposure(draft.screens),
         }) as Record<string, unknown>
         stripNextNavFromLessonContent(merged)
         stripNextNavFromAllScreens(merged)
+        await hydrateAudioRefsFromWordBank(merged, row.series_id, VOICE_BANK_LANGUAGE)
         content = merged
         title = String(merged.title ?? row.title ?? row.id)
       }
@@ -242,6 +474,17 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
       }
 
       setRow(r)
+      if (!rawJsonMode) {
+        const pd = parseLessonContent(r.content, row.id)
+        if (pd) setDraft(pd)
+      } else {
+        try {
+          setRawJson(JSON.stringify(r.content ?? {}, null, 2))
+        } catch {
+          setRawJson('{}')
+        }
+      }
+      clearUnsaved()
       setSavedFlash(true)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -250,7 +493,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
     } finally {
       setSaving(false)
     }
-  }, [row, draft, rawJson, rawJsonMode])
+  }, [row, draft, rawJson, rawJsonMode, clearUnsaved, lessonContentEditable])
 
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
@@ -274,13 +517,16 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
     const headerTitle = draft?.title?.trim() || row?.title?.trim() || lessonId
     navigation.setOptions({
       title: headerTitle,
-      headerRight: () => (
-        <Pressable onPress={() => void save()} disabled={saving || loading} style={styles.headerSaveBtn} hitSlop={8}>
-          <Text style={[styles.headerSaveText, saving && styles.headerSaveDisabled]}>Save</Text>
-        </Pressable>
-      ),
+      headerRight: () =>
+        lessonContentEditable ? (
+          <Pressable onPress={() => void save()} disabled={saving || loading} style={styles.headerSaveBtn} hitSlop={8}>
+            <Text style={[styles.headerSaveText, saving && styles.headerSaveDisabled]}>Save</Text>
+          </Pressable>
+        ) : (
+          <Text style={styles.headerViewOnly}>View only</Text>
+        ),
     })
-  }, [navigation, lessonId, row?.title, draft?.title, save, saving, loading])
+  }, [navigation, lessonId, row?.title, draft?.title, save, saving, loading, lessonContentEditable])
 
   if (loading) {
     return (
@@ -311,38 +557,46 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
       <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {parseError ? <Text style={styles.parseHint}>{parseError}</Text> : null}
+        {!lessonContentEditable ? (
+          <Text style={styles.viewOnlyBanner}>This series is view-only — switch back when the series is in draft (professor) or before audio complete (admin).</Text>
+        ) : null}
         <Text style={styles.meta}>id: {row.id} (locked)</Text>
         <AdminSectionHeader label="Full lesson content (JSON)" emphasis="gold" />
         <TextInput
           style={styles.rawJson}
           multiline
+          editable={lessonContentEditable}
           value={rawJson}
           onChangeText={(t) => {
+            markUnsaved()
             setRawJson(t)
             setError('')
           }}
           textAlignVertical="top"
         />
-        <Pressable
-          style={styles.tryVisualBtn}
-          onPress={() => {
-            try {
-              const p = JSON.parse(rawJson) as unknown
-              const d = parseLessonContent(p, row.id)
-              if (d) {
-                setDraft(d)
-                setRawJsonMode(false)
-                setParseError('')
-              } else {
-                Alert.alert('Still invalid', 'Need screens[] with at least one valid screen.')
+        {lessonContentEditable ? (
+          <Pressable
+            style={styles.tryVisualBtn}
+            onPress={() => {
+              try {
+                const p = JSON.parse(rawJson) as unknown
+                const d = parseLessonContent(p, row.id)
+                if (d) {
+                  markUnsaved()
+                  setDraft(d)
+                  setRawJsonMode(false)
+                  setParseError('')
+                } else {
+                  Alert.alert('Still invalid', 'Need screens[] with at least one valid screen.')
+                }
+              } catch {
+                Alert.alert('Invalid JSON', 'Fix JSON syntax first.')
               }
-            } catch {
-              Alert.alert('Invalid JSON', 'Fix JSON syntax first.')
-            }
-          }}
-        >
-          <Text style={styles.tryVisualText}>Try visual editor again</Text>
-        </Pressable>
+            }}
+          >
+            <Text style={styles.tryVisualText}>Try visual editor again</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
     )
   }
@@ -359,11 +613,12 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
     const j = idx + dir
     if (j < 0 || j >= draft.screens.length) return
     if (draft.screens[idx]?.type === 'intro' || draft.screens[j]?.type === 'intro') return
+    markUnsaved()
     setDraft((d) => {
       if (!d) return d
       const next = [...d.screens]
       ;[next[idx], next[j]] = [next[j], next[idx]]
-      return { ...d, screens: next }
+      return { ...d, screens: syncCelebrateScreensWithAudioExposure(next) }
     })
   }
 
@@ -376,18 +631,20 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
       Alert.alert('Keep at least one screen.')
       return
     }
+    markUnsaved()
     setDraft((d) => {
       if (!d) return d
-      return { ...d, screens: d.screens.filter((_, i) => i !== idx) }
+      return { ...d, screens: syncCelebrateScreensWithAudioExposure(d.screens.filter((_, i) => i !== idx)) }
     })
   }
 
   const applyScreenEdit = (idx: number, s: LessonScreen) => {
+    markUnsaved()
     setDraft((d) => {
       if (!d) return d
       const screens = [...d.screens]
       screens[idx] = s
-      return { ...d, screens }
+      return { ...d, screens: syncCelebrateScreensWithAudioExposure(screens) }
     })
   }
 
@@ -398,14 +655,23 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
       {error ? <Text style={styles.bannerError}>{error}</Text> : null}
       {savedFlash ? <Text style={styles.bannerSaved}>Saved</Text> : null}
       <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        {!lessonContentEditable ? (
+          <Text style={styles.viewOnlyBanner}>
+            View only — open this lesson to review screens; editing unlocks when the series allows it.
+          </Text>
+        ) : null}
         <View style={styles.sectionBlock}>
           <AdminSectionHeader label="Lesson" emphasis="gold" />
           <View style={styles.lessonCard}>
             <Text style={styles.cardFieldLabel}>Title</Text>
             <TextInput
               style={styles.cardInput}
+              editable={lessonContentEditable}
               value={draft.title}
-              onChangeText={(t) => setDraft({ ...draft, title: t })}
+              onChangeText={(t) => {
+                markUnsaved()
+                setDraft({ ...draft, title: t })
+              }}
               placeholder="Lesson title"
               placeholderTextColor="#52525b"
             />
@@ -414,8 +680,12 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
             <Text style={styles.cardFieldLabel}>Goal (intro)</Text>
             <TextInput
               style={[styles.cardInput, styles.cardInputMultiline]}
+              editable={lessonContentEditable}
               value={getIntroGoal(draft.screens)}
-              onChangeText={(t) => setDraft((d) => (d ? setIntroGoalOnDraft(d, t) : d))}
+              onChangeText={(t) => {
+                markUnsaved()
+                setDraft((d) => (d ? setIntroGoalOnDraft(d, t) : d))
+              }}
               placeholder="What learners should achieve on the first screen"
               placeholderTextColor="#52525b"
               multiline
@@ -440,12 +710,14 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
               const upDisabled = i === 0 || draft.screens[i - 1]?.type === 'intro'
               const downDisabled =
                 i === draft.screens.length - 1 || draft.screens[i + 1]?.type === 'intro'
-              const summary = screenSummary(s)
+              const subtitleLines = screenSubtitleLines(s)
               return (
                 <View key={`${s.type}-${i}`} style={styles.screenRowCard}>
                   <Pressable
                     style={styles.screenRowMain}
-                    onPress={() => setEditingIndex(i)}
+                    onPress={() =>
+                      lessonContentEditable ? setEditingIndex(i) : setViewIndex(i)
+                    }
                     android_ripple={{ color: '#333' }}
                   >
                     <View style={styles.screenBadge}>
@@ -455,64 +727,70 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
                       <Text style={styles.screenRowTitle} numberOfLines={1}>
                         {screenTypeLabel(s.type)}
                       </Text>
-                      <Text style={styles.screenRowSubtitle} numberOfLines={1}>
-                        {summary || s.type}
+                      <Text style={styles.screenRowSubtitle}>
+                        {subtitleLines.join('\n')}
                       </Text>
                     </View>
                     <AdminChevronRight size={10} color="#636366" />
                   </Pressable>
-                  <View style={styles.screenRowToolbar}>
-                    <Pressable
-                      style={styles.toolbarBtn}
-                      onPress={() => moveScreen(i, -1)}
-                      disabled={upDisabled}
-                      hitSlop={6}
-                    >
-                      <Text style={[styles.toolbarBtnText, upDisabled && styles.disabled]}>Up</Text>
-                    </Pressable>
-                    <Text style={styles.toolbarSep}>·</Text>
-                    <Pressable
-                      style={styles.toolbarBtn}
-                      onPress={() => moveScreen(i, 1)}
-                      disabled={downDisabled}
-                      hitSlop={6}
-                    >
-                      <Text style={[styles.toolbarBtnText, downDisabled && styles.disabled]}>Down</Text>
-                    </Pressable>
-                    <Text style={styles.toolbarSep}>·</Text>
-                    <Pressable style={styles.toolbarBtn} onPress={() => removeScreen(i)} hitSlop={6}>
-                      <Text style={styles.toolbarDanger}>Remove</Text>
-                    </Pressable>
-                  </View>
+                  {lessonContentEditable ? (
+                    <View style={styles.screenRowToolbar}>
+                      <Pressable
+                        style={styles.toolbarBtn}
+                        onPress={() => moveScreen(i, -1)}
+                        disabled={upDisabled}
+                        hitSlop={6}
+                      >
+                        <Text style={[styles.toolbarBtnText, upDisabled && styles.disabled]}>Up</Text>
+                      </Pressable>
+                      <Text style={styles.toolbarSep}>·</Text>
+                      <Pressable
+                        style={styles.toolbarBtn}
+                        onPress={() => moveScreen(i, 1)}
+                        disabled={downDisabled}
+                        hitSlop={6}
+                      >
+                        <Text style={[styles.toolbarBtnText, downDisabled && styles.disabled]}>Down</Text>
+                      </Pressable>
+                      <Text style={styles.toolbarSep}>·</Text>
+                      <Pressable style={styles.toolbarBtn} onPress={() => removeScreen(i)} hitSlop={6}>
+                        <Text style={styles.toolbarDanger}>Remove</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
                 </View>
               )
             })}
           </View>
 
-          <Pressable
-            style={styles.addScreenBtn}
-            onPress={() => setPickTypeOpen(true)}
-            android_ripple={{ color: '#333' }}
-          >
-            <AdminPlusIcon size={14} color={ADMIN_ACCENT_GOLD} />
-            <Text style={styles.addScreenBtnText}>Add screen</Text>
-          </Pressable>
+          {lessonContentEditable ? (
+            <Pressable
+              style={styles.addScreenBtn}
+              onPress={() => setPickTypeOpen(true)}
+              android_ripple={{ color: '#333' }}
+            >
+              <AdminPlusIcon size={14} color={ADMIN_ACCENT_GOLD} />
+              <Text style={styles.addScreenBtnText}>Add screen</Text>
+            </Pressable>
+          ) : null}
         </View>
 
-        <Pressable
-          style={styles.rawModeBtn}
-          onPress={() => {
-            try {
-              setRawJson(JSON.stringify(draft, null, 2))
-            } catch {
-              setRawJson('{}')
-            }
-            setRawJsonMode(true)
-            setDraft(null)
-          }}
-        >
-          <Text style={styles.rawModeBtnText}>Switch to raw JSON (advanced)</Text>
-        </Pressable>
+        {lessonContentEditable ? (
+          <Pressable
+            style={styles.rawModeBtn}
+            onPress={() => {
+              try {
+                setRawJson(JSON.stringify(draft, null, 2))
+              } catch {
+                setRawJson('{}')
+              }
+              setRawJsonMode(true)
+              setDraft(null)
+            }}
+          >
+            <Text style={styles.rawModeBtnText}>Switch to raw JSON (advanced)</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
 
       <Modal visible={pickTypeOpen} animationType="fade" transparent>
@@ -527,9 +805,16 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
                 <Pressable
                   style={styles.pickRow}
                   onPress={() => {
+                    markUnsaved()
                     setDraft((d) => {
                       if (!d) return d
-                      return { ...d, screens: [...d.screens, defaultScreen(item.value)] }
+                      return {
+                        ...d,
+                        screens: syncCelebrateScreensWithAudioExposure([
+                          ...d.screens,
+                          defaultScreen(item.value),
+                        ]),
+                      }
                     })
                     setPickTypeOpen(false)
                   }}
@@ -543,10 +828,62 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
         </Pressable>
       </Modal>
 
+      <Modal
+        visible={viewIndex !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setViewIndex(null)}
+      >
+        <View style={styles.viewScreenModalRoot}>
+          <View style={styles.viewScreenModalHeader}>
+            <Pressable hitSlop={12} onPress={() => setViewIndex(null)}>
+              <Text style={styles.viewScreenModalClose}>Close</Text>
+            </Pressable>
+            <Text style={styles.viewScreenModalTitle} numberOfLines={1}>
+              {viewIndex != null && draft.screens[viewIndex]
+                ? screenTypeLabel(draft.screens[viewIndex].type)
+                : 'Screen'}
+            </Text>
+            <View style={{ width: 56 }} />
+          </View>
+          <ScrollView
+            style={styles.viewScreenModalScroll}
+            contentContainerStyle={styles.viewScreenModalScrollContent}
+          >
+            {viewIndex != null && draft.screens[viewIndex] ? (
+              <>
+                <Text style={styles.viewScreenSummary}>
+                  {screenSubtitleLines(draft.screens[viewIndex]).join('\n') ||
+                    draft.screens[viewIndex].type}
+                </Text>
+                <Text style={styles.viewScreenJsonLabel}>Content (JSON)</Text>
+                <Text selectable style={styles.viewScreenJson}>
+                  {(() => {
+                    try {
+                      return JSON.stringify(draft.screens[viewIndex].content, null, 2)
+                    } catch {
+                      return String(draft.screens[viewIndex].content)
+                    }
+                  })()}
+                </Text>
+              </>
+            ) : null}
+          </ScrollView>
+        </View>
+      </Modal>
+
       <LessonScreenEditModal
         visible={editingIndex !== null}
         screen={editingScreen}
         lessonScreens={draft?.screens ?? []}
+        // Needed for Audio exposure → word bank sync + audio availability checks.
+        lessonSeries={row?.series_id ?? null}
+        lessonContentSeries={
+          draft?.series != null && typeof draft.series === 'string' && draft.series.trim()
+            ? draft.series.trim()
+            : null
+        }
+        wordBankLanguage={VOICE_BANK_LANGUAGE}
         onClose={() => setEditingIndex(null)}
         onApply={(next) => {
           if (editingIndex === null) return
@@ -636,6 +973,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: ADMIN_ACCENT_GOLD,
     marginTop: 1,
+    lineHeight: 17,
   },
   screenRowToolbar: {
     flexDirection: 'row',
@@ -728,4 +1066,43 @@ const styles = StyleSheet.create({
   headerSaveBtn: { marginRight: 12 },
   headerSaveText: { color: '#22c55e', fontSize: 16, fontWeight: '700' },
   headerSaveDisabled: { opacity: 0.4 },
+  headerViewOnly: {
+    marginRight: 14,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#71717a',
+  },
+  viewOnlyBanner: {
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(113, 113, 122, 0.12)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#3f3f46',
+    color: '#a1a1aa',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  viewScreenModalRoot: { flex: 1, backgroundColor: '#0a0a0a' },
+  viewScreenModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#27272a',
+  },
+  viewScreenModalClose: { color: '#a78bfa', fontSize: 16, fontWeight: '600' },
+  viewScreenModalTitle: { color: '#fff', fontSize: 15, fontWeight: '700', flex: 1, textAlign: 'center' },
+  viewScreenModalScroll: { flex: 1 },
+  viewScreenModalScrollContent: { padding: 16, paddingBottom: 40 },
+  viewScreenSummary: { color: '#d4d4d8', fontSize: 14, lineHeight: 20, marginBottom: 16 },
+  viewScreenJsonLabel: { color: '#71717a', fontSize: 12, fontWeight: '600', marginBottom: 8 },
+  viewScreenJson: {
+    color: '#e4e4e7',
+    fontSize: 12,
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    lineHeight: 18,
+  },
 })

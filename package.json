@@ -4,6 +4,8 @@
   "main": "index.ts",
   "scripts": {
     "import:series2": "node scripts/import-series2-audio.cjs",
+    "compute:word-waveforms": "node ../Dubbadhu/scripts/compute_word_waveforms.cjs --pending",
+    "compute:word-waveforms:all-approved": "node ../Dubbadhu/scripts/compute_word_waveforms.cjs --all-approved",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",

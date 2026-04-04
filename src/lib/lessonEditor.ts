@@ -24,6 +24,7 @@ export type ScreenType =
   | 'wordDiscriminationQuiz'
   | 'communityBoard'
   | 'word-breakdown'
+  | 'videoReview'
 
 export type LessonScreen = {
   type: ScreenType
@@ -60,6 +61,7 @@ export const SCREEN_TYPE_OPTIONS: { value: ScreenType; label: string }[] = [
   { value: 'wordDiscriminationQuiz', label: 'Word discrimination quiz' },
   { value: 'communityBoard', label: 'Community board' },
   { value: 'word-breakdown', label: 'Word breakdown' },
+  { value: 'videoReview', label: 'Video review' },
 ]
 
 const KNOWN: Set<string> = new Set(SCREEN_TYPE_OPTIONS.map((o) => o.value))
@@ -169,6 +171,17 @@ export function defaultScreen(type: ScreenType): LessonScreen {
               explanation: '',
             },
           ],
+        },
+      }
+    case 'videoReview':
+      return {
+        type,
+        content: {
+          introMessage:
+            "Let's see how much of this conversation you can pick up with no translations.",
+          videoUrl: '',
+          reviewLabel: 'SERIES REVIEW',
+          reviewTitle: '',
         },
       }
     default:
@@ -311,6 +324,21 @@ export function normalizeWordDiscriminationContentForEdit(content: Record<string
   return next
 }
 
+/** Video review: stable keys for intro, public video URL, and SeriesIntro-style overlay lines. */
+export function normalizeVideoReviewContentForEdit(content: Record<string, unknown>): Record<string, unknown> {
+  const introMessage = String(content.introMessage ?? content.message ?? '').trim()
+  const videoUrl = String(content.videoUrl ?? '').trim()
+  const reviewLabel = String(content.reviewLabel ?? content.seriesReviewLabel ?? '').trim()
+  const reviewTitle = String(content.reviewTitle ?? content.seriesReviewTitle ?? '').trim()
+  return {
+    ...content,
+    introMessage,
+    videoUrl,
+    reviewLabel,
+    reviewTitle,
+  }
+}
+
 export function screenSummary(screen: LessonScreen): string {
   const c = screen.content
   switch (screen.type) {
@@ -357,6 +385,13 @@ export function screenSummary(screen: LessonScreen): string {
       }
       return '—'
     }
+    case 'videoReview': {
+      const u = String(c.videoUrl ?? '').trim()
+      const tail = u ? (u.split('/').pop() ?? u).split('?')[0] : ''
+      if (tail) return `Video: ${tail.length > 52 ? `${tail.slice(0, 52)}…` : tail}`
+      const intro = String(c.introMessage ?? '').trim()
+      return intro.slice(0, 72) || '—'
+    }
     case 'wordDiscriminationQuiz': {
       const q = String(c.question ?? c.title ?? c.prompt ?? '').trim()
       const raw = c.words
@@ -394,6 +429,19 @@ export function screenSubtitleLines(screen: LessonScreen): string[] {
     }
     case 'audioExposure':
       return audioExposureWordSummaryLines(c as Record<string, unknown>)
+    case 'videoReview': {
+      const lines: string[] = []
+      const u = String(c.videoUrl ?? '').trim()
+      if (u) {
+        const tail = (u.split('/').pop() ?? u).split('?')[0]
+        lines.push(`Video: ${tail}`)
+      }
+      const rl = String(c.reviewLabel ?? '').trim()
+      const rt = String(c.reviewTitle ?? '').trim()
+      if (rl) lines.push(`Label: ${rl}`)
+      if (rt) lines.push(`Title: ${rt}`)
+      return lines.length ? lines : [screenSummary(screen)]
+    }
     case 'dialogue': {
       const people = ((c.dialogueData as Record<string, unknown> | undefined)?.people ?? []) as unknown[]
       if (Array.isArray(people) && people.length >= 2) {

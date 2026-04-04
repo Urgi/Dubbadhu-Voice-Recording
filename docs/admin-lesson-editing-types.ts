@@ -25,7 +25,8 @@ export type ScreenType =
   | "audioDiscrimination"
   | "wordDiscriminationQuiz"
   | "communityBoard"
-  | "word-breakdown";
+  | "word-breakdown"
+  | "videoReview";
 
 export type LessonContent = {
   id: `lesson${number}` | string;
@@ -132,6 +133,22 @@ export type WordDiscriminationQuizContent = {
   definitionB?: string;
   wordA_id?: string;
   wordB_id?: string;
+  [k: string]: unknown;
+};
+
+/** Public video URL from bucket `Videos-Dubbadhu` (Series intro bucket). */
+export type VideoReviewContent = {
+  introMessage?: string;
+  videoUrl: string;
+  /** Small gold uppercase line on the video (default in app: SERIES REVIEW). */
+  reviewLabel?: string;
+  /** Large title; empty uses lesson title in the learner app. */
+  reviewTitle?: string;
+  /** @deprecated use reviewLabel */
+  seriesReviewLabel?: string;
+  /** @deprecated use reviewTitle */
+  seriesReviewTitle?: string;
+  message?: string;
   [k: string]: unknown;
 };
 

@@ -30,6 +30,7 @@ import {
   celebrateSanitizedLearnedExtra,
   mergeCelebrateLearnedFromExposureAndExtra,
   normalizeDialogueContent,
+  normalizeVideoReviewContentForEdit,
   normalizeWordDiscriminationContentForEdit,
 } from '../../lib/lessonEditor'
 import supabase from '../../lib/supabase'
@@ -45,6 +46,9 @@ import { TranslationMismatchModal } from './TranslationMismatchModal'
 
 /** Public storage bucket for Word discrimination quiz question images (Supabase dashboard). */
 const WORD_DISCRIMINATION_IMAGES_BUCKET = 'word-comparison-images'
+
+/** Public bucket for Dubbadhu lesson / series videos (same as learner app SeriesIntro URLs). */
+const VIDEOS_DUBBADHU_BUCKET = 'Videos-Dubbadhu'
 
 type Props = {
   visible: boolean
@@ -567,6 +571,159 @@ function isStorageObjectFile(f: { name: string; id?: string | null }): boolean {
   if (!name || name.endsWith('/')) return false
   if (f.id != null && String(f.id).length > 0) return true
   return /\.(png|jpe?g|webp|gif|svg|bmp|avif)$/i.test(name)
+}
+
+function isVideoStorageObjectFile(f: { name: string; id?: string | null }): boolean {
+  const name = f.name
+  if (!name || name.endsWith('/')) return false
+  if (f.id != null && String(f.id).length > 0) return true
+  return /\.(mp4|mov|m4v|webm|avi|mkv)$/i.test(name)
+}
+
+function VideoReviewDubbadhuVideoField({
+  videoUrl,
+  setContent,
+}: {
+  videoUrl: string
+  setContent: (patch: Record<string, unknown> | ((cur: Record<string, unknown>) => Record<string, unknown>)) => void
+}) {
+  const [browseOpen, setBrowseOpen] = useState(false)
+  const [bucketFiles, setBucketFiles] = useState<string[]>([])
+  const [filterQ, setFilterQ] = useState('')
+  const [listErr, setListErr] = useState('')
+  const [listLoading, setListLoading] = useState(false)
+  const [rawListCount, setRawListCount] = useState(0)
+
+  const loadBucket = useCallback(async () => {
+    setListLoading(true)
+    setListErr('')
+    setRawListCount(0)
+    const bucket = VIDEOS_DUBBADHU_BUCKET
+    const { data, error } = await supabase.storage.from(bucket).list('', { limit: 1000 })
+    if (error) {
+      setListLoading(false)
+      setListErr(error.message)
+      setBucketFiles([])
+      return
+    }
+    const dataRows = data ?? []
+    setRawListCount(dataRows.length)
+
+    const fileRows = dataRows.map((f) => ({
+      name: String(f.name ?? '').trim(),
+      id: (f as { id?: string | null }).id,
+    }))
+
+    let names = fileRows.filter(isVideoStorageObjectFile).map((f) => f.name)
+
+    if (names.length === 0 && dataRows.length > 0) {
+      const folderPrefixes = fileRows
+        .filter((f) => f.name && (f.id == null || f.id === '') && !f.name.includes('.'))
+        .map((f) => f.name)
+      for (const prefix of folderPrefixes.slice(0, 12)) {
+        const nested = await supabase.storage.from(bucket).list(prefix, { limit: 500 })
+        if (nested.error) continue
+        const nestedRows = (nested.data ?? []).map((f) => ({
+          name: String(f.name ?? '').trim(),
+          id: (f as { id?: string | null }).id,
+        }))
+        for (const row of nestedRows.filter(isVideoStorageObjectFile)) {
+          names.push(`${prefix}/${row.name}`)
+        }
+      }
+      names = [...new Set(names)].sort((a, b) => a.localeCompare(b))
+    } else {
+      names = names.sort((a, b) => a.localeCompare(b))
+    }
+
+    setBucketFiles(names)
+    setListLoading(false)
+  }, [])
+
+  useEffect(() => {
+    if (browseOpen) {
+      setFilterQ('')
+      void loadBucket()
+    }
+  }, [browseOpen, loadBucket])
+
+  const filteredFiles = useMemo(() => {
+    const q = filterQ.trim().toLowerCase()
+    if (!q) return bucketFiles
+    return bucketFiles.filter((n) => n.toLowerCase().includes(q))
+  }, [bucketFiles, filterQ])
+
+  const v = String(videoUrl ?? '').trim()
+  let statusLine = 'No video selected'
+  if (v) {
+    try {
+      const tail = v.split('/').pop() ?? v
+      statusLine = `Selected: ${decodeURIComponent(tail.split('?')[0] ?? tail)}`
+    } catch {
+      statusLine = 'Video URL set'
+    }
+  }
+
+  return (
+    <View style={{ marginBottom: 10 }}>
+      <Text style={styles.label}>Video (Videos-Dubbadhu bucket)</Text>
+      <Text style={[styles.hint, !v && styles.imagePickStatusEmpty]}>{statusLine}</Text>
+      <Pressable style={styles.quizCorrectBtn} onPress={() => setBrowseOpen(true)}>
+        <Text style={styles.quizCorrectBtnLabel}>Browse bucket</Text>
+      </Pressable>
+      {v ? (
+        <Pressable style={styles.removeBtn} onPress={() => setContent((cur) => ({ ...cur, videoUrl: '' }))}>
+          <Text style={styles.removeBtnText}>Clear video</Text>
+        </Pressable>
+      ) : null}
+
+      <Modal visible={browseOpen} transparent animationType="fade" onRequestClose={() => setBrowseOpen(false)}>
+        <Pressable style={styles.quizCorrectOverlay} onPress={() => setBrowseOpen(false)}>
+          <Pressable style={[styles.quizCorrectSheet, { maxHeight: 520 }]} onPress={() => {}}>
+            <Text style={styles.personTitle}>Videos in {VIDEOS_DUBBADHU_BUCKET}</Text>
+            <TextInput
+              style={styles.input}
+              value={filterQ}
+              onChangeText={setFilterQ}
+              placeholder="Filter by file name…"
+              placeholderTextColor="#52525b"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {listLoading ? <Text style={styles.hint}>Loading…</Text> : null}
+            {listErr ? <Text style={styles.jsonErr}>{listErr}</Text> : null}
+            {!listLoading && !listErr && bucketFiles.length === 0 && rawListCount === 0 ? (
+              <Text style={styles.hint}>
+                Storage returned no files (RLS often hides objects from list). In Supabase → SQL, add a SELECT policy on
+                storage.objects for this bucket (see sql/storage_videos_dubbadhu_anon_list.sql).
+              </Text>
+            ) : null}
+            {!listLoading && !listErr && bucketFiles.length > 0 && filteredFiles.length === 0 ? (
+              <Text style={styles.hint}>No file name matches your filter.</Text>
+            ) : null}
+            <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
+              {filteredFiles.map((name) => (
+                <Pressable
+                  key={name}
+                  style={styles.quizCorrectChoice}
+                  onPress={() => {
+                    const { data } = supabase.storage.from(VIDEOS_DUBBADHU_BUCKET).getPublicUrl(name)
+                    const url = data.publicUrl
+                    if (url) {
+                      setContent((cur) => ({ ...cur, videoUrl: url }))
+                    }
+                    setBrowseOpen(false)
+                  }}
+                >
+                  <Text style={styles.quizCorrectChoiceText}>{name}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </View>
+  )
 }
 
 function WordDiscriminationSceneImageField({
@@ -1387,6 +1544,12 @@ export function LessonScreenEditModal({
         c = {
           ...c,
           content: normalizeWordDiscriminationContentForEdit(c.content as Record<string, unknown>),
+        }
+      }
+      if (c.type === 'videoReview') {
+        c = {
+          ...c,
+          content: normalizeVideoReviewContentForEdit(c.content as Record<string, unknown>),
         }
       }
       baselineScreenRef.current = c
@@ -2490,6 +2653,50 @@ export function LessonScreenEditModal({
           />
         )
       }
+      case 'videoReview': {
+        return (
+          <View style={styles.form}>
+            <Field
+              label="Intro message"
+              value={String(c.introMessage ?? '')}
+              multiline
+              onChangeText={(t) => setContent((cur) => ({ ...cur, introMessage: t }))}
+            />
+            <VideoReviewDubbadhuVideoField videoUrl={String(c.videoUrl ?? '')} setContent={setContent} />
+            <Text style={styles.label}>Video URL</Text>
+            <Text style={styles.hint}>Paste a public URL if the bucket list is empty (RLS), or to override the pick above.</Text>
+            <TextInput
+              style={styles.input}
+              value={String(c.videoUrl ?? '')}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, videoUrl: t.trim() }))}
+              placeholder="https://…supabase.co/storage/v1/object/public/Videos-Dubbadhu/…"
+              placeholderTextColor="#52525b"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={styles.hint}>
+              On the video, the bottom overlay matches Series intro (gold label + title). Leave title blank to use the lesson title in the app.
+            </Text>
+            <Field
+              label="Overlay label (e.g. SERIES REVIEW)"
+              value={String(c.reviewLabel ?? '')}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, reviewLabel: t }))}
+            />
+            <Field
+              label="Overlay title (optional)"
+              value={String(c.reviewTitle ?? '')}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, reviewTitle: t }))}
+            />
+            <SaveRow
+              onPress={() => {
+                const base = draftRef.current?.content as Record<string, unknown> | undefined
+                if (!base) return
+                saveStructured(normalizeVideoReviewContentForEdit({ ...base }))
+              }}
+            />
+          </View>
+        )
+      }
       default:
         return null
     }
@@ -2507,6 +2714,7 @@ export function LessonScreenEditModal({
     'animatedConcept',
     'patternPractice',
     'wordDiscriminationQuiz',
+    'videoReview',
   ].includes(draft.type)
 
   return (

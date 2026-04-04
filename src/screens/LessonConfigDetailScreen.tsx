@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   Modal,
   Platform,
   Pressable,
@@ -24,6 +23,7 @@ import { useAuth } from '../context/AuthContext'
 import {
   type LessonContentDraft,
   type LessonScreen,
+  type ScreenType,
   SCREEN_TYPE_OPTIONS,
   defaultScreen,
   parseLessonContent,
@@ -55,7 +55,24 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T
 }
 
-const ADD_SCREEN_OPTIONS = SCREEN_TYPE_OPTIONS.filter((o) => o.value !== 'intro')
+type ScreenTypeOption = { value: ScreenType; label: string }
+
+/** Alphabetical. Injects `videoReview` if missing (stale Metro bundle / old binary). */
+function buildAddScreenOptions(): ScreenTypeOption[] {
+  const base = SCREEN_TYPE_OPTIONS.filter((o) => o.value !== 'intro')
+  const byValue = new Map<string, ScreenTypeOption>()
+  for (const o of base) {
+    byValue.set(o.value, o)
+  }
+  if (!byValue.has('videoReview')) {
+    byValue.set('videoReview', { value: 'videoReview', label: 'Video review' })
+  }
+  return [...byValue.values()].sort((a, b) =>
+    a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
+  )
+}
+
+const ADD_SCREEN_OPTIONS = buildAddScreenOptions()
 
 function screenTypeLabel(type: string): string {
   return SCREEN_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type
@@ -797,12 +814,17 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
         <Pressable style={styles.pickOverlay} onPress={() => setPickTypeOpen(false)}>
           <Pressable style={styles.pickSheet} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.pickTitle}>Screen type</Text>
-            <FlatList
-              data={ADD_SCREEN_OPTIONS}
-              keyExtractor={(item) => item.value}
+            <Text style={styles.pickSubtitle}>Scroll for all types (e.g. Video review before Word breakdown).</Text>
+            <ScrollView
               style={styles.pickList}
-              renderItem={({ item }) => (
+              contentContainerStyle={styles.pickListContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              nestedScrollEnabled
+            >
+              {ADD_SCREEN_OPTIONS.map((item) => (
                 <Pressable
+                  key={item.value}
                   style={styles.pickRow}
                   onPress={() => {
                     markUnsaved()
@@ -822,8 +844,8 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
                   <Text style={styles.pickRowLabel}>{item.label}</Text>
                   <Text style={styles.pickRowValue}>{item.value}</Text>
                 </Pressable>
-              )}
-            />
+              ))}
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
@@ -1050,11 +1072,20 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 4,
+  },
+  pickSubtitle: {
+    color: '#71717a',
+    fontSize: 13,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#2c2c2e',
   },
-  pickList: { maxHeight: 400 },
+  pickList: { maxHeight: 420 },
+  pickListContent: { flexGrow: 1, paddingBottom: 12 },
   pickRow: {
     paddingVertical: 14,
     paddingHorizontal: 16,

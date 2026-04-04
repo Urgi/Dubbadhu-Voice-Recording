@@ -29,6 +29,7 @@ import {
   celebrateLearnedWordsFromScreens,
   celebrateSanitizedLearnedExtra,
   mergeCelebrateLearnedFromExposureAndExtra,
+  finalizeScreenContentPayload,
   normalizeDialogueContent,
   normalizeVideoReviewContentForEdit,
   normalizeWordDiscriminationContentForEdit,
@@ -1540,10 +1541,17 @@ export function LessonScreenEditModal({
           content: normalizeDialogueContent(c.content as Record<string, unknown>),
         }
       }
-      if (c.type === 'wordDiscriminationQuiz') {
-        c = {
-          ...c,
-          content: normalizeWordDiscriminationContentForEdit(c.content as Record<string, unknown>),
+      {
+        const st = c.type as string
+        if (st === 'discriminationDrill' || st === 'wordDiscriminationQuiz') {
+          c = {
+            ...c,
+            type: 'discriminationDrill',
+            content: normalizeWordDiscriminationContentForEdit(c.content as Record<string, unknown>),
+          }
+        }
+        if (st === 'animatedConcept') {
+          c = { ...c, type: 'concept' }
         }
       }
       if (c.type === 'videoReview') {
@@ -1648,8 +1656,7 @@ export function LessonScreenEditModal({
       setJsonError('')
       const d = draftRef.current
       if (!d) return
-      const content =
-        d.type === 'dialogue' ? normalizeDialogueContent(parsed) : parsed
+      const content = finalizeScreenContentPayload(d.type, parsed)
       onApply({ type: d.type, content })
       onCloseFromParent()
     } catch {
@@ -1660,8 +1667,7 @@ export function LessonScreenEditModal({
   const saveStructured = (content: Record<string, unknown>) => {
     const d = draftRef.current
     if (!d) return
-    const payload =
-      d.type === 'dialogue' ? normalizeDialogueContent(content) : content
+    const payload = finalizeScreenContentPayload(d.type, content)
     onApply({ type: d.type, content: payload })
     onCloseFromParent()
   }
@@ -1699,11 +1705,16 @@ export function LessonScreenEditModal({
           </View>
         )
       case 'concept': {
+        const animMode = String(c.targetWord ?? '').trim().length > 0
         const bulletsArr = Array.isArray(c.bullets) ? (c.bullets as string[]) : null
         const hasLegacySections = Array.isArray(c.sections)
         const isBulletsFormat = Array.isArray(bulletsArr)
-        const bullets = isBulletsFormat ? bulletsArr : ['']
-        const setBullets = (next: string[]) => setContent((cur) => ({ ...cur, bullets: next }))
+        const rawBullets = isBulletsFormat ? bulletsArr : ['']
+        const bullets = animMode ? rawBullets.slice(0, 3) : rawBullets
+        const setBullets = (next: string[]) => {
+          const capped = animMode ? next.slice(0, 3) : next
+          setContent((cur) => ({ ...cur, bullets: capped }))
+        }
 
         const moveBullet = (idx: number, dir: -1 | 1) => {
           const j = idx + dir
@@ -1718,7 +1729,10 @@ export function LessonScreenEditModal({
           setBullets(bullets.filter((_, i) => i !== idx))
         }
 
-        const addBullet = () => setBullets([...bullets, ''])
+        const addBullet = () => {
+          if (animMode && bullets.length >= 3) return
+          setBullets([...bullets, ''])
+        }
 
         const convertLegacyToBullets = () => {
           const parts: string[] = []
@@ -1759,11 +1773,27 @@ export function LessonScreenEditModal({
             ) : null}
 
             <Field
+              label="Target word (typing intro — optional)"
+              value={String(c.targetWord ?? '')}
+              onChangeText={(t) =>
+                setContent((cur) => ({
+                  ...cur,
+                  targetWord: t,
+                  bullets: t.trim() ? (Array.isArray(cur.bullets) ? (cur.bullets as string[]).slice(0, 3) : ['']) : cur.bullets,
+                }))
+              }
+            />
+            <Text style={styles.hint}>
+              Leave target word blank for reading-style concept (heading + bullets). If set, the app animates the word and
+              shows up to 3 bullets.
+            </Text>
+
+            <Field
               label="Heading"
               value={String(c.heading ?? c.title ?? '')}
               onChangeText={(t) => setContent((cur) => ({ ...cur, heading: t, title: t }))}
             />
-            <Text style={styles.label}>Bullets</Text>
+            <Text style={styles.label}>{animMode ? 'Bullets (max 3)' : 'Bullets'}</Text>
             {bullets.map((b, i) => (
               <View key={i} style={styles.bulletRow}>
                 <TextInput
@@ -1813,19 +1843,33 @@ export function LessonScreenEditModal({
                 </Pressable>
               </View>
             ))}
-            <Pressable style={styles.addBtn} onPress={addBullet}>
-              <Text style={styles.addBtnText}>+ Add bullet</Text>
+            <Pressable style={styles.addBtn} onPress={addBullet} disabled={animMode && bullets.length >= 3}>
+              <Text style={[styles.addBtnText, animMode && bullets.length >= 3 && styles.bulletMiniDisabled]}>
+                + Add bullet
+              </Text>
             </Pressable>
             <Field label="Note (optional)" value={String(c.note ?? '')} multiline onChangeText={(t) => setContent((cur) => ({ ...cur, note: t }))} />
             <SaveRow
               onPress={() => {
+                const tw = String(c.targetWord ?? '').trim()
                 const cleaned = bullets.map((x) => String(x ?? '').trim()).filter(Boolean)
+                if (tw) {
+                  if (cleaned.length < 1) {
+                    setJsonError('Concept with a target word needs at least 1 bullet.')
+                    return
+                  }
+                  setJsonError('')
+                  saveStructured({ ...draft.content, targetWord: tw, bullets: cleaned.slice(0, 3) })
+                  return
+                }
                 if (cleaned.length < 1) {
                   setJsonError('Concept needs at least 1 bullet.')
                   return
                 }
                 setJsonError('')
-                saveStructured({ ...draft.content, bullets: cleaned })
+                const base = { ...(draft.content as Record<string, unknown>) }
+                delete base.targetWord
+                saveStructured({ ...base, bullets: cleaned })
               }}
             />
           </View>
@@ -2197,13 +2241,16 @@ export function LessonScreenEditModal({
                   onPick={(row) => {
                     setContent((cur) => {
                       const ref = audioRefFromWordRow(row)
+                      // Canonical Mode B only: phrase = Oromo, phraseEnglish = gloss. Do not set
+                      // prompt/expectedAnswer here — expectedAnswer must never be English (that broke
+                      // the learner app when it preferred expectedAnswer over phrase).
                       const next: Record<string, unknown> = {
                         ...cur,
                         speaking_word_id: row.id,
-                        prompt: rowAfaanText(row),
                         phrase: rowAfaanText(row),
-                        expectedAnswer: rowTranslationText(row),
                         phraseEnglish: rowTranslationText(row),
+                        prompt: '',
+                        expectedAnswer: '',
                       }
                       if (ref) next.targetAudioRef = ref
                       else delete next.targetAudioRef
@@ -2228,6 +2275,11 @@ export function LessonScreenEditModal({
                 if (!d) return
                 const content = { ...(d.content as Record<string, unknown>) }
                 delete content.showAnswerAfterRecording
+                const phraseT = String(content.phrase ?? '').trim()
+                if (phraseT) {
+                  content.prompt = ''
+                  content.expectedAnswer = ''
+                }
                 saveStructured(content)
               }}
             />
@@ -2443,66 +2495,6 @@ export function LessonScreenEditModal({
           </View>
         )
       }
-      case 'animatedConcept': {
-        const bullets = Array.isArray(c.bullets) ? (c.bullets as string[]) : ['']
-        const limited = bullets.slice(0, 3)
-        const setBullets = (next: string[]) => setContent((cur) => ({ ...cur, bullets: next.slice(0, 3) }))
-        return (
-          <View style={styles.form}>
-            <Field label="Target word" value={String(c.targetWord ?? '')} onChangeText={(t) => setContent((cur) => ({ ...cur, targetWord: t }))} />
-            <Text style={styles.label}>Bullets (max 3)</Text>
-            {limited.map((b, i) => (
-              <View key={i} style={styles.bulletRow}>
-                <TextInput
-                  style={styles.bulletInput}
-                  value={String(b ?? '')}
-                  onChangeText={(t) => {
-                    const next = limited.map((x, j) => (j === i ? t : x))
-                    setBullets(next)
-                  }}
-                  placeholder={`Bullet ${i + 1}`}
-                  placeholderTextColor="#52525b"
-                />
-                <Pressable
-                  style={styles.bulletMiniBtn}
-                  onPress={() => {
-                    if (limited.length <= 1) return
-                    setBullets(limited.filter((_, j) => j !== i))
-                  }}
-                  disabled={limited.length <= 1}
-                >
-                  <Text
-                    style={[
-                      styles.bulletMiniBtnTextDanger,
-                      limited.length <= 1 && styles.bulletMiniDisabled,
-                    ]}
-                  >
-                    ✕
-                  </Text>
-                </Pressable>
-              </View>
-            ))}
-            {limited.length < 3 ? (
-              <Pressable style={styles.addBtn} onPress={() => setBullets([...limited, ''])}>
-                <Text style={styles.addBtnText}>+ Add bullet</Text>
-              </Pressable>
-            ) : (
-              <Text style={styles.hint}>Only the first 3 bullets display in the app.</Text>
-            )}
-            <SaveRow
-              onPress={() => {
-                const cleaned = limited.map((x) => String(x ?? '').trim()).filter(Boolean)
-                if (cleaned.length < 1) {
-                  setJsonError('Animated concept needs at least 1 bullet.')
-                  return
-                }
-                setJsonError('')
-                saveStructured({ ...draft.content, bullets: cleaned })
-              }}
-            />
-          </View>
-        )
-      }
       case 'patternPractice': {
         let exercises = (c.exercises as Record<string, unknown>[] | undefined) ?? []
         if (!Array.isArray(exercises) || exercises.length === 0) {
@@ -2639,7 +2631,7 @@ export function LessonScreenEditModal({
           </View>
         )
       }
-      case 'wordDiscriminationQuiz': {
+      case 'discriminationDrill': {
         return (
           <WordDiscriminationQuizEditor
             content={c as Record<string, unknown>}
@@ -2711,9 +2703,8 @@ export function LessonScreenEditModal({
     'speakingPractice',
     'audioExposure',
     'CelebrateScreen',
-    'animatedConcept',
     'patternPractice',
-    'wordDiscriminationQuiz',
+    'discriminationDrill',
     'videoReview',
   ].includes(draft.type)
 

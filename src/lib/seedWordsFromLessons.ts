@@ -157,7 +157,7 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
         for (const item of words) {
           if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
           const rec = item as Record<string, unknown>
-          const afaan = String(rec.oromo ?? rec.word ?? '').trim()
+          const afaan = String(rec.oromo ?? rec.text ?? rec.word ?? '').trim()
           const english = String(rec.english ?? rec.translation ?? '').trim() || null
           push(afaan, english)
         }
@@ -200,9 +200,10 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
           for (const o of opts) {
             if (typeof o === 'string') push(o.trim(), null)
             else if (o != null && typeof o === 'object' && !Array.isArray(o)) {
-              const ot = (o as Record<string, unknown>).text
-              const oe = (o as Record<string, unknown>).english
-              if (typeof ot === 'string' && ot.trim()) push(ot.trim(), typeof oe === 'string' ? oe.trim() || null : null)
+              const or = o as Record<string, unknown>
+              const ot = String(or.oromo ?? or.text ?? '').trim()
+              const oe = or.english
+              if (ot) push(ot, typeof oe === 'string' ? oe.trim() || null : null)
             }
           }
         }
@@ -210,18 +211,20 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
     }
 
     if (type === 'speakingPractice') {
-      const prompt = String(cr.prompt ?? cr.phrase ?? '').trim()
-      const en = String(cr.expectedAnswer ?? cr.phraseEnglish ?? '').trim() || null
-      if (prompt) push(prompt, en)
+      const phrase = String(cr.phrase ?? '').trim()
+      const expectedAnswer = String(cr.expectedAnswer ?? '').trim()
+      const oromo = phrase || expectedAnswer
+      const gloss = String(cr.phraseEnglish ?? '').trim() || null
+      if (oromo) push(oromo, gloss)
     }
 
-    if (type === 'wordDiscriminationQuiz') {
+    if (type === 'discriminationDrill' || type === 'wordDiscriminationQuiz') {
       const wlist = cr.words
       if (Array.isArray(wlist) && wlist.length >= 2) {
         for (const item of wlist) {
           if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
           const wr = item as Record<string, unknown>
-          const t = String(wr.text ?? wr.oromo ?? wr.word ?? '').trim()
+          const t = String(wr.oromo ?? wr.text ?? wr.word ?? '').trim()
           const gloss =
             String(wr.definition ?? wr.english ?? wr.translation ?? '').trim() || null
           if (t) push(t, gloss)

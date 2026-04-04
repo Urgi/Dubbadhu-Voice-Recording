@@ -190,14 +190,18 @@ Example (text-only safe):
 }
 ```
 
-### `speakingPractice`
-Supports two modes:
+### Field precedence (Oromo vs English in shared shapes)
+When an object can carry both languages under different keys, **Dubbadhu prefers `oromo` over `text` over `word`** for the Afaan line, and **`definition` / `english` / `translation`** for the English gloss. That matches `features/LessonTab/lessonTextFields.js` and avoids showing English as the main drill line when admin JSON keys are inconsistent.
 
-**Mode A (prompt/expectedAnswer) — easiest**
-- **`prompt`**: `string`
-- **`expectedAnswer`**: `string`
+### `speakingPractice`
+Supports two modes. **Do not mix** Mode A and Mode B in one screen: if `phrase` is set, leave `prompt` and `expectedAnswer` empty (the Dubbadhu app treats `phrase` as the spoken Oromo line and ignores stale English in `expectedAnswer`).
+
+**Mode A (prompt/expectedAnswer) — situational**
+- **`prompt`**: `string` — short instruction (often English), e.g. “Say: Good morning (respectful)”
+- **`expectedAnswer`**: `string` — **must be the Afaan Oromo** the learner should say (same language as `phrase` in Mode B)
 - `hint`: `string` (optional)
 - `showAnswerAfterRecording`: `boolean` (optional; default false)
+- Leave **`phrase` / `phraseEnglish` empty** for this mode.
 
 Example:
 
@@ -209,12 +213,13 @@ Example:
 }
 ```
 
-**Mode B (phrase/phraseEnglish/targetAudioRef)**
-- `phrase`: `string`
-- `phraseEnglish`: `string`
+**Mode B (phrase/phraseEnglish/targetAudioRef) — word-bank / drill**
+- **`phrase`**: `string` — Afaan Oromo line to practice
+- **`phraseEnglish`**: `string` — English gloss (not shown as the main practice line in Dubbadhu)
 - `targetAudioRef`: `string` (optional)
 - `tip`: `string` (optional)
 - `hint`: `string` (optional)
+- Leave **`prompt` / `expectedAnswer` empty** when using the lesson editor’s word picker (it writes Mode B only).
 
 ### `quiz`
 Supports a multi-question array or a single-question object.

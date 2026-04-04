@@ -27,6 +27,7 @@ import {
   SCREEN_TYPE_OPTIONS,
   defaultScreen,
   parseLessonContent,
+  sanitizeLessonScreensForSave,
   screenSubtitleLines,
   syncCelebrateScreensWithAudioExposure,
 } from '../lib/lessonEditor'
@@ -430,7 +431,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
         if (!d) {
           throw new Error('Invalid lesson content: need non-empty screens array with valid screen types.')
         }
-        const screensSynced = syncCelebrateScreensWithAudioExposure(d.screens)
+        const screensSynced = sanitizeLessonScreensForSave(syncCelebrateScreensWithAudioExposure(d.screens))
         content = stripUndefined({ ...d, id: row.id, screens: screensSynced }) as Record<string, unknown>
         content.series = wordsBankSeriesLabelFromSeriesId(row.series_id ?? '')
         stripNextNavFromLessonContent(content)
@@ -454,7 +455,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
           id: row.id,
           title: draft.title.trim() || row.title || row.id,
           series: wordsBankSeriesLabelFromSeriesId(row.series_id ?? ''),
-          screens: syncCelebrateScreensWithAudioExposure(draft.screens),
+          screens: sanitizeLessonScreensForSave(syncCelebrateScreensWithAudioExposure(draft.screens)),
         }) as Record<string, unknown>
         stripNextNavFromLessonContent(merged)
         stripNextNavFromAllScreens(merged)

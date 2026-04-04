@@ -9,22 +9,31 @@ export type ScreenType =
   | 'match'
   | 'quiz'
   | 'CelebrateScreen'
-  | 'moduleComplete'
-  | 'situation'
   | 'dialogue'
   | 'concept'
-  | 'animatedConcept'
-  | 'comparison'
   | 'patternPractice'
-  | 'audioRecognition'
-  | 'audioResponse'
   | 'speakingPractice'
   | 'audioExposure'
-  | 'audioDiscrimination'
-  | 'wordDiscriminationQuiz'
+  | 'discriminationDrill'
   | 'communityBoard'
   | 'word-breakdown'
   | 'videoReview'
+
+/** Legacy `type` strings in stored JSON → canonical ScreenType (learner registry keeps aliases too). */
+export const LEGACY_SCREEN_TYPE_ALIASES: Record<string, ScreenType> = {
+  animatedConcept: 'concept',
+  wordDiscriminationQuiz: 'discriminationDrill',
+}
+
+/** Removed screen types: dropped when parsing lesson content (admin / save pipeline). */
+export const REMOVED_SCREEN_TYPES = new Set<string>([
+  'moduleComplete',
+  'situation',
+  'audioRecognition',
+  'audioResponse',
+  'audioDiscrimination',
+  'comparison',
+])
 
 export type LessonScreen = {
   type: ScreenType
@@ -49,16 +58,9 @@ export const SCREEN_TYPE_OPTIONS: { value: ScreenType; label: string }[] = [
   { value: 'speakingPractice', label: 'Speaking practice' },
   { value: 'audioExposure', label: 'Audio exposure' },
   { value: 'CelebrateScreen', label: 'Celebrate' },
-  { value: 'moduleComplete', label: 'Module complete' },
   { value: 'firstLook', label: 'First look' },
-  { value: 'situation', label: 'Situation' },
-  { value: 'animatedConcept', label: 'Animated concept' },
-  { value: 'comparison', label: 'Comparison' },
   { value: 'patternPractice', label: 'Pattern practice' },
-  { value: 'audioRecognition', label: 'Audio recognition' },
-  { value: 'audioResponse', label: 'Audio response' },
-  { value: 'audioDiscrimination', label: 'Audio discrimination' },
-  { value: 'wordDiscriminationQuiz', label: 'Word discrimination quiz' },
+  { value: 'discriminationDrill', label: 'Discrimination drill' },
   { value: 'communityBoard', label: 'Community board' },
   { value: 'word-breakdown', label: 'Word breakdown' },
   { value: 'videoReview', label: 'Video review' },
@@ -78,9 +80,13 @@ export function parseLessonContent(raw: unknown, lessonId: string): LessonConten
   const screens: LessonScreen[] = []
   for (const item of screensRaw) {
     if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
-    const t = (item as Record<string, unknown>).type
+    const typeRaw = (item as Record<string, unknown>).type
     const c = (item as Record<string, unknown>).content
-    if (typeof t !== 'string' || !isScreenType(t)) continue
+    if (typeof typeRaw !== 'string') continue
+    if (REMOVED_SCREEN_TYPES.has(typeRaw)) continue
+    const mapped = LEGACY_SCREEN_TYPE_ALIASES[typeRaw]
+    const t = (mapped ?? typeRaw) as string
+    if (!isScreenType(t)) continue
     if (c == null || typeof c !== 'object' || Array.isArray(c)) continue
     screens.push({
       type: t,
@@ -110,7 +116,7 @@ export function defaultScreen(type: ScreenType): LessonScreen {
     case 'intro':
       return { type, content: { goal: '' } }
     case 'concept':
-      return { type, content: { heading: '', bullets: [''] } }
+      return { type, content: { targetWord: '', heading: '', bullets: [''] } }
     case 'dialogue':
       return {
         type,
@@ -145,8 +151,6 @@ export function defaultScreen(type: ScreenType): LessonScreen {
       }
     case 'CelebrateScreen':
       return { type, content: { message: 'Nice work.' } }
-    case 'animatedConcept':
-      return { type, content: { targetWord: '', bullets: [''] } }
     case 'patternPractice':
       return {
         type,
@@ -154,7 +158,7 @@ export function defaultScreen(type: ScreenType): LessonScreen {
           exercises: [{ prompt: '', options: [], correctSuffix: '' }],
         },
       }
-    case 'wordDiscriminationQuiz':
+    case 'discriminationDrill':
       return {
         type,
         content: {
@@ -197,7 +201,7 @@ export function audioExposureWordSummaryLines(content: Record<string, unknown>):
   for (const w of words) {
     if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
     const rec = w as Record<string, unknown>
-    const afaan = String(rec.oromo ?? rec.word ?? '').trim()
+    const afaan = String(rec.oromo ?? rec.text ?? rec.word ?? '').trim()
     const english = String(rec.english ?? rec.translation ?? '').trim()
     if (!afaan && !english) continue
     lines.push(english ? `${afaan} — ${english}` : afaan)
@@ -310,33 +314,267 @@ export function normalizeWordDiscriminationContentForEdit(content: Record<string
     scenes.push({ image: '', imageRequestDescription: '', correctWordIndex: 0, explanation: '' })
   }
 
-  const next: Record<string, unknown> = { ...content, question: sharedQuestion, words, scenes }
-  delete next.wordA
-  delete next.wordB
-  delete next.word_a
-  delete next.word_b
-  delete next.definitionA
-  delete next.definitionB
-  delete next.wordA_id
-  delete next.wordB_id
-  delete next.streakTarget
-  delete next.streak_target
+  const next: Record<string, unknown> = {
+    question: sharedQuestion,
+    words,
+    scenes,
+  }
+  const stRaw = content.streakTarget ?? content.streak_target
+  if (stRaw != null && Number.isFinite(Number(stRaw))) {
+    next.streakTarget = Math.floor(Number(stRaw))
+  }
   return next
 }
 
-/** Video review: stable keys for intro, public video URL, and SeriesIntro-style overlay lines. */
+/** Video review: only keys the app reads (drops legacy aliases from stored JSON). */
 export function normalizeVideoReviewContentForEdit(content: Record<string, unknown>): Record<string, unknown> {
-  const introMessage = String(content.introMessage ?? content.message ?? '').trim()
-  const videoUrl = String(content.videoUrl ?? '').trim()
-  const reviewLabel = String(content.reviewLabel ?? content.seriesReviewLabel ?? '').trim()
-  const reviewTitle = String(content.reviewTitle ?? content.seriesReviewTitle ?? '').trim()
   return {
-    ...content,
-    introMessage,
-    videoUrl,
-    reviewLabel,
-    reviewTitle,
+    introMessage: String(content.introMessage ?? content.message ?? '').trim(),
+    videoUrl: String(content.videoUrl ?? '').trim(),
+    reviewLabel: String(content.reviewLabel ?? content.seriesReviewLabel ?? '').trim(),
+    reviewTitle: String(content.reviewTitle ?? content.seriesReviewTitle ?? '').trim(),
   }
+}
+
+function pickAllowedKeys(obj: Record<string, unknown>, allowed: Set<string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(obj)) {
+    if (allowed.has(k)) out[k] = obj[k]
+  }
+  return out
+}
+
+/** Per-word keys used by Dubbadhu AudioExposure + waveform embed pipeline. */
+const AUDIO_EXPOSURE_WORD_KEYS = new Set([
+  'oromo',
+  'english',
+  'translation',
+  'word',
+  'audioRef',
+  'fastAudioRef',
+  'slowAudioRef',
+  'note',
+  'word_id',
+  'waveformEnvelope',
+  'fastWaveformEnvelope',
+  'slowWaveformEnvelope',
+  'waveformBars32',
+  'fastWaveformBars32',
+  'slowWaveformBars32',
+])
+
+const QUIZ_OPTION_KEYS = new Set(['text', 'english', 'audioRef'])
+
+function sanitizeQuizOptionsArray(opts: unknown): unknown {
+  if (!Array.isArray(opts)) return opts
+  return opts.map((o) => {
+    if (typeof o === 'string') return o
+    if (o != null && typeof o === 'object' && !Array.isArray(o)) {
+      return pickAllowedKeys(o as Record<string, unknown>, QUIZ_OPTION_KEYS)
+    }
+    return o
+  })
+}
+
+/**
+ * Strip content keys the learner app and admin forms never read, so Supabase JSON stays aligned
+ * with the structured editor. Run after type-specific normalizers.
+ */
+export function sanitizeScreenContentForPersistence(
+  type: ScreenType,
+  content: Record<string, unknown>,
+): Record<string, unknown> {
+  switch (type) {
+    case 'intro':
+      return pickAllowedKeys(content, new Set(['goal', 'heading', 'body', 'subheading', 'readyText']))
+    case 'concept': {
+      const base = pickAllowedKeys(
+        content,
+        new Set([
+          'targetWord',
+          'heading',
+          'title',
+          'concept',
+          'examples',
+          'pattern',
+          'tip',
+          'culturalNote',
+          'subtitle',
+          'keyPoints',
+          'bullets',
+          'note',
+          'sections',
+        ]),
+      )
+      const b = base.bullets
+      if (Array.isArray(b)) {
+        base.bullets = b.map((x) => (typeof x === 'string' ? x : String(x ?? '')))
+      }
+      return base
+    }
+    case 'dialogue': {
+      const base = pickAllowedKeys(content, new Set(['dialogueData', 'showTranslations', 'heading', 'subtitle']))
+      const dd = base.dialogueData
+      if (dd != null && typeof dd === 'object' && !Array.isArray(dd)) {
+        const ddo = dd as Record<string, unknown>
+        const peopleRaw = Array.isArray(ddo.people) ? ddo.people : []
+        const people = peopleRaw.map((p) =>
+          p != null && typeof p === 'object' && !Array.isArray(p)
+            ? pickAllowedKeys(p as Record<string, unknown>, new Set(['name', 'lines', 'translations']))
+            : p,
+        )
+        base.dialogueData = { people }
+      }
+      return base
+    }
+    case 'match':
+      return pickAllowedKeys(content, new Set(['title', 'pairs', 'heading']))
+    case 'quiz': {
+      const base = pickAllowedKeys(content, new Set([
+        'heading',
+        'questions',
+        'audioOptions',
+        'question',
+        'options',
+        'correctAnswer',
+        'answer',
+        'explanation',
+      ]))
+      if (Array.isArray(base.options)) base.options = sanitizeQuizOptionsArray(base.options)
+      const qs = base.questions
+      if (!Array.isArray(qs)) return base
+      base.questions = qs.map((q) => {
+        if (q == null || typeof q !== 'object' || Array.isArray(q)) return q
+        const qo = pickAllowedKeys(q as Record<string, unknown>, new Set([
+          'question',
+          'options',
+          'correctAnswer',
+          'answer',
+          'explanation',
+          'audioOptions',
+        ]))
+        if (Array.isArray(qo.options)) qo.options = sanitizeQuizOptionsArray(qo.options)
+        return qo
+      })
+      return base
+    }
+    case 'speakingPractice':
+      return pickAllowedKeys(
+        content,
+        new Set([
+          'phrase',
+          'phraseEnglish',
+          'oromo',
+          'targetAudioRef',
+          'prompt',
+          'expectedAnswer',
+          'hint',
+          'tip',
+          'showAnswerAfterRecording',
+          'speaking_word_id',
+          'syllables',
+        ]),
+      )
+    case 'audioExposure': {
+      const base = pickAllowedKeys(content, new Set(['title', 'subtitle', 'words', 'autoPlayNext', 'delayReveal']))
+      const words = base.words
+      if (!Array.isArray(words)) return base
+      base.words = words.map((w) =>
+        w != null && typeof w === 'object' && !Array.isArray(w)
+          ? pickAllowedKeys(w as Record<string, unknown>, AUDIO_EXPOSURE_WORD_KEYS)
+          : w,
+      )
+      return base
+    }
+    case 'CelebrateScreen':
+      return pickAllowedKeys(
+        content,
+        new Set(['message', 'learned', 'learned_extra', 'nextLesson', 'encouragement', 'summary']),
+      )
+    case 'patternPractice': {
+      const base = pickAllowedKeys(content, new Set(['heading', 'instruction', 'pattern', 'exercises']))
+      const ex = base.exercises
+      if (!Array.isArray(ex)) return base
+      base.exercises = ex.map((e) => {
+        if (e == null || typeof e !== 'object' || Array.isArray(e)) return e
+        return pickAllowedKeys(e as Record<string, unknown>, new Set([
+          'prompt',
+          'options',
+          'correctSuffix',
+          'nounPart',
+          'nounPartLabel',
+          'suffixLabel',
+          'explanation',
+        ]))
+      })
+      return base
+    }
+    case 'discriminationDrill': {
+      const base = pickAllowedKeys(
+        content,
+        new Set(['question', 'title', 'prompt', 'words', 'scenes', 'streakTarget', 'streak_target']),
+      )
+      const wk = new Set(['text', 'definition', 'word_id', 'oromo', 'word'])
+      const sk = new Set([
+        'image',
+        'imageUrl',
+        'imageRequestDescription',
+        'correctWordIndex',
+        'correct',
+        'explanation',
+        'question',
+        'title',
+        'prompt',
+      ])
+      const ws = base.words
+      if (Array.isArray(ws)) {
+        base.words = ws.map((w) =>
+          w != null && typeof w === 'object' && !Array.isArray(w)
+            ? pickAllowedKeys(w as Record<string, unknown>, wk)
+            : w,
+        )
+      }
+      const sc = base.scenes
+      if (Array.isArray(sc)) {
+        base.scenes = sc.map((s) =>
+          s != null && typeof s === 'object' && !Array.isArray(s)
+            ? pickAllowedKeys(s as Record<string, unknown>, sk)
+            : s,
+        )
+      }
+      return base
+    }
+    case 'videoReview':
+      return pickAllowedKeys(content, new Set(['introMessage', 'videoUrl', 'reviewLabel', 'reviewTitle']))
+    default:
+      return { ...content }
+  }
+}
+
+/** Normalize + strip before persisting a single screen (modal save + full lesson save). */
+export function finalizeScreenContentPayload(
+  type: ScreenType,
+  content: Record<string, unknown>,
+): Record<string, unknown> {
+  let c = { ...content }
+  if (type === 'dialogue') c = normalizeDialogueContent(c)
+  if (type === 'discriminationDrill') c = normalizeWordDiscriminationContentForEdit(c)
+  if (type === 'videoReview') c = normalizeVideoReviewContentForEdit(c)
+  return sanitizeScreenContentForPersistence(type, c)
+}
+
+export function finalizeLessonScreenForSave(screen: LessonScreen): LessonScreen {
+  const raw = screen.type as string
+  const canonical = (LEGACY_SCREEN_TYPE_ALIASES[raw] ?? raw) as ScreenType
+  return {
+    ...screen,
+    type: canonical,
+    content: finalizeScreenContentPayload(canonical, screen.content as Record<string, unknown>),
+  }
+}
+
+export function sanitizeLessonScreensForSave(screens: LessonScreen[]): LessonScreen[] {
+  return screens.map(finalizeLessonScreenForSave)
 }
 
 export function screenSummary(screen: LessonScreen): string {
@@ -344,8 +582,14 @@ export function screenSummary(screen: LessonScreen): string {
   switch (screen.type) {
     case 'intro':
       return String(c.goal ?? c.heading ?? '').slice(0, 80) || '—'
-    case 'concept':
+    case 'concept': {
+      const tw = String(c.targetWord ?? '').trim()
+      if (tw) {
+        const n = Array.isArray(c.bullets) ? c.bullets.length : 0
+        return `Target Word: ${tw} · Number of Points: ${n}`
+      }
       return String(c.heading ?? c.title ?? '').slice(0, 80) || '—'
+    }
     case 'dialogue': {
       const people = (c.dialogueData as Record<string, unknown> | undefined)?.people
       if (Array.isArray(people) && people.length >= 2) {
@@ -368,11 +612,6 @@ export function screenSummary(screen: LessonScreen): string {
       const lines = audioExposureWordSummaryLines(c as Record<string, unknown>)
       return lines.join(' · ')
     }
-    case 'animatedConcept': {
-      const tw = String(c.targetWord ?? '').trim() || '—'
-      const n = Array.isArray(c.bullets) ? c.bullets.length : 0
-      return `Target Word: ${tw} · Number of Points: ${n}`
-    }
     case 'CelebrateScreen':
       return String(c.message ?? '').slice(0, 80) || '—'
     case 'patternPractice': {
@@ -392,7 +631,7 @@ export function screenSummary(screen: LessonScreen): string {
       const intro = String(c.introMessage ?? '').trim()
       return intro.slice(0, 72) || '—'
     }
-    case 'wordDiscriminationQuiz': {
+    case 'discriminationDrill': {
       const q = String(c.question ?? c.title ?? c.prompt ?? '').trim()
       const raw = c.words
       let labels: string[] = []
@@ -422,10 +661,13 @@ export function screenSummary(screen: LessonScreen): string {
 export function screenSubtitleLines(screen: LessonScreen): string[] {
   const c = screen.content
   switch (screen.type) {
-    case 'animatedConcept': {
-      const tw = String(c.targetWord ?? '').trim() || '—'
-      const n = Array.isArray(c.bullets) ? c.bullets.length : 0
-      return [`Target Word: ${tw}`, `Number of Points: ${n}`]
+    case 'concept': {
+      const tw = String(c.targetWord ?? '').trim()
+      if (tw) {
+        const n = Array.isArray(c.bullets) ? c.bullets.length : 0
+        return [`Target Word: ${tw}`, `Number of Points: ${n}`]
+      }
+      return [screenSummary(screen)]
     }
     case 'audioExposure':
       return audioExposureWordSummaryLines(c as Record<string, unknown>)
@@ -472,7 +714,7 @@ export function celebrateExposureWordRows(screens: LessonScreen[]): { afaan: str
     for (const w of words) {
       if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
       const rec = w as Record<string, unknown>
-      const afaan = String(rec.oromo ?? rec.word ?? '').trim()
+      const afaan = String(rec.oromo ?? rec.text ?? rec.word ?? '').trim()
       const english = String(rec.english ?? rec.translation ?? '').trim()
       if (!afaan) continue
       if (seen.has(afaan)) continue

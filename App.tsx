@@ -53,7 +53,14 @@ function AppStack() {
         <Stack.Screen name="AdminHome" component={AdminHomeScreen} options={{ title: 'Admin Control Center' }} />
         <Stack.Screen name="LessonConfig" component={LessonConfigScreen} options={{ title: 'Series Config' }} />
         <Stack.Screen name="LessonConfigSeries" component={LessonConfigSeriesScreen} />
-        <Stack.Screen name="LessonConfigDetail" component={LessonConfigDetailScreen} />
+        <Stack.Screen
+          name="LessonConfigDetail"
+          component={LessonConfigDetailScreen}
+          options={({ route }) => ({
+            animationTypeForReplace:
+              route.params?.lessonNavReplaceAnimation === 'pop' ? 'pop' : 'push',
+          })}
+        />
         <Stack.Screen name="AdminAnalytics" component={AdminAnalyticsScreen} />
         <Stack.Screen name="AdminSeriesList" component={AdminSeriesListScreen} options={{ title: 'Voice Recording' }} />
         <Stack.Screen name="AdminSeriesDetail" component={AdminSeriesDetailScreen} />

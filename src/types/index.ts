@@ -27,7 +27,11 @@ export type RootStackParamList = {
   AdminAnalytics: undefined
   LessonConfig: undefined
   LessonConfigSeries: { seriesId: string }
-  LessonConfigDetail: { lessonId: string }
+  LessonConfigDetail: {
+    lessonId: string
+    /** Stack replace animation: `pop` = previous lesson slides in from the left (after swipe right). */
+    lessonNavReplaceAnimation?: 'push' | 'pop'
+  }
   AdminSeriesList: undefined
   AdminSeriesDetail: { seriesName: string; language: string }
   AdminAudioReview: undefined

@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
+import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import {
   ADMIN_ACCENT_GOLD,
   AdminChevronRight,
@@ -24,16 +25,16 @@ import {
   type LessonContentDraft,
   type LessonScreen,
   type ScreenType,
-  SCREEN_TYPE_OPTIONS,
+  buildAddScreenOptionsForCurriculumEditor,
   defaultScreen,
   parseLessonContent,
   sanitizeLessonScreensForSave,
-  screenSubtitleLines,
+  screenSubtitleLinesForCurriculumEditor,
+  screenTypeLabelForCurriculumEditor,
   syncCelebrateScreensWithAudioExposure,
 } from '../lib/lessonEditor'
 import {
   isLessonStructureFrozen,
-  isProfessorLessonEditingAllowed,
   normalizeSeriesStatus,
   type LessonSeriesStatus,
 } from '../lib/lessonSeriesStatus'
@@ -54,29 +55,6 @@ type LessonRecord = {
 
 function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T
-}
-
-type ScreenTypeOption = { value: ScreenType; label: string }
-
-/** Alphabetical. Injects `videoReview` if missing (stale Metro bundle / old binary). */
-function buildAddScreenOptions(): ScreenTypeOption[] {
-  const base = SCREEN_TYPE_OPTIONS.filter((o) => o.value !== 'intro')
-  const byValue = new Map<string, ScreenTypeOption>()
-  for (const o of base) {
-    byValue.set(o.value, o)
-  }
-  if (!byValue.has('videoReview')) {
-    byValue.set('videoReview', { value: 'videoReview', label: 'Video review' })
-  }
-  return [...byValue.values()].sort((a, b) =>
-    a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
-  )
-}
-
-const ADD_SCREEN_OPTIONS = buildAddScreenOptions()
-
-function screenTypeLabel(type: string): string {
-  return SCREEN_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type
 }
 
 function introScreenIndex(screens: LessonScreen[]): number {
@@ -278,6 +256,42 @@ async function fetchNextLessonIdInSeries(seriesId: string | null, lessonNumber: 
   return (data as { id: string }).id
 }
 
+async function fetchPrevLessonIdInSeries(seriesId: string | null, lessonNumber: number | null): Promise<string | null> {
+  if (!seriesId?.trim() || lessonNumber == null || lessonNumber <= 1) return null
+  const prevNum = lessonNumber - 1
+  const { data, error } = await supabase
+    .from('lessons')
+    .select('id')
+    .eq('series_id', seriesId)
+    .eq('lesson_number', prevNum)
+    .maybeSingle()
+  if (error || !data) return null
+  return (data as { id: string }).id
+}
+
+/** Header: `L2: S1: Title` — lesson index + series + title. */
+function lessonConfigDetailHeaderTitle(args: {
+  lessonNumber: number | null
+  seriesId: string | null
+  draftTitle: string | undefined | null
+  rowTitle: string | null | undefined
+  lessonId: string
+}): string {
+  const titleBase =
+    (typeof args.draftTitle === 'string' && args.draftTitle.trim()) ||
+    (typeof args.rowTitle === 'string' && args.rowTitle.trim()) ||
+    args.lessonId
+  const l =
+    args.lessonNumber != null && args.lessonNumber >= 1 ? `L${args.lessonNumber}` : 'L—'
+  const sid = (args.seriesId ?? '').trim()
+  let s = 'S—'
+  if (sid) {
+    const m = sid.match(/^series(\d+)$/i)
+    s = m ? `S${m[1]}` : `S:${sid}`
+  }
+  return `${l}: ${s}: ${titleBase}`
+}
+
 export default function LessonConfigDetailScreen({ navigation, route }: Props) {
   const { role } = useAuth()
   const { lessonId } = route.params
@@ -295,7 +309,14 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
   const [viewIndex, setViewIndex] = useState<number | null>(null)
   const [seriesStatus, setSeriesStatus] = useState<LessonSeriesStatus>('draft')
 
+  const addScreenOptions = useMemo(
+    () => buildAddScreenOptionsForCurriculumEditor(role ?? undefined),
+    [role],
+  )
+
   const unsavedRef = useRef(false)
+  const rowRef = useRef<LessonRecord | null>(null)
+  const swipeBlockedRef = useRef(false)
   const markUnsaved = useCallback(() => {
     unsavedRef.current = true
   }, [])
@@ -385,19 +406,27 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
       setParseError('')
     } else {
       setDraft(null)
-      setRawJsonMode(true)
-      try {
-        setRawJson(JSON.stringify(r.content ?? {}, null, 2))
-      } catch {
-        setRawJson('{}')
+      if (role === 'professor') {
+        setRawJsonMode(false)
+        setRawJson('')
+        setParseError(
+          'This lesson can’t be opened in the visual editor. Ask an admin to fix the lesson structure.',
+        )
+      } else {
+        setRawJsonMode(true)
+        try {
+          setRawJson(JSON.stringify(r.content ?? {}, null, 2))
+        } catch {
+          setRawJson('{}')
+        }
+        setParseError(
+          'This lesson could not be opened in the visual editor (missing screens or unknown shape). You can still edit raw JSON below.',
+        )
       }
-      setParseError(
-        'This lesson could not be opened in the visual editor (missing screens or unknown shape). You can still edit raw JSON below.',
-      )
     }
     setLoading(false)
     clearUnsaved()
-  }, [lessonId, clearUnsaved])
+  }, [lessonId, clearUnsaved, role])
 
   useEffect(() => {
     setLoading(true)
@@ -405,16 +434,25 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
   }, [load])
 
   const lessonContentEditable = useMemo(() => {
-    if (role === 'professor') return isProfessorLessonEditingAllowed(seriesStatus)
+    if (role === 'professor') {
+      /** Only professor **draft** series; admin_draft is preview-only. */
+      return seriesStatus === 'draft'
+    }
     if (role === 'admin') return !isLessonStructureFrozen(seriesStatus)
     return false
   }, [role, seriesStatus])
 
-  const save = useCallback(async () => {
-    if (!row) return
+  const professorAdminDraftPreview = role === 'professor' && seriesStatus === 'admin_draft'
+
+  const save = useCallback(async (): Promise<boolean> => {
+    if (!row) return false
+    if (role === 'professor' && rawJsonMode) {
+      Alert.alert('Not available', 'Raw lesson editing isn’t available for professors.')
+      return false
+    }
     if (!lessonContentEditable) {
       Alert.alert('View only', 'This lesson cannot be edited while the series is in this status.')
-      return
+      return false
     }
     setSaving(true)
     setError('')
@@ -504,14 +542,102 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
       }
       clearUnsaved()
       setSavedFlash(true)
+      return true
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setError(msg)
       Alert.alert('Save failed', msg)
+      return false
     } finally {
       setSaving(false)
     }
-  }, [row, draft, rawJson, rawJsonMode, clearUnsaved, lessonContentEditable])
+  }, [row, draft, rawJson, rawJsonMode, clearUnsaved, lessonContentEditable, role])
+
+  const handleSwipeLessonNavigate = useCallback(
+    async (direction: 'prev' | 'next') => {
+      if (swipeBlockedRef.current) return
+      const r = rowRef.current
+      if (!r?.series_id?.trim() || r.lesson_number == null || r.lesson_number < 1) {
+        Alert.alert('Cannot switch lesson', 'This lesson has no series or lesson number.')
+        return
+      }
+      const targetId =
+        direction === 'next'
+          ? await fetchNextLessonIdInSeries(r.series_id, r.lesson_number)
+          : await fetchPrevLessonIdInSeries(r.series_id, r.lesson_number)
+
+      if (!targetId) {
+        Alert.alert(
+          direction === 'next' ? 'End of series' : 'Start of series',
+          direction === 'next'
+            ? 'This is the last lesson in the series.'
+            : 'This is the first lesson in the series.',
+        )
+        return
+      }
+
+      if (targetId === r.id) return
+
+      const replaceAnim = direction === 'prev' ? 'pop' : 'push'
+
+      const replaceToTarget = () => {
+        unsavedRef.current = false
+        navigation.replace('LessonConfigDetail', {
+          lessonId: targetId,
+          lessonNavReplaceAnimation: replaceAnim,
+        })
+      }
+
+      if (!unsavedRef.current) {
+        replaceToTarget()
+        return
+      }
+
+      Alert.alert(
+        'Unsaved changes',
+        'Save before opening the other lesson, discard your edits, or keep editing.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Discard', style: 'destructive', onPress: () => replaceToTarget() },
+          {
+            text: 'Save and continue',
+            onPress: () => {
+              void (async () => {
+                const ok = await save()
+                if (ok) {
+                  navigation.replace('LessonConfigDetail', {
+                    lessonId: targetId,
+                    lessonNavReplaceAnimation: replaceAnim,
+                  })
+                }
+              })()
+            },
+          },
+        ],
+      )
+    },
+    [navigation, save],
+  )
+
+  const lessonSwipeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-64, 64])
+        .failOffsetY([-32, 32])
+        .onEnd((e) => {
+          if (swipeBlockedRef.current) return
+          const { translationX, translationY, velocityX } = e
+          if (Math.abs(translationY) > Math.abs(translationX)) return
+          const t = translationX
+          const v = velocityX
+          if (t < -56 || v < -900) {
+            void handleSwipeLessonNavigate('next')
+          } else if (t > 56 || v > 900) {
+            void handleSwipeLessonNavigate('prev')
+          }
+        }),
+    [handleSwipeLessonNavigate],
+  )
 
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
@@ -532,19 +658,42 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
   }, [draft])
 
   useLayoutEffect(() => {
-    const headerTitle = draft?.title?.trim() || row?.title?.trim() || lessonId
-    navigation.setOptions({
-      title: headerTitle,
-      headerRight: () =>
-        lessonContentEditable ? (
-          <Pressable onPress={() => void save()} disabled={saving || loading} style={styles.headerSaveBtn} hitSlop={8}>
-            <Text style={[styles.headerSaveText, saving && styles.headerSaveDisabled]}>Save</Text>
-          </Pressable>
-        ) : (
-          <Text style={styles.headerViewOnly}>View only</Text>
-        ),
+    const headerRight = () =>
+      lessonContentEditable ? (
+        <Pressable onPress={() => void save()} disabled={saving || loading} style={styles.headerSaveBtn} hitSlop={8}>
+          <Text style={[styles.headerSaveText, saving && styles.headerSaveDisabled]}>Save</Text>
+        </Pressable>
+      ) : (
+        <Text style={styles.headerViewOnly}>View only</Text>
+      )
+
+    if (loading || !row || row.id !== lessonId) {
+      navigation.setOptions({ title: lessonId, headerRight })
+      return
+    }
+
+    const headerTitle = lessonConfigDetailHeaderTitle({
+      lessonNumber: row.lesson_number ?? null,
+      seriesId: row.series_id ?? null,
+      draftTitle: draft?.title,
+      rowTitle: row.title,
+      lessonId,
     })
-  }, [navigation, lessonId, row?.title, draft?.title, save, saving, loading, lessonContentEditable])
+    navigation.setOptions({ title: headerTitle, headerRight })
+  }, [
+    navigation,
+    lessonId,
+    row,
+    draft?.title,
+    save,
+    saving,
+    loading,
+    lessonContentEditable,
+  ])
+
+  rowRef.current = row
+  swipeBlockedRef.current =
+    saving || loading || editingIndex !== null || viewIndex !== null || pickTypeOpen
 
   if (loading) {
     return (
@@ -572,54 +721,80 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
 
   if (rawJsonMode) {
     return (
-      <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        {parseError ? <Text style={styles.parseHint}>{parseError}</Text> : null}
-        {!lessonContentEditable ? (
-          <Text style={styles.viewOnlyBanner}>This series is view-only — switch back when the series is in draft (professor) or before audio complete (admin).</Text>
-        ) : null}
-        <Text style={styles.meta}>id: {row.id} (locked)</Text>
-        <AdminSectionHeader label="Full lesson content (JSON)" emphasis="gold" />
-        <TextInput
-          style={styles.rawJson}
-          multiline
-          editable={lessonContentEditable}
-          value={rawJson}
-          onChangeText={(t) => {
-            markUnsaved()
-            setRawJson(t)
-            setError('')
-          }}
-          textAlignVertical="top"
-        />
-        {lessonContentEditable ? (
-          <Pressable
-            style={styles.tryVisualBtn}
-            onPress={() => {
-              try {
-                const p = JSON.parse(rawJson) as unknown
-                const d = parseLessonContent(p, row.id)
-                if (d) {
-                  markUnsaved()
-                  setDraft(d)
-                  setRawJsonMode(false)
-                  setParseError('')
-                } else {
-                  Alert.alert('Still invalid', 'Need screens[] with at least one valid screen.')
-                }
-              } catch {
-                Alert.alert('Invalid JSON', 'Fix JSON syntax first.')
-              }
-            }}
-          >
-            <Text style={styles.tryVisualText}>Try visual editor again</Text>
-          </Pressable>
-        ) : null}
-      </ScrollView>
+      <GestureDetector gesture={lessonSwipeGesture}>
+        <View style={styles.swipeGestureHost}>
+          <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            {parseError ? <Text style={styles.parseHint}>{parseError}</Text> : null}
+            {!lessonContentEditable ? (
+              <Text style={styles.viewOnlyBanner}>
+                {professorAdminDraftPreview
+                  ? 'Admin draft — preview only. JSON is read-only; you can edit lessons in series you own while the series is in Draft.'
+                  : 'This series is view-only — switch back when the series is in draft (professor) or before audio complete (admin).'}
+              </Text>
+            ) : null}
+            <Text style={styles.meta}>id: {row.id} (locked)</Text>
+            <AdminSectionHeader label="Full lesson content (JSON)" emphasis="gold" />
+            <TextInput
+              style={styles.rawJson}
+              multiline
+              editable={lessonContentEditable}
+              value={rawJson}
+              onChangeText={(t) => {
+                markUnsaved()
+                setRawJson(t)
+                setError('')
+              }}
+              textAlignVertical="top"
+            />
+            {lessonContentEditable ? (
+              <Pressable
+                style={styles.tryVisualBtn}
+                onPress={() => {
+                  try {
+                    const p = JSON.parse(rawJson) as unknown
+                    const d = parseLessonContent(p, row.id)
+                    if (d) {
+                      markUnsaved()
+                      setDraft(d)
+                      setRawJsonMode(false)
+                      setParseError('')
+                    } else {
+                      Alert.alert('Still invalid', 'Need screens[] with at least one valid screen.')
+                    }
+                  } catch {
+                    Alert.alert('Invalid JSON', 'Fix JSON syntax first.')
+                  }
+                }}
+              >
+                <Text style={styles.tryVisualText}>Try visual editor again</Text>
+              </Pressable>
+            ) : null}
+          </ScrollView>
+        </View>
+      </GestureDetector>
     )
   }
 
   if (!draft) {
+    if (role === 'professor' && parseError.trim()) {
+      return (
+        <GestureDetector gesture={lessonSwipeGesture}>
+          <View style={styles.swipeGestureHost}>
+            <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent}>
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+              {professorAdminDraftPreview ? (
+                <Text style={styles.viewOnlyBanner}>
+                  Admin draft — preview only. Swipe to browse other lessons in this series.
+                </Text>
+              ) : null}
+              <Text style={styles.parseHint}>{parseError}</Text>
+              <Text style={styles.meta}>id: {row.id}</Text>
+            </ScrollView>
+          </View>
+        </GestureDetector>
+      )
+    }
     return (
       <View style={styles.screen}>
         <Text style={styles.error}>Could not load editor.</Text>
@@ -672,10 +847,14 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
     <View style={styles.flex}>
       {error ? <Text style={styles.bannerError}>{error}</Text> : null}
       {savedFlash ? <Text style={styles.bannerSaved}>Saved</Text> : null}
-      <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+      <GestureDetector gesture={lessonSwipeGesture}>
+        <View style={styles.swipeGestureHost}>
+          <ScrollView style={styles.screen} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         {!lessonContentEditable ? (
           <Text style={styles.viewOnlyBanner}>
-            View only — open this lesson to review screens; editing unlocks when the series allows it.
+            {professorAdminDraftPreview
+              ? 'Admin draft — preview only. Swipe between lessons to review; edit only in your own series while it is in Draft.'
+              : 'View only — open this lesson to review screens; editing unlocks when the series allows it.'}
           </Text>
         ) : null}
         <View style={styles.sectionBlock}>
@@ -728,7 +907,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
               const upDisabled = i === 0 || draft.screens[i - 1]?.type === 'intro'
               const downDisabled =
                 i === draft.screens.length - 1 || draft.screens[i + 1]?.type === 'intro'
-              const subtitleLines = screenSubtitleLines(s)
+              const subtitleLines = screenSubtitleLinesForCurriculumEditor(s, role ?? undefined)
               return (
                 <View key={`${s.type}-${i}`} style={styles.screenRowCard}>
                   <Pressable
@@ -743,7 +922,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
                     </View>
                     <View style={styles.screenRowText}>
                       <Text style={styles.screenRowTitle} numberOfLines={1}>
-                        {screenTypeLabel(s.type)}
+                        {screenTypeLabelForCurriculumEditor(s.type, role ?? undefined)}
                       </Text>
                       <Text style={styles.screenRowSubtitle}>
                         {subtitleLines.join('\n')}
@@ -793,7 +972,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
           ) : null}
         </View>
 
-        {lessonContentEditable ? (
+        {lessonContentEditable && role !== 'professor' ? (
           <Pressable
             style={styles.rawModeBtn}
             onPress={() => {
@@ -809,13 +988,19 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
             <Text style={styles.rawModeBtnText}>Switch to raw JSON (advanced)</Text>
           </Pressable>
         ) : null}
-      </ScrollView>
+          </ScrollView>
+        </View>
+      </GestureDetector>
 
       <Modal visible={pickTypeOpen} animationType="fade" transparent>
         <Pressable style={styles.pickOverlay} onPress={() => setPickTypeOpen(false)}>
           <Pressable style={styles.pickSheet} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.pickTitle}>Screen type</Text>
-            <Text style={styles.pickSubtitle}>Scroll for all types (e.g. Video review before Word breakdown).</Text>
+            <Text style={styles.pickSubtitle}>
+              {role === 'professor'
+                ? 'Choose a screen type to add.'
+                : 'Scroll for all types (e.g. video review before word breakdown).'}
+            </Text>
             <ScrollView
               style={styles.pickList}
               contentContainerStyle={styles.pickListContent}
@@ -823,7 +1008,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
               showsVerticalScrollIndicator
               nestedScrollEnabled
             >
-              {ADD_SCREEN_OPTIONS.map((item) => (
+              {addScreenOptions.map((item) => (
                 <Pressable
                   key={item.value}
                   style={styles.pickRow}
@@ -864,7 +1049,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
             </Pressable>
             <Text style={styles.viewScreenModalTitle} numberOfLines={1}>
               {viewIndex != null && draft.screens[viewIndex]
-                ? screenTypeLabel(draft.screens[viewIndex].type)
+                ? screenTypeLabelForCurriculumEditor(draft.screens[viewIndex].type, role ?? undefined)
                 : 'Screen'}
             </Text>
             <View style={{ width: 56 }} />
@@ -876,19 +1061,32 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
             {viewIndex != null && draft.screens[viewIndex] ? (
               <>
                 <Text style={styles.viewScreenSummary}>
-                  {screenSubtitleLines(draft.screens[viewIndex]).join('\n') ||
+                  {screenSubtitleLinesForCurriculumEditor(draft.screens[viewIndex], role ?? undefined).join(
+                    '\n',
+                  ) ||
                     draft.screens[viewIndex].type}
                 </Text>
-                <Text style={styles.viewScreenJsonLabel}>Content (JSON)</Text>
-                <Text selectable style={styles.viewScreenJson}>
-                  {(() => {
-                    try {
-                      return JSON.stringify(draft.screens[viewIndex].content, null, 2)
-                    } catch {
-                      return String(draft.screens[viewIndex].content)
-                    }
-                  })()}
-                </Text>
+                {role === 'professor' && draft.screens[viewIndex].type === 'videoReview' ? (
+                  <>
+                    <Text style={styles.viewScreenJsonLabel}>Details</Text>
+                    <Text style={styles.viewScreenJson}>
+                      An admin completes this step after curriculum approval.
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.viewScreenJsonLabel}>Content (JSON)</Text>
+                    <Text selectable style={styles.viewScreenJson}>
+                      {(() => {
+                        try {
+                          return JSON.stringify(draft.screens[viewIndex].content, null, 2)
+                        } catch {
+                          return String(draft.screens[viewIndex].content)
+                        }
+                      })()}
+                    </Text>
+                  </>
+                )}
               </>
             ) : null}
           </ScrollView>
@@ -907,6 +1105,8 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
             : null
         }
         wordBankLanguage={VOICE_BANK_LANGUAGE}
+        allowJsonEditing={role !== 'professor'}
+        allowVideoReviewMediaFields={role !== 'professor'}
         onClose={() => setEditingIndex(null)}
         onApply={(next) => {
           if (editingIndex === null) return
@@ -920,6 +1120,8 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: '#000' },
+  /** Fills space under banners so horizontal swipe can reach the lesson list. */
+  swipeGestureHost: { flex: 1 },
   screen: { flex: 1, backgroundColor: '#000' },
   scrollContent: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 40 },
   sectionBlock: { marginBottom: 8 },

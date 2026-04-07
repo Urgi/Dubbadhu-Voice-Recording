@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  ActivityIndicator,
   Alert,
   Modal,
   Platform,
@@ -34,6 +35,8 @@ import {
   normalizeVideoReviewContentForEdit,
   normalizeWordDiscriminationContentForEdit,
 } from '../../lib/lessonEditor'
+import { generateAndUploadWordDiscriminationImage } from '../../lib/geminiWordDiscriminationImage'
+import { getExpoPublicGeminiKey } from '../../lib/expoPublicEnv'
 import supabase from '../../lib/supabase'
 import type { HarvestedWord } from '../../lib/seedWordsFromLessons'
 import {
@@ -43,6 +46,7 @@ import {
   lookupWordBankRowWithSeriesLabels,
 } from '../../lib/seedWordsFromLessons'
 import { VOICE_BANK_LANGUAGE, voiceBankLanguageSqlValues } from '../../lib/voiceBankLabels'
+import { LessonScreenLearnerPreview } from './LessonScreenLearnerPreview'
 import { TranslationMismatchModal } from './TranslationMismatchModal'
 
 /** Public storage bucket for Word discrimination quiz question images (Supabase dashboard). */
@@ -61,6 +65,10 @@ type Props = {
   /** Optional: `lesson.content.series` string (e.g. "Mastering Greetings") for `words.series` matching. */
   lessonContentSeries?: string | null
   wordBankLanguage?: string
+  /** Professors: false — hide raw JSON and JSON-only escape hatches. */
+  allowJsonEditing?: boolean
+  /** Professors: false — no storage picker / URL fields for the review step (admin adds later). */
+  allowVideoReviewMediaFields?: boolean
   onClose: () => void
   onApply: (next: LessonScreen) => void
 }
@@ -746,6 +754,7 @@ function WordDiscriminationSceneImageField({
   const [listErr, setListErr] = useState('')
   const [listLoading, setListLoading] = useState(false)
   const [rawListCount, setRawListCount] = useState(0)
+  const [geminiBusy, setGeminiBusy] = useState(false)
 
   const applyScenePatch = useCallback(
     (patch: Record<string, unknown>) => {
@@ -908,12 +917,21 @@ function WordDiscriminationSceneImageField({
         </Pressable>
       </Modal>
 
-      <Modal visible={requestOpen} transparent animationType="fade" onRequestClose={() => setRequestOpen(false)}>
-        <Pressable style={styles.quizCorrectOverlay} onPress={() => setRequestOpen(false)}>
+      <Modal
+        visible={requestOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!geminiBusy) setRequestOpen(false)
+        }}
+      >
+        <Pressable style={styles.quizCorrectOverlay} onPress={() => !geminiBusy && setRequestOpen(false)}>
           <Pressable style={styles.quizCorrectSheet} onPress={() => {}}>
             <Text style={styles.personTitle}>Request new image</Text>
             <Text style={styles.hint}>
-              Describe the image for your team to add in Storage. Learners see this text until an image is set.
+              Describe the image for your team to add in Storage. Learners see this text until an image is set. You can
+              also generate a draft image with Gemini (same API key as document word extraction) and upload it to this
+              bucket.
             </Text>
             <TextInput
               style={[styles.input, { minHeight: 88, textAlignVertical: 'top' }]}
@@ -922,9 +940,46 @@ function WordDiscriminationSceneImageField({
               placeholder="e.g. Older woman smiling, outdoor setting…"
               placeholderTextColor="#52525b"
               multiline
+              editable={!geminiBusy}
             />
+            {geminiBusy ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
+                <ActivityIndicator color="#d4af37" />
+                <Text style={styles.hint}>Generating and uploading…</Text>
+              </View>
+            ) : null}
+            {!getExpoPublicGeminiKey().trim() ? (
+              <Text style={[styles.hint, { marginTop: 8 }]}>
+                Gemini generation needs EXPO_PUBLIC_GEMINI_API_KEY in your env (restart Metro after adding).
+              </Text>
+            ) : null}
             <Pressable
-              style={styles.addBtn}
+              style={[
+                styles.addBtn,
+                { marginTop: 10, opacity: geminiBusy || !requestDraft.trim() ? 0.45 : 1 },
+              ]}
+              disabled={geminiBusy || !requestDraft.trim() || !getExpoPublicGeminiKey().trim()}
+              onPress={() => {
+                const t = requestDraft.trim()
+                if (!t || geminiBusy) return
+                void (async () => {
+                  setGeminiBusy(true)
+                  const out = await generateAndUploadWordDiscriminationImage(t)
+                  setGeminiBusy(false)
+                  if ('error' in out) {
+                    Alert.alert('Could not generate image', out.error)
+                    return
+                  }
+                  applyScenePatch({ image: out.publicUrl, imageRequestDescription: '' })
+                  setRequestOpen(false)
+                })()
+              }}
+            >
+              <Text style={styles.addBtnText}>Generate with Gemini & use image</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.addBtn, { marginTop: 8, opacity: geminiBusy ? 0.45 : 1 }]}
+              disabled={geminiBusy}
               onPress={() => {
                 const t = requestDraft.trim()
                 if (!t) return
@@ -932,9 +987,13 @@ function WordDiscriminationSceneImageField({
                 setRequestOpen(false)
               }}
             >
-              <Text style={styles.addBtnText}>Save request</Text>
+              <Text style={styles.addBtnText}>Save request (text only)</Text>
             </Pressable>
-            <Pressable style={styles.removeBtn} onPress={() => setRequestOpen(false)}>
+            <Pressable
+              style={[styles.removeBtn, { marginTop: 4 }]}
+              disabled={geminiBusy}
+              onPress={() => setRequestOpen(false)}
+            >
               <Text style={styles.removeBtnText}>Cancel</Text>
             </Pressable>
           </Pressable>
@@ -1510,6 +1569,19 @@ function modalContentDirty(
   }
 }
 
+function modalContentDirtyForRole(
+  allowJsonEditing: boolean,
+  draft: LessonScreen,
+  jsonFallback: string,
+  baseline: LessonScreen,
+  baselineJsonText: string,
+): boolean {
+  if (!allowJsonEditing) {
+    return JSON.stringify(draft) !== JSON.stringify(baseline)
+  }
+  return modalContentDirty(draft, jsonFallback, baseline, baselineJsonText)
+}
+
 export function LessonScreenEditModal({
   visible,
   screen,
@@ -1517,6 +1589,8 @@ export function LessonScreenEditModal({
   lessonSeries = null,
   lessonContentSeries = null,
   wordBankLanguage = VOICE_BANK_LANGUAGE,
+  allowJsonEditing = true,
+  allowVideoReviewMediaFields = true,
   onClose: onCloseFromParent,
   onApply,
 }: Props) {
@@ -1588,7 +1662,7 @@ export function LessonScreenEditModal({
       onCloseFromParent()
       return
     }
-    if (!modalContentDirty(draft, jsonFallback, b, baselineJsonTextRef.current)) {
+    if (!modalContentDirtyForRole(allowJsonEditing, draft, jsonFallback, b, baselineJsonTextRef.current)) {
       onCloseFromParent()
       return
     }
@@ -1600,7 +1674,7 @@ export function LessonScreenEditModal({
         { text: 'Discard', style: 'destructive', onPress: () => onCloseFromParent() },
       ],
     )
-  }, [visible, screen, draft, jsonFallback, onCloseFromParent])
+  }, [visible, screen, draft, jsonFallback, allowJsonEditing, onCloseFromParent])
 
   const [translationConflict, setTranslationConflict] = useState<TranslationConflictPayload | null>(null)
   const translationConflictResolveRef = useRef<((c: TranslationConflictChoice) => void) | null>(null)
@@ -1764,7 +1838,8 @@ export function LessonScreenEditModal({
               <View style={styles.warningBox}>
                 <Text style={styles.warningTitle}>This concept uses an older format (sections[])</Text>
                 <Text style={styles.warningBody}>
-                  The visual editor expects bullets format. You can convert it (and still edit JSON below if needed).
+                  The visual editor expects bullets format. You can convert it
+                  {allowJsonEditing ? ' (or edit raw JSON below if needed).' : '.'}
                 </Text>
                 <Pressable style={styles.convertBtn} onPress={convertLegacyToBullets}>
                   <Text style={styles.convertBtnText}>Convert to bullets format</Text>
@@ -2027,7 +2102,11 @@ export function LessonScreenEditModal({
                 const content = d.content as Record<string, unknown>
                 const pr = content.pairs
                 if (!Array.isArray(pr) || pr.length === 0) {
-                  setJsonError('Match screen needs at least one pair. Add a pair first (or paste JSON and Apply JSON & close).')
+                  setJsonError(
+                    allowJsonEditing
+                      ? 'Match screen needs at least one pair. Add a pair first (or paste JSON and Apply JSON & close).'
+                      : 'Match screen needs at least one pair. Add a pair first.',
+                  )
                   return
                 }
                 saveStructured(content)
@@ -2292,8 +2371,9 @@ export function LessonScreenEditModal({
           <View style={styles.form}>
             {words.length === 0 ? (
               <Text style={styles.hint}>
-                No words yet. Remove the last word to start fresh, then use + Add word. Save requires at least one word (or use
-                Apply JSON & close).
+                {allowJsonEditing
+                  ? 'No words yet. Remove the last word to start fresh, then use + Add word. Save requires at least one word (or use Apply JSON & close).'
+                  : 'No words yet. Remove the last word to start fresh, then use + Add word. Save requires at least one word.'}
               </Text>
             ) : null}
             {words.length ? (
@@ -2377,7 +2457,11 @@ export function LessonScreenEditModal({
                     const c2 = current.content as Record<string, unknown>
                     const ws = (c2.words as Record<string, unknown>[] | undefined) ?? []
                     if (!Array.isArray(ws) || ws.length < 1) {
-                      setJsonError('Audio exposure needs at least one word. Add a word or use Apply JSON & close.')
+                      setJsonError(
+                        allowJsonEditing
+                          ? 'Audio exposure needs at least one word. Add a word or use Apply JSON & close.'
+                          : 'Audio exposure needs at least one word. Add a word first.',
+                      )
                       return
                     }
                     // Match `words.series` to lesson_series id, slug, title, AND lesson JSON `content.series`
@@ -2648,27 +2732,40 @@ export function LessonScreenEditModal({
       case 'videoReview': {
         return (
           <View style={styles.form}>
+            {!allowVideoReviewMediaFields ? (
+              <Text style={styles.hint}>
+                An admin completes this step after curriculum approval (intro copy and labels below are optional for
+                your draft).
+              </Text>
+            ) : null}
             <Field
               label="Intro message"
               value={String(c.introMessage ?? '')}
               multiline
               onChangeText={(t) => setContent((cur) => ({ ...cur, introMessage: t }))}
             />
-            <VideoReviewDubbadhuVideoField videoUrl={String(c.videoUrl ?? '')} setContent={setContent} />
-            <Text style={styles.label}>Video URL</Text>
-            <Text style={styles.hint}>Paste a public URL if the bucket list is empty (RLS), or to override the pick above.</Text>
-            <TextInput
-              style={styles.input}
-              value={String(c.videoUrl ?? '')}
-              onChangeText={(t) => setContent((cur) => ({ ...cur, videoUrl: t.trim() }))}
-              placeholder="https://…supabase.co/storage/v1/object/public/Videos-Dubbadhu/…"
-              placeholderTextColor="#52525b"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <Text style={styles.hint}>
-              On the video, the bottom overlay matches Series intro (gold label + title). Leave title blank to use the lesson title in the app.
-            </Text>
+            {allowVideoReviewMediaFields ? (
+              <>
+                <VideoReviewDubbadhuVideoField videoUrl={String(c.videoUrl ?? '')} setContent={setContent} />
+                <Text style={styles.label}>Video URL</Text>
+                <Text style={styles.hint}>
+                  Paste a public URL if the bucket list is empty (RLS), or to override the pick above.
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  value={String(c.videoUrl ?? '')}
+                  onChangeText={(t) => setContent((cur) => ({ ...cur, videoUrl: t.trim() }))}
+                  placeholder="https://…supabase.co/storage/v1/object/public/Videos-Dubbadhu/…"
+                  placeholderTextColor="#52525b"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Text style={styles.hint}>
+                  On the video, the bottom overlay matches Series intro (gold label + title). Leave title blank to use
+                  the lesson title in the app.
+                </Text>
+              </>
+            ) : null}
             <Field
               label="Overlay label (e.g. SERIES REVIEW)"
               value={String(c.reviewLabel ?? '')}
@@ -2716,37 +2813,55 @@ export function LessonScreenEditModal({
             <Text style={styles.modalCancel}>Cancel</Text>
           </Pressable>
           <Text style={styles.modalTitle} numberOfLines={1}>
-            {screenTypeTitle(draft.type)}
+            {!allowVideoReviewMediaFields && draft.type === 'videoReview'
+              ? 'Review'
+              : screenTypeTitle(draft.type)}
           </Text>
           <View style={{ width: 56 }} />
         </View>
         <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled">
           <View style={styles.screenHeader}>
-            <Text style={styles.screenHeaderTitle}>{screenTypeTitle(draft.type)}</Text>
+            <Text style={styles.screenHeaderTitle}>
+              {!allowVideoReviewMediaFields && draft.type === 'videoReview'
+                ? 'Review'
+                : screenTypeTitle(draft.type)}
+            </Text>
             <Text style={styles.screenHeaderSubtitle}>
-              Adjust inputs below to modify/create screen.
+              {allowJsonEditing
+                ? 'Adjust inputs below to modify/create screen.'
+                : 'Sample learner UI is shown above the form so you can match fields to what students see.'}
             </Text>
           </View>
+          {!allowJsonEditing ? <LessonScreenLearnerPreview screenType={draft.type} /> : null}
+          {!allowJsonEditing && jsonError ? <Text style={styles.jsonErr}>{jsonError}</Text> : null}
           {hasStructured ? (
             structuredForm()
-          ) : (
+          ) : allowJsonEditing ? (
             <Text style={styles.hint}>No simple form for this type yet — edit JSON below.</Text>
+          ) : (
+            <Text style={styles.hint}>
+              This screen type doesn’t have a visual editor yet. Ask an admin to change it.
+            </Text>
           )}
-          <Text style={styles.advancedLabel}>Screen content (JSON)</Text>
-          {jsonError ? <Text style={styles.jsonErr}>{jsonError}</Text> : null}
-          <TextInput
-            style={styles.jsonInput}
-            multiline
-            value={jsonFallback}
-            onChangeText={(t) => {
-              setJsonFallback(t)
-              setJsonError('')
-            }}
-            textAlignVertical="top"
-          />
-          <Pressable style={styles.applyJsonBtn} onPress={applyJsonFallback}>
-            <Text style={styles.applyJsonText}>Apply JSON & close</Text>
-          </Pressable>
+          {allowJsonEditing ? (
+            <>
+              <Text style={styles.advancedLabel}>Screen content (JSON)</Text>
+              {jsonError ? <Text style={styles.jsonErr}>{jsonError}</Text> : null}
+              <TextInput
+                style={styles.jsonInput}
+                multiline
+                value={jsonFallback}
+                onChangeText={(t) => {
+                  setJsonFallback(t)
+                  setJsonError('')
+                }}
+                textAlignVertical="top"
+              />
+              <Pressable style={styles.applyJsonBtn} onPress={applyJsonFallback}>
+                <Text style={styles.applyJsonText}>Apply JSON & close</Text>
+              </Pressable>
+            </>
+          ) : null}
         </ScrollView>
         {translationConflict ? (
           <TranslationMismatchModal

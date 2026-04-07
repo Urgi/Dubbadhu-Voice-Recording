@@ -66,6 +66,48 @@ export const SCREEN_TYPE_OPTIONS: { value: ScreenType; label: string }[] = [
   { value: 'videoReview', label: 'Video review' },
 ]
 
+export type ScreenTypeOption = { value: ScreenType; label: string }
+
+/**
+ * Options for “Add screen”. Professors omit video review — admins attach that after curriculum approval.
+ */
+export function buildAddScreenOptionsForCurriculumEditor(role: string | undefined): ScreenTypeOption[] {
+  const excludeVideoReview = role === 'professor'
+  const base = SCREEN_TYPE_OPTIONS.filter((o) => o.value !== 'intro')
+  const byValue = new Map<string, ScreenTypeOption>()
+  for (const o of base) {
+    if (excludeVideoReview && o.value === 'videoReview') continue
+    byValue.set(o.value, o)
+  }
+  if (!excludeVideoReview && !byValue.has('videoReview')) {
+    byValue.set('videoReview', { value: 'videoReview', label: 'Video review' })
+  }
+  return [...byValue.values()].sort((a, b) =>
+    a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
+  )
+}
+
+/** Professor-facing label hides “video” wording for the review step. */
+export function screenTypeLabelForCurriculumEditor(type: string, role: string | undefined): string {
+  if (role === 'professor' && type === 'videoReview') return 'Review'
+  return SCREEN_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type
+}
+
+/** Professor list/view: no filenames or “Video:” lines for the review step. */
+export function screenSubtitleLinesForCurriculumEditor(screen: LessonScreen, role: string | undefined): string[] {
+  if (role !== 'professor' || screen.type !== 'videoReview') return screenSubtitleLines(screen)
+  const c = screen.content as Record<string, unknown>
+  const lines: string[] = []
+  const intro = String(c.introMessage ?? '').trim()
+  if (intro) lines.push(intro.slice(0, 100) + (intro.length > 100 ? '…' : ''))
+  const rl = String(c.reviewLabel ?? '').trim()
+  const rt = String(c.reviewTitle ?? '').trim()
+  if (rl) lines.push(`Label: ${rl}`)
+  if (rt) lines.push(`Title: ${rt}`)
+  if (lines.length === 0) lines.push('Admin completes this step after curriculum approval')
+  return lines
+}
+
 const KNOWN: Set<string> = new Set(SCREEN_TYPE_OPTIONS.map((o) => o.value))
 
 export function isScreenType(s: string): s is ScreenType {

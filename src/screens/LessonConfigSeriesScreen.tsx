@@ -1,9 +1,11 @@
 import { useFocusEffect } from '@react-navigation/native'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import * as ImagePicker from 'expo-image-picker'
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -40,7 +42,18 @@ import {
   type SeriesWordBankReviewSummary,
   type SeriesWordsVaProgress,
 } from '../lib/seedWordsFromLessons'
+import SeriesIntroVideoBlock from '../components/SeriesIntroVideoBlock'
+import SeriesListCoverCropModal from '../components/SeriesListCoverCropModal'
+import {
+  SERIES_LIST_COVER_ASPECT,
+  SERIES_LIST_COVER_ASPECT_HEIGHT,
+  SERIES_LIST_COVER_ASPECT_WIDTH,
+  SERIES_LIST_COVER_DISPLAY_ASPECT_RATIO,
+  SERIES_LIST_COVER_DISPLAY_SQUASH,
+  uploadSeriesListCoverImage,
+} from '../lib/seriesListCover'
 import supabase from '../lib/supabase'
+import { findVideoReviewScreensMissingUrl, type VideoReviewGap } from '../lib/lessonVideoReviewGate'
 import { VOICE_BANK_LANGUAGE, wordsBankSeriesLabelFromSeriesId } from '../lib/voiceBankLabels'
 import type { RootStackParamList } from '../types'
 
@@ -86,6 +99,32 @@ function withLessonsRlsHint(message: string): string {
   return message
 }
 
+/** Stable display order: lesson_number, then id (handles null/duplicate numbers from legacy data). */
+function sortLessonsForOrder(rows: LessonRow[]): LessonRow[] {
+  return [...rows].sort((a, b) => {
+    const na = typeof a.lesson_number === 'number' && a.lesson_number > 0 ? a.lesson_number : 1e9
+    const nb = typeof b.lesson_number === 'number' && b.lesson_number > 0 ? b.lesson_number : 1e9
+    if (na !== nb) return na - nb
+    return a.id.localeCompare(b.id)
+  })
+}
+
+/** Strip query/hash so we can append a fresh cache-buster (Storage serves the object by path; extra params are ignored). */
+function listCoverUrlWithVersion(publicUrl: string): string {
+  const t = publicUrl.trim()
+  if (!t) return t
+  const base = t.split('#')[0].split('?')[0]
+  return `${base}?v=${Date.now()}`
+}
+
+/** RN `Image` + CDN: extra preview nonce so the widget remounts even if DB URL was unchanged between renders. */
+function listCoverPreviewUri(cleanUrl: string | null, nonce: number): string | null {
+  const u = cleanUrl?.trim() ?? ''
+  if (!u) return null
+  const sep = u.includes('?') ? '&' : '?'
+  return `${u}${sep}pv=${nonce}`
+}
+
 export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   const { role } = useAuth()
   const isAdmin = role === 'admin'
@@ -113,6 +152,18 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   const [vaProgress, setVaProgress] = useState<SeriesWordsVaProgress | null>(null)
   /** Admin-only: what approving will insert or patch in `words` (from lesson JSON vs DB). */
   const [wordBankReview, setWordBankReview] = useState<SeriesWordBankReviewSummary | null>(null)
+  const [listCoverUrl, setListCoverUrl] = useState<string | null>(null)
+  const [listCoverPreviewNonce, setListCoverPreviewNonce] = useState(0)
+  const [coverUploading, setCoverUploading] = useState(false)
+  const [coverCropVisible, setCoverCropVisible] = useState(false)
+  const [coverCropUri, setCoverCropUri] = useState<string | null>(null)
+  /** New key each pick so the crop modal remounts (same `file://` URI twice would otherwise keep stale crop state). */
+  const [coverCropSession, setCoverCropSession] = useState(0)
+  const [introVideoUrl, setIntroVideoUrl] = useState<string | null>(null)
+  const [introVideoSaving, setIntroVideoSaving] = useState(false)
+  const [videoReviewGaps, setVideoReviewGaps] = useState<VideoReviewGap[]>([])
+  const [lessonReorderSaving, setLessonReorderSaving] = useState(false)
+  const lessonReorderInFlight = useRef(false)
   const lessonSwipeRefs = useRef<Record<string, Swipeable | null>>({})
 
   const nextLessonNumber = useMemo(() => {
@@ -123,6 +174,8 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     }
     return max + 1
   }, [lessons])
+
+  const orderedLessons = useMemo(() => sortLessonsForOrder(lessons), [lessons])
 
   const audioStatusSubtitle = useMemo(() => {
     if (!lessonSeriesRowExists) return 'Requires a lesson_series row for this id.'
@@ -164,6 +217,9 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     return true
   }, [isAdmin, isProfessor, seriesStatus])
 
+  /** Speak-tab list cover is admin-only; professors never see it in this app. */
+  const showSpeakTabCoverSection = isAdmin
+
   const canAdminApproveCurriculum =
     isAdmin && lessonSeriesRowExists && (seriesStatus === 'submitted' || seriesStatus === 'admin_draft')
 
@@ -173,14 +229,26 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   const showProfessorWorkflow =
     isProfessor && lessonSeriesRowExists && seriesStatus !== 'published'
 
-  const canMarkAudioComplete =
-    isAdmin &&
-    lessonSeriesRowExists &&
-    seriesStatus === 'approved' &&
-    vaProgress != null &&
-    vaProgress.allLessonWordsInVoiceBank &&
-    vaProgress.totalLessonWords > 0 &&
-    vaProgress.needRecording === 0
+  const releaseMediaReady = useMemo(
+    () =>
+      Boolean((listCoverUrl ?? '').trim()) &&
+      Boolean((introVideoUrl ?? '').trim()) &&
+      videoReviewGaps.length === 0,
+    [listCoverUrl, introVideoUrl, videoReviewGaps],
+  )
+
+  const canMarkAudioComplete = useMemo(
+    () =>
+      isAdmin &&
+      lessonSeriesRowExists &&
+      seriesStatus === 'approved' &&
+      vaProgress != null &&
+      vaProgress.allLessonWordsInVoiceBank &&
+      vaProgress.totalLessonWords > 0 &&
+      vaProgress.needRecording === 0 &&
+      releaseMediaReady,
+    [isAdmin, lessonSeriesRowExists, seriesStatus, vaProgress, releaseMediaReady],
+  )
 
   const seriesStatusExplainer = useMemo(() => {
     if (!lessonSeriesRowExists) {
@@ -188,12 +256,15 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     }
     if (isProfessor) {
       if (seriesStatus === 'draft') return 'Edit lessons and script below, then submit for admin review.'
+      if (seriesStatus === 'admin_draft') {
+        return 'Admin is preparing curriculum. Open any lesson to preview; editing stays off until your own series is in Draft.'
+      }
       if (seriesStatus === 'submitted') {
         return 'Submitted. Withdraw to edit again, or wait for admin to approve curriculum.'
       }
       return 'View only. Admin owns curriculum and audio workflow for this series now.'
     }
-    return 'Handle submitted series or admin drafts: approve curriculum to create pending words for the voice queue, then mark audio complete when recording is done. After complete, run npm run series:pull in the Dubbadhu repo to publish.'
+    return 'Handle submitted series or admin drafts: approve curriculum to seed the voice queue, finish recording, add Speak cover + series intro video + review URLs in lessons, then mark audio complete. Run npm run series:pull in the Dubbadhu repo to publish.'
   }, [lessonSeriesRowExists, isProfessor, seriesStatus])
 
   const adminApproveLabel = 'Approve Series'
@@ -203,7 +274,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     try {
       const { data: seriesRow, error: seriesErr } = await supabase
         .from('lesson_series')
-        .select('title,intro_script,approved,audio_recorded,series_status')
+        .select('title,intro_script,intro_video_url,approved,audio_recorded,series_status,list_cover_url')
         .eq('id', seriesId)
         .maybeSingle()
 
@@ -221,9 +292,21 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
           approved?: boolean | null
           audio_recorded?: boolean | null
           series_status?: string | null
+          list_cover_url?: string | null
+          intro_video_url?: string | null
         }
         if (typeof sr.title === 'string') setSeriesTitle(sr.title)
         setIntroScript(typeof sr.intro_script === 'string' ? sr.intro_script : null)
+        {
+          const raw = sr.list_cover_url
+          const trimmed = typeof raw === 'string' ? raw.trim() : ''
+          setListCoverUrl(trimmed || null)
+        }
+        {
+          const rawV = sr.intro_video_url
+          const tv = typeof rawV === 'string' ? rawV.trim() : ''
+          setIntroVideoUrl(tv || null)
+        }
         const lsRaw = sr.series_status
         if (typeof lsRaw === 'string' && lsRaw.trim()) {
           resolvedStatus = normalizeSeriesStatus(lsRaw)
@@ -236,6 +319,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       } else {
         setLessonSeriesRowExists(false)
         setIntroScript(null)
+        setListCoverUrl(null)
         resolvedStatus = 'draft'
         setSeriesStatus('draft')
       }
@@ -250,7 +334,24 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
         setError((e) => (e ? `${e}\n${err.message}` : err.message))
         setLessons([])
       } else {
-        setLessons((data ?? []) as LessonRow[])
+        setLessons(sortLessonsForOrder((data ?? []) as LessonRow[]))
+      }
+
+      if (isAdmin) {
+        const { data: contentRows, error: contentErr } = await supabase
+          .from('lessons')
+          .select('id,title,content')
+          .eq('series_id', seriesId)
+        if (contentErr) {
+          setError((e) => (e ? `${e}\n${contentErr.message}` : contentErr.message))
+          setVideoReviewGaps([])
+        } else {
+          setVideoReviewGaps(
+            findVideoReviewScreensMissingUrl((contentRows ?? []) as { id: string; title: string | null; content: unknown }[]),
+          )
+        }
+      } else {
+        setVideoReviewGaps([])
       }
 
       const { progress: vaP, error: vaErr } = await fetchSeriesWordsVaProgress({ seriesId })
@@ -295,6 +396,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       const msg = e instanceof Error ? e.message : String(e)
       setError((prev) => (prev ? `${prev}\n${msg}` : msg))
     } finally {
+      setListCoverPreviewNonce((n) => n + 1)
       setLoading(false)
     }
   }, [seriesId, isAdmin])
@@ -379,6 +481,117 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     setSeriesStatus(isAdmin ? 'admin_draft' : 'draft')
     setScriptModalOpen(false)
   }, [seriesId, scriptDraft, seriesTitle, isAdmin])
+
+  const persistSpeakListCoverFile = useCallback(
+    async (localUri: string) => {
+      setCoverUploading(true)
+      const up = await uploadSeriesListCoverImage(localUri, seriesId)
+      if ('error' in up) {
+        setCoverUploading(false)
+        Alert.alert(
+          'Could not upload cover',
+          `${up.error}\n\nCreate a public bucket "series-list-covers" if missing and run sql/storage_series_list_covers.sql in the Supabase SQL Editor.`,
+        )
+        return
+      }
+      const versionedUrl = listCoverUrlWithVersion(up.publicUrl)
+      const { data: rowAfter, error: dbErr } = await supabase
+        .from('lesson_series')
+        .update({ list_cover_url: versionedUrl })
+        .eq('id', seriesId)
+        .select('id')
+        .maybeSingle()
+      setCoverUploading(false)
+      if (dbErr) {
+        Alert.alert('Could not save URL', withLessonSeriesRlsHint(dbErr.message))
+        return
+      }
+      if (!rowAfter) {
+        Alert.alert(
+          'Cover uploaded but not linked',
+          'Storage has the new file, but no lesson_series row matched this series id, so list_cover_url was not updated. Check that this screen’s series id matches lesson_series.id (e.g. series1 vs Series1).',
+        )
+        return
+      }
+      setListCoverUrl(versionedUrl)
+      setListCoverPreviewNonce((n) => n + 1)
+      Alert.alert('Cover saved', 'Learner app will show this on the locked “Coming up” strip after it refreshes the catalog.')
+    },
+    [seriesId],
+  )
+
+  const pickSpeakListCover = useCallback(async () => {
+    if (!lessonSeriesRowExists) {
+      Alert.alert('Series row required', 'Save the series script once so a lesson_series row exists, then add a cover.')
+      return
+    }
+    if (!scriptEditable) {
+      Alert.alert('View only', 'Cover can be changed when the series is editable (same rules as script).')
+      return
+    }
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (!perm.granted) {
+      Alert.alert('Permission needed', 'Allow photo library access to choose a cover image.')
+      return
+    }
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 1,
+    })
+    if (picked.canceled || !picked.assets?.[0]?.uri) return
+    setCoverCropSession((s) => s + 1)
+    setCoverCropUri(picked.assets[0].uri)
+    setCoverCropVisible(true)
+  }, [lessonSeriesRowExists, scriptEditable])
+
+  const onCoverCropCancel = useCallback(() => {
+    setCoverCropVisible(false)
+    setCoverCropUri(null)
+  }, [])
+
+  const onCoverCropDone = useCallback(
+    async (croppedUri: string) => {
+      setCoverCropVisible(false)
+      setCoverCropUri(null)
+      await persistSpeakListCoverFile(croppedUri)
+    },
+    [persistSpeakListCoverFile],
+  )
+
+  const clearSpeakListCover = useCallback(async () => {
+    if (!lessonSeriesRowExists || !scriptEditable) return
+    setCoverUploading(true)
+    const { error: dbErr } = await supabase
+      .from('lesson_series')
+      .update({ list_cover_url: null })
+      .eq('id', seriesId)
+    setCoverUploading(false)
+    if (dbErr) {
+      Alert.alert('Could not clear cover', withLessonSeriesRlsHint(dbErr.message))
+      return
+    }
+    setListCoverUrl(null)
+    setListCoverPreviewNonce((n) => n + 1)
+  }, [lessonSeriesRowExists, scriptEditable, seriesId])
+
+  const persistIntroVideoUrl = useCallback(
+    async (next: string | null) => {
+      if (!lessonSeriesRowExists || !scriptEditable) return
+      setIntroVideoSaving(true)
+      const { error: dbErr } = await supabase
+        .from('lesson_series')
+        .update({ intro_video_url: next })
+        .eq('id', seriesId)
+      setIntroVideoSaving(false)
+      if (dbErr) {
+        Alert.alert('Could not save intro video', withLessonSeriesRlsHint(dbErr.message))
+        return
+      }
+      setIntroVideoUrl(next?.trim() ? next.trim() : null)
+    },
+    [lessonSeriesRowExists, scriptEditable, seriesId],
+  )
 
   const persistSeriesStatus = useCallback(
     async (next: LessonSeriesStatus, opts?: { quiet?: boolean }) => {
@@ -558,6 +771,65 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     [load, seriesStatus],
   )
 
+  const applyLessonOrderToDb = useCallback(
+    async (ordered: LessonRow[]) => {
+      const sid = seriesId.trim()
+      if (!sid) return 'Missing series id.'
+      const n = ordered.length
+      for (let idx = 0; idx < n; idx++) {
+        const row = ordered[idx]!
+        const nextId = idx + 1 < n ? ordered[idx + 1]!.id : null
+        const { error: upErr } = await supabase
+          .from('lessons')
+          .update({
+            lesson_number: idx + 1,
+            next_lesson_id: nextId,
+          })
+          .eq('id', row.id)
+          .eq('series_id', sid)
+        if (upErr) return upErr.message
+      }
+      return null
+    },
+    [seriesId],
+  )
+
+  const moveLesson = useCallback(
+    async (fromIndex: number, direction: -1 | 1) => {
+      if (structureFrozen || lessonReorderInFlight.current) return
+      const sorted = sortLessonsForOrder(lessons)
+      const j = fromIndex + direction
+      if (j < 0 || j >= sorted.length) return
+
+      const reordered = [...sorted]
+      const a = reordered[fromIndex]!
+      const b = reordered[j]!
+      reordered[fromIndex] = b
+      reordered[j] = a
+
+      lessonReorderInFlight.current = true
+      setLessonReorderSaving(true)
+      setError('')
+      try {
+        const nextRows = reordered.map((row, idx) => ({
+          ...row,
+          lesson_number: idx + 1,
+        }))
+        setLessons(nextRows)
+        const errMsg = await applyLessonOrderToDb(reordered)
+        if (errMsg) {
+          setError(errMsg)
+          Alert.alert('Could not reorder', withLessonsRlsHint(errMsg))
+          await load()
+        }
+      } finally {
+        lessonReorderInFlight.current = false
+        setLessonReorderSaving(false)
+      }
+    },
+    [applyLessonOrderToDb, lessons, load, structureFrozen],
+  )
+
   const confirmDeleteLesson = useCallback(
     (lesson: LessonRow) => {
       if (seriesStatus === 'published') return
@@ -609,12 +881,66 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     )
   }
 
+  const listCoverDisplayUri = listCoverPreviewUri(listCoverUrl, listCoverPreviewNonce)
+
   const listHeader = (
     <>
       <View style={[styles.scriptBlock, !scriptEditable && styles.scriptReadOnlyWrap]}>
         <AdminSectionHeader label="Script" emphasis="gold" />
         <AdminSeriesScriptCard subtitle={scriptCardSubtitle(introScript)} onPress={openScriptModal} />
       </View>
+      {showSpeakTabCoverSection ? (
+        <View style={styles.coverBlock}>
+          <AdminSectionHeader label="Speak tab cover" emphasis="gold" />
+          <View style={styles.coverPreviewOuter}>
+            {listCoverDisplayUri ? (
+              <Image
+                key={listCoverDisplayUri}
+                source={{ uri: listCoverDisplayUri }}
+                style={styles.coverPreviewImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={styles.coverPreviewPlaceholder}>
+                <Text style={styles.coverPreviewPlaceholderText}>
+                  No custom cover — learner app uses bundled asset or HTML-style silhouette.
+                </Text>
+              </View>
+            )}
+          </View>
+          <View style={styles.coverActionsRow}>
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                (!scriptEditable || coverUploading || !lessonSeriesRowExists) && styles.btnDisabledOpacity,
+              ]}
+              onPress={() => void pickSpeakListCover()}
+              disabled={!scriptEditable || coverUploading || !lessonSeriesRowExists}
+            >
+              <Text style={styles.secondaryBtnText}>
+                {coverUploading ? 'Working…' : 'Choose image & position'}
+              </Text>
+            </Pressable>
+            {listCoverUrl ? (
+              <Pressable
+                style={[styles.secondaryBtn, (!scriptEditable || coverUploading) && styles.btnDisabledOpacity]}
+                onPress={() => void clearSpeakListCover()}
+                disabled={!scriptEditable || coverUploading}
+              >
+                <Text style={styles.secondaryBtnText}>Clear</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
+      {isAdmin ? (
+        <SeriesIntroVideoBlock
+          introVideoUrl={introVideoUrl}
+          onChangeUrl={(next) => void persistIntroVideoUrl(next)}
+          disabled={!scriptEditable || introVideoSaving || coverUploading}
+          lessonSeriesRowExists={lessonSeriesRowExists}
+        />
+      ) : null}
       <View style={styles.statusBlock}>
         <AdminSectionHeader label="Status" emphasis="gold" />
         <View style={styles.statusCard}>
@@ -715,6 +1041,32 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                   ) : null}
                 </View>
               ) : null}
+              {seriesStatus === 'approved' && !releaseMediaReady ? (
+                <View style={styles.releaseGateBlock}>
+                  <Text style={styles.releaseGateTitle}>Before marking audio complete</Text>
+                  {!listCoverUrl?.trim() ? (
+                    <Text style={styles.releaseGateLine}>• Add Speak tab cover (above).</Text>
+                  ) : null}
+                  {!introVideoUrl?.trim() ? (
+                    <Text style={styles.releaseGateLine}>• Set series intro video URL (above).</Text>
+                  ) : null}
+                  {videoReviewGaps.length > 0 ? (
+                    <>
+                      <Text style={styles.releaseGateLine}>
+                        • Set a clip URL on every Review screen ({videoReviewGaps.length} missing):
+                      </Text>
+                      {videoReviewGaps.slice(0, 10).map((g) => (
+                        <Text key={`${g.lessonId}-${g.screenIndex}`} style={styles.releaseGateSub}>
+                          — {g.lessonTitle} · screen #{g.screenIndex + 1} in lesson JSON
+                        </Text>
+                      ))}
+                      {videoReviewGaps.length > 10 ? (
+                        <Text style={styles.releaseGateSub}>… +{videoReviewGaps.length - 10} more</Text>
+                      ) : null}
+                    </>
+                  ) : null}
+                </View>
+              ) : null}
               {seriesStatus === 'approved' ? (
                 <Pressable
                   style={[
@@ -745,24 +1097,24 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       <View style={styles.lessonsBlock}>
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <AdminSectionHeader label="Lessons" right={`${lessons.length} total`} emphasis="gold" />
-        {lessons.length > 0 ? (
-          <Text style={styles.lessonListHint}>
-            {canSwipeDeleteLesson
-              ? 'Swipe left on a lesson to delete.'
-              : 'Published: delete lesson is disabled.'}
-          </Text>
-        ) : null}
       </View>
     </>
   )
 
-  const bottomDisabled = loading || deleting || addLessonSaving || seriesStatusSaving || vaSyncing
+  const bottomDisabled =
+    loading ||
+    deleting ||
+    addLessonSaving ||
+    seriesStatusSaving ||
+    vaSyncing ||
+    lessonReorderSaving ||
+    introVideoSaving
 
   return (
     <View style={styles.screen}>
       <FlatList
         style={styles.listFlex}
-        data={lessons}
+        data={orderedLessons}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         keyboardShouldPersistTaps="handled"
@@ -772,27 +1124,59 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
         }
         renderItem={({ item, index }) => {
           const order = item.lesson_number != null && item.lesson_number > 0 ? item.lesson_number : index + 1
+          const canReorderLessons = !structureFrozen && orderedLessons.length >= 2
           const row = (
-            <Pressable
-              style={({ pressed }) => [styles.rowCard, pressed && styles.rowPressed]}
-              onPress={() => navigation.navigate('LessonConfigDetail', { lessonId: item.id })}
-              android_ripple={{ color: '#333' }}
-            >
-              <View style={styles.rowInner}>
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{order}</Text>
+            <View style={styles.rowCard}>
+              <Pressable
+                style={({ pressed }) => [styles.rowCardMain, pressed && styles.rowPressed]}
+                onPress={() => navigation.navigate('LessonConfigDetail', { lessonId: item.id })}
+                android_ripple={{ color: '#333' }}
+              >
+                <View style={styles.rowInner}>
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{order}</Text>
+                  </View>
+                  <View style={styles.rowText}>
+                    <Text style={styles.rowTitle} numberOfLines={1}>
+                      {item.title || item.id}
+                    </Text>
+                    <Text style={styles.rowMeta} numberOfLines={1}>
+                      {item.id}
+                    </Text>
+                  </View>
+                  <AdminChevronRight size={10} color="#636366" />
                 </View>
-                <View style={styles.rowText}>
-                  <Text style={styles.rowTitle} numberOfLines={1}>
-                    {item.title || item.id}
-                  </Text>
-                  <Text style={styles.rowMeta} numberOfLines={1}>
-                    {item.id}
-                  </Text>
+              </Pressable>
+              {canReorderLessons ? (
+                <View style={styles.lessonReorderToolbar}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.lessonReorderBtn,
+                      (index === 0 || lessonReorderSaving) && styles.btnDisabledOpacity,
+                      pressed && styles.lessonReorderBtnPressed,
+                    ]}
+                    onPress={() => void moveLesson(index, -1)}
+                    disabled={index === 0 || lessonReorderSaving}
+                    hitSlop={6}
+                  >
+                    <Text style={styles.lessonReorderBtnText}>↑</Text>
+                  </Pressable>
+                  <View style={styles.lessonReorderSep} />
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.lessonReorderBtn,
+                      (index >= orderedLessons.length - 1 || lessonReorderSaving) && styles.btnDisabledOpacity,
+                      pressed && styles.lessonReorderBtnPressed,
+                    ]}
+                    onPress={() => void moveLesson(index, 1)}
+                    disabled={index >= orderedLessons.length - 1 || lessonReorderSaving}
+                    hitSlop={6}
+                  >
+                    <Text style={styles.lessonReorderBtnText}>↓</Text>
+                  </Pressable>
                 </View>
-                <AdminChevronRight size={10} color="#636366" />
-              </View>
-            </Pressable>
+              ) : null}
+            </View>
           )
           if (!canSwipeDeleteLesson) {
             return row
@@ -841,9 +1225,6 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
           >
             <Text style={styles.deleteBtnText}>{deleting ? 'Deleting…' : 'Delete series'}</Text>
           </Pressable>
-          <Text style={styles.deleteFooterHint}>
-            Delete is hidden once the series reaches audio complete or published.
-          </Text>
         </View>
       ) : null}
 
@@ -931,6 +1312,16 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
+
+      <SeriesListCoverCropModal
+        key={`cover-crop-${coverCropSession}`}
+        visible={coverCropVisible}
+        imageUri={coverCropUri}
+        aspectWidth={SERIES_LIST_COVER_ASPECT[0]}
+        aspectHeight={SERIES_LIST_COVER_ASPECT[1]}
+        onCancel={onCoverCropCancel}
+        onDone={onCoverCropDone}
+      />
     </View>
   )
 }
@@ -952,6 +1343,31 @@ const styles = StyleSheet.create({
   },
   scriptBlock: { marginBottom: 8 },
   scriptReadOnlyWrap: { opacity: 0.55 },
+  coverBlock: { marginBottom: 18 },
+  coverPreviewOuter: {
+    width: '100%',
+    aspectRatio: SERIES_LIST_COVER_DISPLAY_ASPECT_RATIO,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#0a1410',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#38383a',
+    marginBottom: 10,
+  },
+  coverPreviewImage: { width: '100%', height: '100%' },
+  coverPreviewPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  coverPreviewPlaceholderText: {
+    fontSize: 13,
+    color: '#636366',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  coverActionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   statusBlock: { marginBottom: 8 },
   statusCard: {
     backgroundColor: '#1c1c1e',
@@ -1024,6 +1440,22 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(14, 116, 144, 0.25)',
   },
   markAudioCompleteBtnText: { color: '#7dd3fc', fontSize: 15, fontWeight: '700' },
+  releaseGateBlock: {
+    marginTop: 14,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(248, 113, 113, 0.08)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(248, 113, 113, 0.35)',
+  },
+  releaseGateTitle: {
+    color: '#fca5a5',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  releaseGateLine: { color: '#e5e5ea', fontSize: 13, lineHeight: 19, marginBottom: 4 },
+  releaseGateSub: { color: '#a1a1aa', fontSize: 12, lineHeight: 17, marginLeft: 6, marginBottom: 2 },
   completeSeriesBlock: {
     marginTop: 4,
     paddingVertical: 10,
@@ -1062,13 +1494,6 @@ const styles = StyleSheet.create({
     marginVertical: 14,
   },
   lessonsBlock: { marginBottom: 8 },
-  lessonListHint: {
-    fontSize: 11,
-    color: '#636366',
-    marginTop: 6,
-    lineHeight: 15,
-    paddingHorizontal: 2,
-  },
   error: { color: '#f87171', marginBottom: 10, fontSize: 14 },
   lessonSwipeActions: {
     flexDirection: 'row',
@@ -1087,6 +1512,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   rowCard: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
     backgroundColor: '#1c1c1e',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#38383a',
@@ -1094,8 +1521,33 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     overflow: 'hidden',
   },
+  rowCardMain: { flex: 1, minWidth: 0 },
   rowPressed: { opacity: 0.92 },
+  lessonReorderToolbar: {
+    flexDirection: 'column',
+    justifyContent: 'center',
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: '#38383a',
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+  lessonReorderBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    minWidth: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lessonReorderBtnPressed: { opacity: 0.88 },
+  lessonReorderBtnText: { fontSize: 15, fontWeight: '700', color: ADMIN_ACCENT_GOLD },
+  lessonReorderSep: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#38383a',
+    marginHorizontal: 6,
+  },
   rowInner: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -1141,14 +1593,6 @@ const styles = StyleSheet.create({
   },
   deleteBtnPressed: { opacity: 0.85 },
   deleteBtnText: { color: '#ff453a', fontSize: 15, fontWeight: '600' },
-  deleteFooterHint: {
-    color: '#636366',
-    fontSize: 12,
-    marginTop: 10,
-    textAlign: 'center',
-    lineHeight: 16,
-    paddingHorizontal: 8,
-  },
   modalRoot: { flex: 1, backgroundColor: '#000' },
   modalHeader: {
     flexDirection: 'row',

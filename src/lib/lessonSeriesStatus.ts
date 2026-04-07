@@ -67,7 +67,10 @@ export function isLessonStructureFrozen(st: LessonSeriesStatus): boolean {
   return st === 'complete' || st === 'published'
 }
 
-/** Professor may edit lessons only while the series is in draft. */
+/**
+ * Professor may edit lesson JSON only while the series is in **draft** (their series).
+ * **admin_draft** and other statuses are view-only so they can preview admin curriculum.
+ */
 export function isProfessorLessonEditingAllowed(st: LessonSeriesStatus): boolean {
   return st === 'draft'
 }

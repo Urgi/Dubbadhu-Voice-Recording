@@ -389,6 +389,7 @@ function pickAllowedKeys(obj: Record<string, unknown>, allowed: Set<string>): Re
 /** Per-word keys used by Dubbadhu AudioExposure + waveform embed pipeline. */
 const AUDIO_EXPOSURE_WORD_KEYS = new Set([
   'oromo',
+  'text',
   'english',
   'translation',
   'word',

@@ -8,7 +8,103 @@ import {
   wordsBankSeriesLabelFromSeriesId,
 } from './voiceBankLabels'
 
-export type HarvestedWord = { word: string; translation: string | null }
+export type HarvestedWord = {
+  word: string
+  translation: string | null
+  /** e.g. `(L1S3)(L2S5)` — lesson number + 1-based screen index in JSON. */
+  sourceRefs?: string
+}
+
+export type VoiceBankHarvestHit = {
+  word: string
+  translation: string | null
+  lessonNumber: number
+  /** 1-based index in `screens` array. */
+  screenIndex: number
+}
+
+function compareSourceTagKeys(a: string, b: string): number {
+  const pa = /^L(\d+)S(\d+)$/.exec(a)
+  const pb = /^L(\d+)S(\d+)$/.exec(b)
+  if (pa && pb) {
+    const la = Number(pa[1])
+    const sa = Number(pa[2])
+    const lb = Number(pb[1])
+    const sb = Number(pb[2])
+    if (la !== lb) return la - lb
+    return sa - sb
+  }
+  return a.localeCompare(b)
+}
+
+function formatSourceRefs(tags: Iterable<string>): string {
+  const arr = [...tags].sort(compareSourceTagKeys)
+  return arr.map((t) => `(${t})`).join('')
+}
+
+type LessonRowForHarvest = { id: string; lesson_number: number | null; content: unknown }
+
+function sortLessonRowsForHarvest(rows: LessonRowForHarvest[]): LessonRowForHarvest[] {
+  return [...rows].sort((a, b) => {
+    const na = typeof a.lesson_number === 'number' && a.lesson_number > 0 ? a.lesson_number : 1e9
+    const nb = typeof b.lesson_number === 'number' && b.lesson_number > 0 ? b.lesson_number : 1e9
+    if (na !== nb) return na - nb
+    return a.id.localeCompare(b.id)
+  })
+}
+
+function lessonDisplayNumber(row: LessonRowForHarvest, sortedIndex: number): number {
+  if (typeof row.lesson_number === 'number' && row.lesson_number > 0) return row.lesson_number
+  return sortedIndex + 1
+}
+
+/**
+ * Raw hits from Audio exposure + Speaking practice (one entry per token per screen).
+ * `lessonNumber` should be the curriculum lesson number shown to admins (DB `lesson_number`, or sort rank).
+ */
+export function collectVoiceBankHitsFromScreens(
+  screens: unknown[],
+  lessonNumber: number,
+): VoiceBankHarvestHit[] {
+  if (!Array.isArray(screens) || screens.length === 0) return []
+
+  const out: VoiceBankHarvestHit[] = []
+
+  for (let idx = 0; idx < screens.length; idx++) {
+    const screenIndex = idx + 1
+    const s = screens[idx]
+    if (s == null || typeof s !== 'object' || Array.isArray(s)) continue
+    const type = (s as Record<string, unknown>).type
+    const c = (s as Record<string, unknown>).content
+    if (typeof type !== 'string' || c == null || typeof c !== 'object' || Array.isArray(c)) continue
+    const cr = c as Record<string, unknown>
+
+    if (type === 'audioExposure') {
+      const words = cr.words
+      if (Array.isArray(words)) {
+        for (const item of words) {
+          if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
+          const rec = item as Record<string, unknown>
+          const afaan = String(rec.oromo ?? rec.text ?? rec.word ?? '').trim()
+          if (!afaan) continue
+          const english = String(rec.english ?? rec.translation ?? '').trim() || null
+          out.push({ word: afaan, translation: english, lessonNumber, screenIndex })
+        }
+      }
+    }
+
+    if (type === 'speakingPractice') {
+      const phrase = String(cr.phrase ?? '').trim()
+      const expectedAnswer = String(cr.expectedAnswer ?? '').trim()
+      const oromo = phrase || expectedAnswer
+      if (!oromo) continue
+      const gloss = String(cr.phraseEnglish ?? '').trim() || null
+      out.push({ word: oromo, translation: gloss, lessonNumber, screenIndex })
+    }
+  }
+
+  return out
+}
 
 /**
  * Values that may appear in `words.series` for this curriculum (`lesson_series.id`).
@@ -123,26 +219,72 @@ export async function fetchWordBankRowForLessonWord(
   return lookupWordBankRowWithSeriesLabels(labels, afaan)
 }
 
+function parseContentIfJsonString(content: unknown): unknown {
+  if (typeof content === 'string') {
+    const t = content.trim()
+    if (!t) return null
+    try {
+      return JSON.parse(t) as unknown
+    } catch {
+      return null
+    }
+  }
+  return content
+}
+
+/** Resolve `screens` from lesson `content` (handles nested `content.screens` and JSON strings). */
+export function extractLessonScreensForHarvest(content: unknown): unknown[] {
+  const root = parseContentIfJsonString(content)
+  if (root == null || typeof root !== 'object' || Array.isArray(root)) return []
+  const r = root as Record<string, unknown>
+  if (Array.isArray(r.screens)) return r.screens
+  const inner = r.content
+  if (inner != null && typeof inner === 'object' && !Array.isArray(inner)) {
+    const c = inner as Record<string, unknown>
+    if (Array.isArray(c.screens)) return c.screens
+  }
+  return []
+}
+
+function pushHarvestUnique(
+  out: HarvestedWord[],
+  seen: Set<string>,
+  word: string,
+  translation: string | null,
+) {
+  const w = word.trim()
+  if (!w) return
+  const k = w.toLowerCase()
+  if (seen.has(k)) return
+  seen.add(k)
+  out.push({ word: w, translation: translation?.trim() || null })
+}
+
 /**
- * Collect spoken-language tokens from lesson JSON that should exist in `words` for VA recording.
- * Mirrors Audio exposure + Celebrate patterns used in the lesson editor.
+ * Tokens that sync to `words` / VA on **Approve Series**: only **audioExposure** (`content.words[]`)
+ * and **speakingPractice** (phrase / expected answer). Excludes quiz, dialogue, match, celebrate, etc.
+ */
+export function harvestWordsForVoiceBank(content: unknown): HarvestedWord[] {
+  const screens = extractLessonScreensForHarvest(content)
+  const hits = collectVoiceBankHitsFromScreens(screens, 0)
+  const out: HarvestedWord[] = []
+  const seen = new Set<string>()
+  for (const h of hits) {
+    pushHarvestUnique(out, seen, h.word, h.translation)
+  }
+  return out
+}
+
+/**
+ * Broad harvest for editor helpers (e.g. discrimination “word appears in lesson” checks).
+ * For **voice bank / approve**, use {@link harvestWordsForVoiceBank} only.
  */
 export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[] {
-  if (content == null || typeof content !== 'object' || Array.isArray(content)) return []
-  const screens = (content as Record<string, unknown>).screens
-  if (!Array.isArray(screens)) return []
+  const screens = extractLessonScreensForHarvest(content)
+  if (!Array.isArray(screens) || screens.length === 0) return []
 
   const out: HarvestedWord[] = []
   const seen = new Set<string>()
-
-  const push = (word: string, translation: string | null) => {
-    const w = word.trim()
-    if (!w) return
-    const k = w.toLowerCase()
-    if (seen.has(k)) return
-    seen.add(k)
-    out.push({ word: w, translation: translation?.trim() || null })
-  }
 
   for (const s of screens) {
     if (s == null || typeof s !== 'object' || Array.isArray(s)) continue
@@ -159,18 +301,18 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
           const rec = item as Record<string, unknown>
           const afaan = String(rec.oromo ?? rec.text ?? rec.word ?? '').trim()
           const english = String(rec.english ?? rec.translation ?? '').trim() || null
-          push(afaan, english)
+          pushHarvestUnique(out, seen, afaan, english)
         }
       }
       const titleWord = String(cr.word ?? '').trim()
-      if (titleWord) push(titleWord, null)
+      if (titleWord) pushHarvestUnique(out, seen, titleWord, null)
     }
 
     if (type === 'CelebrateScreen') {
       const learned = cr.learned
       if (Array.isArray(learned)) {
         for (const item of learned) {
-          if (typeof item === 'string') push(item, null)
+          if (typeof item === 'string') pushHarvestUnique(out, seen, item, null)
         }
       }
     }
@@ -183,7 +325,7 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
           const pr = p as Record<string, unknown>
           const left = String(pr.left ?? '').trim()
           const right = String(pr.right ?? '').trim()
-          push(left, right || null)
+          pushHarvestUnique(out, seen, left, right || null)
         }
       }
     }
@@ -194,16 +336,16 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
         if (q == null || typeof q !== 'object' || Array.isArray(q)) continue
         const qr = q as Record<string, unknown>
         const qu = String(qr.question ?? '').trim()
-        if (qu) push(qu, null)
+        if (qu) pushHarvestUnique(out, seen, qu, null)
         const opts = qr.options
         if (Array.isArray(opts)) {
           for (const o of opts) {
-            if (typeof o === 'string') push(o.trim(), null)
+            if (typeof o === 'string') pushHarvestUnique(out, seen, o.trim(), null)
             else if (o != null && typeof o === 'object' && !Array.isArray(o)) {
               const or = o as Record<string, unknown>
               const ot = String(or.oromo ?? or.text ?? '').trim()
               const oe = or.english
-              if (ot) push(ot, typeof oe === 'string' ? oe.trim() || null : null)
+              if (ot) pushHarvestUnique(out, seen, ot, typeof oe === 'string' ? oe.trim() || null : null)
             }
           }
         }
@@ -215,7 +357,7 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
       const expectedAnswer = String(cr.expectedAnswer ?? '').trim()
       const oromo = phrase || expectedAnswer
       const gloss = String(cr.phraseEnglish ?? '').trim() || null
-      if (oromo) push(oromo, gloss)
+      if (oromo) pushHarvestUnique(out, seen, oromo, gloss)
     }
 
     if (type === 'discriminationDrill' || type === 'wordDiscriminationQuiz') {
@@ -227,15 +369,15 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
           const t = String(wr.oromo ?? wr.text ?? wr.word ?? '').trim()
           const gloss =
             String(wr.definition ?? wr.english ?? wr.translation ?? '').trim() || null
-          if (t) push(t, gloss)
+          if (t) pushHarvestUnique(out, seen, t, gloss)
         }
       } else {
         const wa = String(cr.wordA ?? cr.word_a ?? '').trim()
         const wb = String(cr.wordB ?? cr.word_b ?? '').trim()
         const da = String(cr.definitionA ?? '').trim() || null
         const db = String(cr.definitionB ?? '').trim() || null
-        if (wa) push(wa, da)
-        if (wb) push(wb, db)
+        if (wa) pushHarvestUnique(out, seen, wa, da)
+        if (wb) pushHarvestUnique(out, seen, wb, db)
       }
     }
 
@@ -252,7 +394,7 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
           if (!line) continue
           const tr = trans[i]
           const gloss = typeof tr === 'string' ? tr.trim() || null : null
-          push(line, gloss)
+          pushHarvestUnique(out, seen, line, gloss)
         }
       }
     }
@@ -261,7 +403,7 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
   return out
 }
 
-/** Harvest tokens from a `screens` array only (same rules as `harvestWordsFromLessonContent`). */
+/** Harvest tokens from a `screens` array only (broad harvest for editors — not voice-bank sync). */
 export function harvestWordsFromLessonScreens(screens: unknown[]): HarvestedWord[] {
   return harvestWordsFromLessonContent({ screens })
 }
@@ -287,6 +429,8 @@ type SeriesWordSyncPlan = {
   toInsert: HarvestedWord[]
   skippedExisting: number
   blockedOtherSeries: BlockedOtherSeries[]
+  /** Rows returned from `lessons` for this series (for admin UI diagnostics). */
+  lessonRowCount: number
 }
 
 async function buildSeriesWordSyncPlan(seriesId: string): Promise<{ plan: SeriesWordSyncPlan; error?: string } | { error: string }> {
@@ -302,22 +446,53 @@ async function buildSeriesWordSyncPlan(seriesId: string): Promise<{ plan: Series
   const seriesColumnValues = await wordBankSeriesColumnValuesForLessonSeries(id)
   const targetKeySet = new Set(seriesColumnValues.map((l) => seriesKey(l)))
 
-  const { data: lessons, error: lesErr } = await supabase.from('lessons').select('content').eq('series_id', id)
+  const { data: lessons, error: lesErr } = await supabase
+    .from('lessons')
+    .select('id, lesson_number, content')
+    .eq('series_id', id)
 
   if (lesErr) {
     return { error: lesErr.message }
   }
 
-  const harvested: HarvestedWord[] = []
-  const seenH = new Set<string>()
-  for (const row of (lessons ?? []) as { content: unknown }[]) {
-    for (const h of harvestWordsFromLessonContent(row.content)) {
-      const k = h.word.toLowerCase()
-      if (seenH.has(k)) continue
-      seenH.add(k)
-      harvested.push(h)
+  const rawRows = (lessons ?? []) as LessonRowForHarvest[]
+  const lessonRows = sortLessonRowsForHarvest(rawRows)
+  const lessonRowCount = lessonRows.length
+
+  const merged = new Map<
+    string,
+    { word: string; translation: string | null; tags: Set<string> }
+  >()
+
+  for (let i = 0; i < lessonRows.length; i++) {
+    const row = lessonRows[i]
+    const L = lessonDisplayNumber(row, i)
+    const screens = extractLessonScreensForHarvest(row.content)
+    for (const hit of collectVoiceBankHitsFromScreens(screens, L)) {
+      const w = hit.word.trim()
+      if (!w) continue
+      const k = w.toLowerCase()
+      const tag = `L${hit.lessonNumber}S${hit.screenIndex}`
+      const ex = merged.get(k)
+      if (!ex) {
+        merged.set(k, {
+          word: w,
+          translation: hit.translation?.trim() || null,
+          tags: new Set([tag]),
+        })
+      } else {
+        ex.tags.add(tag)
+        const ht = hit.translation?.trim() || null
+        if (!ex.translation && ht) ex.translation = ht
+      }
     }
   }
+
+  const harvested: HarvestedWord[] = [...merged.values()].map((v) => ({
+    word: v.word,
+    translation: v.translation,
+    sourceRefs: formatSourceRefs(v.tags),
+  }))
 
   if (harvested.length === 0) {
     return {
@@ -329,6 +504,7 @@ async function buildSeriesWordSyncPlan(seriesId: string): Promise<{ plan: Series
         toInsert: [],
         skippedExisting: 0,
         blockedOtherSeries: [],
+        lessonRowCount,
       },
     }
   }
@@ -386,6 +562,7 @@ async function buildSeriesWordSyncPlan(seriesId: string): Promise<{ plan: Series
       toInsert,
       skippedExisting,
       blockedOtherSeries,
+      lessonRowCount,
     },
   }
 }
@@ -416,13 +593,17 @@ export async function fetchWordBankRowForSeries(
 }
 
 export type SeriesWordBankReviewSummary = {
-  newWords: { word: string; translation: string | null }[]
+  newWords: { word: string; translation: string | null; sourceRefs?: string }[]
   pendingTranslationChanges: {
     word: string
     lessonTranslation: string
     databaseTranslation: string
   }[]
   blockedOtherSeries: BlockedOtherSeries[]
+  /** Unique tokens harvested from lesson JSON (before comparing to `words`). */
+  harvestedCount: number
+  /** `lessons` rows for this `series_id`. */
+  lessonRowCount: number
 }
 
 /**
@@ -436,13 +617,17 @@ export async function buildSeriesWordBankReviewSummary(seriesId: string): Promis
   const built = await buildSeriesWordSyncPlan(sid)
   if (!('plan' in built)) return { error: built.error }
   const { plan } = built
-  const { wordsSeriesLabel, harvested, toInsert, blockedOtherSeries } = plan
+  const { wordsSeriesLabel, harvested, toInsert, blockedOtherSeries, lessonRowCount } = plan
   const langVals = voiceBankLanguageSqlValues()
   const seriesColumnValues = await wordBankSeriesColumnValuesForLessonSeries(sid)
   const seriesInFilter =
     seriesColumnValues.length > 0 ? seriesColumnValues : [wordsSeriesLabel]
 
-  const newWords = toInsert.map((h) => ({ word: h.word, translation: h.translation }))
+  const newWords = toInsert.map((h) => ({
+    word: h.word,
+    translation: h.translation,
+    sourceRefs: h.sourceRefs,
+  }))
 
   const toInsertLower = new Set(toInsert.map((h) => h.word.toLowerCase()))
   const blockedLower = new Set(blockedOtherSeries.map((b) => b.word.toLowerCase()))
@@ -456,7 +641,7 @@ export async function buildSeriesWordBankReviewSummary(seriesId: string): Promis
   if (inSeriesHarvested.length > 0) {
     const { data: seriesRows, error: wErr } = await supabase
       .from('words')
-      .select('id,word,translation,english,series')
+      .select('id,word,translation,series')
       .in('series', seriesInFilter)
       .in('language', langVals)
 
@@ -510,6 +695,8 @@ export async function buildSeriesWordBankReviewSummary(seriesId: string): Promis
       newWords,
       pendingTranslationChanges,
       blockedOtherSeries,
+      harvestedCount: harvested.length,
+      lessonRowCount,
     },
   }
 }
@@ -710,7 +897,7 @@ export async function seedWordsFromSeriesLessons(params: { seriesId: string }): 
       seriesColumnValues.length > 0 ? seriesColumnValues : [wordsSeriesLabel]
     const { data: seriesRows, error: wErr } = await supabase
       .from('words')
-      .select('id,word,translation,english,series')
+      .select('id,word,translation,series')
       .in('series', seriesInFilter)
       .in('language', langVals)
 

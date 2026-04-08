@@ -2285,64 +2285,72 @@ export function LessonScreenEditModal({
           </View>
         )
       }
-      case 'speakingPractice':
+      case 'speakingPractice': {
+        const phraseVal = String(c.phrase ?? c.prompt ?? '')
+        const translationVal = String(c.phraseEnglish ?? '')
         return (
           <View style={styles.form}>
-            {String(c.prompt ?? c.phrase ?? '').trim() ? (
-              <View style={styles.matchSelectedBox}>
-                <Text style={styles.matchSelectedTop}>{String(c.prompt ?? c.phrase ?? '').trim()}</Text>
-                <Text style={styles.matchSelectedSub}>{String(c.expectedAnswer ?? c.phraseEnglish ?? '').trim() || '—'}</Text>
-                <Pressable
-                  style={styles.changeWordBtn}
-                  onPress={() => {
-                    setContent((cur) => {
-                      const next = {
-                        ...cur,
-                        speaking_word_id: null,
-                        prompt: '',
-                        phrase: '',
-                        expectedAnswer: '',
-                        phraseEnglish: '',
-                      }
-                      delete (next as Record<string, unknown>).targetAudioRef
-                      return next
-                    })
-                  }}
-                >
-                  <Text style={styles.changeWordBtnText}>Change word</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <>
-                <WordBankPicker
-                  label="Word (Oromo)"
-                  value={null}
-                  onPick={(row) => {
-                    setContent((cur) => {
-                      const ref = audioRefFromWordRow(row)
-                      // Canonical Mode B only: phrase = Oromo, phraseEnglish = gloss. Do not set
-                      // prompt/expectedAnswer here — expectedAnswer must never be English (that broke
-                      // the learner app when it preferred expectedAnswer over phrase).
-                      const next: Record<string, unknown> = {
-                        ...cur,
-                        speaking_word_id: row.id,
-                        phrase: rowAfaanText(row),
-                        phraseEnglish: rowTranslationText(row),
-                        prompt: '',
-                        expectedAnswer: '',
-                      }
-                      if (ref) next.targetAudioRef = ref
-                      else delete next.targetAudioRef
-                      return next
-                    })
-                  }}
-                  placeholder="Search Oromo word…"
-                  searchMode="oromo"
-                />
-                <Text style={styles.matchRightPreviewLabel}>Translation (English)</Text>
-                <Text style={styles.matchRightPreview}>—</Text>
-              </>
-            )}
+            <Text style={styles.hint}>
+              Type a new sentence or word and its English gloss, or type 2+ letters and pick from the word bank to
+              attach reference audio when the row has it.
+            </Text>
+            <AudioExposureOromoField
+              value={phraseVal}
+              onChangeText={(t) => {
+                setContent((cur) => {
+                  const next: Record<string, unknown> = {
+                    ...cur,
+                    phrase: t,
+                    prompt: '',
+                    expectedAnswer: '',
+                    speaking_word_id: null,
+                  }
+                  delete next.targetAudioRef
+                  return next
+                })
+              }}
+              onPickFromBank={(row) => {
+                setContent((cur) => {
+                  const ref = audioRefFromWordRow(row)
+                  const next: Record<string, unknown> = {
+                    ...cur,
+                    speaking_word_id: row.id,
+                    phrase: rowAfaanText(row),
+                    phraseEnglish: rowTranslationText(row),
+                    prompt: '',
+                    expectedAnswer: '',
+                  }
+                  if (ref) next.targetAudioRef = ref
+                  else delete next.targetAudioRef
+                  return next
+                })
+              }}
+            />
+            <Field
+              label="Translation (English)"
+              value={translationVal}
+              multiline
+              onChangeText={(t) => setContent((cur) => ({ ...cur, phraseEnglish: t }))}
+            />
+            <Pressable
+              style={styles.changeWordBtn}
+              onPress={() => {
+                setContent((cur) => {
+                  const next: Record<string, unknown> = {
+                    ...cur,
+                    speaking_word_id: null,
+                    prompt: '',
+                    phrase: '',
+                    expectedAnswer: '',
+                    phraseEnglish: '',
+                  }
+                  delete next.targetAudioRef
+                  return next
+                })
+              }}
+            >
+              <Text style={styles.changeWordBtnText}>Clear phrase & translation</Text>
+            </Pressable>
             <Field
               label="Hint (optional)"
               value={String(c.hint ?? c.tip ?? '')}
@@ -2364,6 +2372,7 @@ export function LessonScreenEditModal({
             />
           </View>
         )
+      }
       case 'audioExposure': {
         let words = (c.words as Record<string, unknown>[] | undefined) ?? []
         if (!Array.isArray(words)) words = []

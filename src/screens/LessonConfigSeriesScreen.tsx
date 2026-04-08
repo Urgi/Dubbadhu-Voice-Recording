@@ -152,6 +152,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   const [vaProgress, setVaProgress] = useState<SeriesWordsVaProgress | null>(null)
   /** Admin-only: what approving will insert or patch in `words` (from lesson JSON vs DB). */
   const [wordBankReview, setWordBankReview] = useState<SeriesWordBankReviewSummary | null>(null)
+  const [wordBankReviewError, setWordBankReviewError] = useState<string | null>(null)
   const [listCoverUrl, setListCoverUrl] = useState<string | null>(null)
   const [listCoverPreviewNonce, setListCoverPreviewNonce] = useState(0)
   const [coverUploading, setCoverUploading] = useState(false)
@@ -163,6 +164,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   const [introVideoSaving, setIntroVideoSaving] = useState(false)
   const [videoReviewGaps, setVideoReviewGaps] = useState<VideoReviewGap[]>([])
   const [lessonReorderSaving, setLessonReorderSaving] = useState(false)
+  const [wordBankListModal, setWordBankListModal] = useState<null | 'newWords' | 'definitionChanges'>(null)
   const lessonReorderInFlight = useRef(false)
   const lessonSwipeRefs = useRef<Record<string, Swipeable | null>>({})
 
@@ -216,6 +218,9 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     if (isAdmin) return true
     return true
   }, [isAdmin, isProfessor, seriesStatus])
+
+  /** Open script modal to read; editing is still gated by scriptEditable. */
+  const scriptViewable = isAdmin || isProfessor
 
   /** Speak-tab list cover is admin-only; professors never see it in this app. */
   const showSpeakTabCoverSection = isAdmin
@@ -358,10 +363,12 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       let nextVa = vaP
 
       let reviewForAutoSync: SeriesWordBankReviewSummary | null = null
+      setWordBankReviewError(null)
       if (isAdmin && hasLessonSeriesRow && resolvedStatus !== 'draft' && resolvedStatus !== 'published') {
         const rev = await buildSeriesWordBankReviewSummary(seriesId)
         if ('error' in rev) {
           setWordBankReview(null)
+          setWordBankReviewError(rev.error)
         } else {
           reviewForAutoSync = rev.summary
           setWordBankReview(rev.summary)
@@ -402,15 +409,16 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   }, [seriesId, isAdmin])
 
   const openScriptModal = useCallback(() => {
-    if (!scriptEditable) {
-      Alert.alert('View only', 'Script can be edited when the series is in draft (professor) or by an admin.')
+    if (!scriptViewable) {
+      Alert.alert('Unavailable', 'You do not have access to the series script.')
       return
     }
     setScriptDraft(introScript ?? '')
     setScriptModalOpen(true)
-  }, [introScript, scriptEditable])
+  }, [introScript, scriptViewable])
 
   const saveScript = useCallback(async () => {
+    if (!scriptEditable) return
     const id = seriesId.trim()
     if (!id) {
       Alert.alert('Could not save script', 'Missing series id.')
@@ -480,7 +488,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     setLessonSeriesRowExists(true)
     setSeriesStatus(isAdmin ? 'admin_draft' : 'draft')
     setScriptModalOpen(false)
-  }, [seriesId, scriptDraft, seriesTitle, isAdmin])
+  }, [seriesId, scriptDraft, seriesTitle, isAdmin, scriptEditable])
 
   const persistSpeakListCoverFile = useCallback(
     async (localUri: string) => {
@@ -885,7 +893,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
 
   const listHeader = (
     <>
-      <View style={[styles.scriptBlock, !scriptEditable && styles.scriptReadOnlyWrap]}>
+      <View style={[styles.scriptBlock, !scriptEditable && isAdmin && styles.scriptReadOnlyWrap]}>
         <AdminSectionHeader label="Script" emphasis="gold" />
         <AdminSeriesScriptCard subtitle={scriptCardSubtitle(introScript)} onPress={openScriptModal} />
       </View>
@@ -987,32 +995,59 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
               >
                 <Text style={styles.primaryOutlineBtnText}>{adminApproveLabel}</Text>
               </Pressable>
-              {wordBankReview &&
-              (wordBankReview.newWords.length > 0 ||
-                wordBankReview.pendingTranslationChanges.length > 0 ||
-                wordBankReview.blockedOtherSeries.length > 0) ? (
+              {wordBankReview || wordBankReviewError ? (
                 <View style={styles.wordBankReviewBlock}>
                   <Text style={styles.wordBankReviewTitle}>Voice bank (on Approve Series)</Text>
                   <Text style={styles.wordBankReviewHint}>
                     Lesson saves only update JSON. Inserts and translation fixes run when you approve.
                   </Text>
-                  {wordBankReview.newWords.length > 0 ? (
+                  {wordBankReviewError ? (
+                    <Text style={styles.wordBankReviewError}>{wordBankReviewError}</Text>
+                  ) : null}
+                  {wordBankReview &&
+                  wordBankReview.newWords.length === 0 &&
+                  wordBankReview.pendingTranslationChanges.length === 0 &&
+                  wordBankReview.blockedOtherSeries.length === 0 &&
+                  !wordBankReviewError ? (
+                    <View style={styles.wordBankReviewSection}>
+                      <Text style={styles.wordBankReviewLabel}>Nothing queued from lessons</Text>
+                      <Text style={styles.wordBankReviewLine}>
+                        Scanned {wordBankReview.lessonRowCount} lesson row(s) in this series; found{' '}
+                        {wordBankReview.harvestedCount} unique token(s) from Audio exposure and Speaking practice
+                        only (those need VA audio). Nothing new to insert, no translation diffs, and no cross-series
+                        blocks. Put vocabulary on those screens with Afaan (oromo/text) and gloss on exposures.
+                      </Text>
+                    </View>
+                  ) : null}
+                  {wordBankReview && wordBankReview.newWords.length > 0 ? (
                     <View style={styles.wordBankReviewSection}>
                       <Text style={styles.wordBankReviewLabel}>New words — {wordBankReview.newWords.length}</Text>
+                      <Text style={styles.wordBankReviewLegend}>
+                        (LxSy) = lesson x · screen y (1-based index in that lesson’s JSON)
+                      </Text>
                       {wordBankReview.newWords.slice(0, 15).map((nw, idx) => (
                         <Text key={`${nw.word}-${idx}`} style={styles.wordBankReviewLine}>
                           • {nw.word}
                           {nw.translation ? ` — ${nw.translation}` : ''}
+                          {nw.sourceRefs ? (
+                            <Text style={styles.wordBankReviewSource}> {nw.sourceRefs}</Text>
+                          ) : null}
                         </Text>
                       ))}
                       {wordBankReview.newWords.length > 15 ? (
-                        <Text style={styles.wordBankReviewMore}>
-                          … +{wordBankReview.newWords.length - 15} more
-                        </Text>
+                        <Pressable
+                          onPress={() => setWordBankListModal('newWords')}
+                          hitSlop={8}
+                          style={({ pressed }) => [pressed && styles.wordBankReviewMorePressed]}
+                        >
+                          <Text style={styles.wordBankReviewMore}>
+                            … +{wordBankReview.newWords.length - 15} more
+                          </Text>
+                        </Pressable>
                       ) : null}
                     </View>
                   ) : null}
-                  {wordBankReview.pendingTranslationChanges.length > 0 ? (
+                  {wordBankReview && wordBankReview.pendingTranslationChanges.length > 0 ? (
                     <View style={styles.wordBankReviewSection}>
                       <Text style={styles.wordBankReviewLabel}>
                         Definition changes — {wordBankReview.pendingTranslationChanges.length}
@@ -1023,13 +1058,19 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                         </Text>
                       ))}
                       {wordBankReview.pendingTranslationChanges.length > 12 ? (
-                        <Text style={styles.wordBankReviewMore}>
-                          … +{wordBankReview.pendingTranslationChanges.length - 12} more
-                        </Text>
+                        <Pressable
+                          onPress={() => setWordBankListModal('definitionChanges')}
+                          hitSlop={8}
+                          style={({ pressed }) => [pressed && styles.wordBankReviewMorePressed]}
+                        >
+                          <Text style={styles.wordBankReviewMore}>
+                            … +{wordBankReview.pendingTranslationChanges.length - 12} more
+                          </Text>
+                        </Pressable>
                       ) : null}
                     </View>
                   ) : null}
-                  {wordBankReview.blockedOtherSeries.length > 0 ? (
+                  {wordBankReview && wordBankReview.blockedOtherSeries.length > 0 ? (
                     <View style={styles.wordBankReviewSection}>
                       <Text style={styles.wordBankReviewLabel}>Other series (not duplicated)</Text>
                       {wordBankReview.blockedOtherSeries.slice(0, 8).map((b) => (
@@ -1285,16 +1326,25 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
         >
           <View style={styles.modalHeader}>
             <Pressable hitSlop={12} onPress={() => !scriptSaving && setScriptModalOpen(false)}>
-              <Text style={styles.modalCancel}>Cancel</Text>
+              <Text style={styles.modalCancel}>{scriptEditable ? 'Cancel' : 'Close'}</Text>
             </Pressable>
             <Text style={styles.modalTitle}>Series intro script</Text>
-            <Pressable hitSlop={12} onPress={() => void saveScript()} disabled={scriptSaving}>
-              <Text style={[styles.modalSave, scriptSaving && styles.modalSaveDisabled]}>
-                {scriptSaving ? '…' : 'Save'}
-              </Text>
-            </Pressable>
+            {scriptEditable ? (
+              <Pressable hitSlop={12} onPress={() => void saveScript()} disabled={scriptSaving}>
+                <Text style={[styles.modalSave, scriptSaving && styles.modalSaveDisabled]}>
+                  {scriptSaving ? '…' : 'Save'}
+                </Text>
+              </Pressable>
+            ) : (
+              <Pressable hitSlop={12} onPress={() => setScriptModalOpen(false)}>
+                <Text style={styles.modalSave}>Done</Text>
+              </Pressable>
+            )}
           </View>
-          <Text style={styles.modalHint}>{SCRIPT_CARD_SUBTITLE_FALLBACK}</Text>
+          <Text style={styles.modalHint}>
+            {!scriptEditable ? 'View only — editing is limited to draft (professor) or admin. ' : ''}
+            {SCRIPT_CARD_SUBTITLE_FALLBACK}
+          </Text>
           <ScrollView
             style={styles.modalScroll}
             keyboardShouldPersistTaps="handled"
@@ -1308,9 +1358,57 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
               placeholderTextColor="#52525b"
               multiline
               textAlignVertical="top"
+              editable={scriptEditable}
             />
           </ScrollView>
         </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={wordBankListModal !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setWordBankListModal(null)}
+      >
+        <View style={styles.modalRoot}>
+          <View style={styles.modalHeader}>
+            <Pressable hitSlop={12} onPress={() => setWordBankListModal(null)}>
+              <Text style={styles.modalCancel}>Close</Text>
+            </Pressable>
+            <Text style={styles.modalTitle} numberOfLines={1}>
+              {wordBankListModal === 'newWords' && wordBankReview
+                ? `New words (${wordBankReview.newWords.length})`
+                : wordBankListModal === 'definitionChanges' && wordBankReview
+                  ? `Definition changes (${wordBankReview.pendingTranslationChanges.length})`
+                  : 'Voice bank'}
+            </Text>
+            <View style={styles.modalHeaderSpacer} />
+          </View>
+          <ScrollView
+            style={styles.modalScroll}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.modalScrollContent}
+          >
+            {wordBankListModal === 'newWords' && wordBankReview
+              ? wordBankReview.newWords.map((nw, idx) => (
+                  <Text key={`${nw.word}-${idx}`} style={styles.wordBankReviewLine}>
+                    • {nw.word}
+                    {nw.translation ? ` — ${nw.translation}` : ''}
+                    {nw.sourceRefs ? (
+                      <Text style={styles.wordBankReviewSource}> {nw.sourceRefs}</Text>
+                    ) : null}
+                  </Text>
+                ))
+              : null}
+            {wordBankListModal === 'definitionChanges' && wordBankReview
+              ? wordBankReview.pendingTranslationChanges.map((ch) => (
+                  <Text key={ch.word} style={styles.wordBankReviewLine}>
+                    • {ch.word}: lesson “{ch.lessonTranslation}” vs DB “{ch.databaseTranslation}”
+                  </Text>
+                ))
+              : null}
+          </ScrollView>
+        </View>
       </Modal>
 
       <SeriesListCoverCropModal
@@ -1426,10 +1524,20 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   wordBankReviewHint: { color: '#8e8e93', fontSize: 12, lineHeight: 17, marginBottom: 10 },
+  wordBankReviewError: { color: '#fca5a5', fontSize: 13, lineHeight: 19, marginBottom: 10 },
   wordBankReviewSection: { marginBottom: 10 },
-  wordBankReviewLabel: { color: '#e5e5ea', fontSize: 13, fontWeight: '700', marginBottom: 4 },
+  wordBankReviewLabel: { color: '#e5e5ea', fontSize: 13, fontWeight: '700', marginBottom: 2 },
+  wordBankReviewLegend: { color: '#636366', fontSize: 11, lineHeight: 15, marginBottom: 6 },
   wordBankReviewLine: { color: '#aeaeb2', fontSize: 12, lineHeight: 18, marginLeft: 4 },
-  wordBankReviewMore: { color: '#636366', fontSize: 12, marginTop: 4, fontStyle: 'italic' },
+  wordBankReviewSource: { color: '#8e8e93', fontSize: 11 },
+  wordBankReviewMore: {
+    color: ADMIN_ACCENT_GOLD,
+    fontSize: 12,
+    marginTop: 4,
+    textDecorationLine: 'underline',
+  },
+  wordBankReviewMorePressed: { opacity: 0.65 },
+  modalHeaderSpacer: { width: 52 },
   markAudioCompleteBtn: {
     marginTop: 12,
     paddingVertical: 12,

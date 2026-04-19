@@ -255,6 +255,18 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     [isAdmin, lessonSeriesRowExists, seriesStatus, vaProgress, releaseMediaReady],
   )
 
+  /** Admin may confirm completion even if some bank rows still lack audio (recommended workflow). */
+  const markAudioCompleteBaseEnabled = useMemo(
+    () =>
+      isAdmin &&
+      lessonSeriesRowExists &&
+      seriesStatus === 'approved' &&
+      vaProgress != null &&
+      vaProgress.totalLessonWords > 0 &&
+      releaseMediaReady,
+    [isAdmin, lessonSeriesRowExists, seriesStatus, vaProgress, releaseMediaReady],
+  )
+
   const seriesStatusExplainer = useMemo(() => {
     if (!lessonSeriesRowExists) {
       return 'Add a row in lesson_series for this series id (e.g. via Add series) to drive status below.'
@@ -625,16 +637,43 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   )
 
   const onMarkAudioComplete = useCallback(async () => {
-    if (!canMarkAudioComplete) {
+    if (!markAudioCompleteBaseEnabled) {
       Alert.alert(
         'Not ready',
-        'All lesson words must be in this voice-bank series with every row recorded or approved before marking audio complete.',
+        'Approve the series, ensure release media (cover, intro video, review URLs) is set, and that lesson words are harvested into the voice queue before marking audio complete.',
       )
       return
     }
-    const ok = await persistSeriesStatus('complete')
-    if (ok) void load()
-  }, [canMarkAudioComplete, persistSeriesStatus, load])
+    if (canMarkAudioComplete) {
+      const ok = await persistSeriesStatus('complete')
+      if (ok) void load()
+      return
+    }
+    const gaps: string[] = []
+    if (vaProgress && !vaProgress.allLessonWordsInVoiceBank) {
+      gaps.push('Some lesson tokens are not yet represented in the voice-bank series.')
+    }
+    if (vaProgress && vaProgress.needRecording > 0) {
+      gaps.push(
+        `${vaProgress.needRecording} word${vaProgress.needRecording === 1 ? '' : 's'} still need recording or approval in the voice queue.`,
+      )
+    }
+    Alert.alert(
+      'Mark audio complete anyway?',
+      `${gaps.join(' ')}\n\nYou can still mark complete if you accept shipping without full reference audio. Continue?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mark complete anyway',
+          style: 'destructive',
+          onPress: async () => {
+            const ok = await persistSeriesStatus('complete')
+            if (ok) void load()
+          },
+        },
+      ],
+    )
+  }, [canMarkAudioComplete, markAudioCompleteBaseEnabled, persistSeriesStatus, load, vaProgress])
 
   const onApproveContent = useCallback(async () => {
     if (!lessonSeriesRowExists || !canAdminApproveCurriculum) return
@@ -1112,10 +1151,10 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                 <Pressable
                   style={[
                     styles.markAudioCompleteBtn,
-                    (seriesStatusSaving || !canMarkAudioComplete) && styles.btnDisabledOpacity,
+                    (seriesStatusSaving || !markAudioCompleteBaseEnabled) && styles.btnDisabledOpacity,
                   ]}
                   onPress={() => void onMarkAudioComplete()}
-                  disabled={seriesStatusSaving || !canMarkAudioComplete}
+                  disabled={seriesStatusSaving || !markAudioCompleteBaseEnabled}
                 >
                   <Text style={styles.markAudioCompleteBtnText}>Mark audio complete</Text>
                 </Pressable>

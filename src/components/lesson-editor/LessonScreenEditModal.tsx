@@ -31,7 +31,9 @@ import {
   celebrateSanitizedLearnedExtra,
   mergeCelebrateLearnedFromExposureAndExtra,
   finalizeScreenContentPayload,
+  normalizeAudioExposureContentForEdit,
   normalizeDialogueContent,
+  newDraftTokenId,
   normalizeVideoReviewContentForEdit,
   normalizeWordDiscriminationContentForEdit,
 } from '../../lib/lessonEditor'
@@ -61,6 +63,8 @@ type Props = {
   screen: LessonScreen | null
   /** Same draft as the lesson editor; used to derive Celebrate `learned` from Audio exposure words. */
   lessonScreens?: LessonScreen[]
+  /** Index of this screen in `lessonScreens` (for Afaan lookup: include unsaved edits on this screen in harvest). */
+  lessonScreenIndex?: number | null
   /** Optional: series id for word-bank checks from parent (Audio exposure, etc.). */
   lessonSeries?: string | null
   /** Optional: `lesson.content.series` string (e.g. "Mastering Greetings") for `words.series` matching. */
@@ -97,6 +101,19 @@ type WordBankRow = {
 
 function rowAfaanText(r: WordBankRow): string {
   return (r.word ?? r.oromo ?? '').trim()
+}
+
+/**
+ * Text to store when admin picks a word-bank row. If both `word` and `oromo` exist (common legacy /
+ * mixed-schema rows), prefer the longer non-empty string so a short `word` substring does not replace
+ * a full `oromo` phrase when the user selects the long option in the list.
+ */
+function rowAfaanTextForBankPick(r: WordBankRow): string {
+  const w = String(r.word ?? '').trim()
+  const o = String(r.oromo ?? '').trim()
+  if (!w) return o
+  if (!o) return w
+  return o.length > w.length ? o : w
 }
 
 function rowTranslationText(r: WordBankRow): string {
@@ -296,7 +313,7 @@ async function resolveAudioExposureWordsAgainstBank(
 }
 
 function wordLabel(row: WordBankRow): string {
-  const a = rowAfaanText(row)
+  const a = rowAfaanTextForBankPick(row)
   const b = rowTranslationText(row)
   if (a && b) return `${a} — ${b}`
   return a || b || row.id
@@ -370,6 +387,18 @@ function mergeDbAndLessonHarvestForPicker(db: WordBankRow[], harvested: Harveste
     })
   }
   return sortWordBankRowsShortestAfaanFirst([...db, ...extra])
+}
+
+/** Audio exposure tokens in the draft lesson (for Afaan lookup: same shape as broad harvest merge). */
+function harvestAudioExposureWordsForPicker(screens: LessonScreen[]): HarvestedWord[] {
+  return celebrateExposureWordRows(screens).map((r) => ({
+    word: r.afaan.trim(),
+    translation: r.english.trim() ? r.english.trim() : null,
+  }))
+}
+
+function isRealWordBankRowId(row: WordBankRow): boolean {
+  return !row.id.startsWith(LESSON_PICK_ID_PREFIX)
 }
 
 /** Word bank rows restricted to `words.series` labels (+ language when column exists). */
@@ -509,12 +538,9 @@ function LessonAndSeriesWordPicker({
               }}
             >
               <View style={styles.wordResultTextCol}>
-                <Text style={styles.wordResultTextTop}>{rowAfaanText(r) || r.id}</Text>
+                <Text style={styles.wordResultTextTop}>{rowAfaanTextForBankPick(r) || r.id}</Text>
                 {rowTranslationText(r) ? (
                   <Text style={styles.wordResultTextSub}>{rowTranslationText(r)}</Text>
-                ) : null}
-                {r.id.startsWith(LESSON_PICK_ID_PREFIX) ? (
-                  <Text style={[styles.hint, { marginTop: 4 }]}>From this lesson (add to word bank to sync series)</Text>
                 ) : null}
               </View>
             </Pressable>
@@ -1485,7 +1511,7 @@ function WordBankPicker({
               }}
             >
               <View style={styles.wordResultTextCol}>
-                <Text style={styles.wordResultTextTop}>{rowAfaanText(r) || r.id}</Text>
+                <Text style={styles.wordResultTextTop}>{rowAfaanTextForBankPick(r) || r.id}</Text>
                 {rowTranslationText(r) ? (
                   <Text style={styles.wordResultTextSub}>{rowTranslationText(r)}</Text>
                 ) : null}
@@ -1509,6 +1535,7 @@ function AudioExposureOromoField({
   instanceKey,
   externalFocusKey,
   readOnly = false,
+  lessonHarvested = [],
 }: {
   value: string
   onChangeText: (t: string) => void
@@ -1525,6 +1552,8 @@ function AudioExposureOromoField({
   externalFocusKey?: string
   /** After picking from the word bank (`word_id` set), text is not editable — remove the row/word to change. */
   readOnly?: boolean
+  /** Other Audio exposure words in this lesson (not yet in DB) — merged into matches like word-bank rows. */
+  lessonHarvested?: HarvestedWord[]
 }) {
   const [rows, setRows] = useState<WordBankRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -1566,11 +1595,11 @@ function AudioExposureOromoField({
           return
         }
         setErr('')
-        setRows(data)
+        setRows(mergeDbAndLessonHarvestForPicker(data, lessonHarvested, query))
       })()
     }, 250)
     return () => clearTimeout(t)
-  }, [value, readOnly])
+  }, [value, readOnly, lessonHarvested])
 
   return (
     <View style={compact ? styles.fieldVideoReviewOromo : styles.field}>
@@ -1621,7 +1650,7 @@ function AudioExposureOromoField({
               }}
             >
               <View style={styles.wordResultTextCol}>
-                <Text style={styles.wordResultTextTop}>{rowAfaanText(r) || r.id}</Text>
+                <Text style={styles.wordResultTextTop}>{rowAfaanTextForBankPick(r) || r.id}</Text>
                 {rowTranslationText(r) ? (
                   <Text style={styles.wordResultTextSub}>{rowTranslationText(r)}</Text>
                 ) : null}
@@ -1671,6 +1700,7 @@ export function LessonScreenEditModal({
   visible,
   screen,
   lessonScreens = [],
+  lessonScreenIndex = null,
   lessonSeries = null,
   lessonContentSeries = null,
   wordBankLanguage = VOICE_BANK_LANGUAGE,
@@ -1694,6 +1724,18 @@ export function LessonScreenEditModal({
   visibleRef.current = visible
   const baselineScreenRef = useRef<LessonScreen | null>(null)
   const baselineJsonTextRef = useRef('')
+
+  const exposureWordsForAfaanPicker = useMemo(() => {
+    const idx = lessonScreenIndex
+    let screens = lessonScreens
+    if (typeof idx === 'number' && idx >= 0 && idx < lessonScreens.length) {
+      const overlay = draft ?? screen
+      if (overlay) {
+        screens = lessonScreens.map((s, i) => (i === idx ? overlay : s))
+      }
+    }
+    return harvestAudioExposureWordsForPicker(screens)
+  }, [lessonScreens, lessonScreenIndex, draft, screen])
 
   useEffect(() => {
     if (visible && screen) {
@@ -1721,6 +1763,12 @@ export function LessonScreenEditModal({
         c = {
           ...c,
           content: normalizeVideoReviewContentForEdit(c.content as Record<string, unknown>),
+        }
+      }
+      if (c.type === 'audioExposure') {
+        c = {
+          ...c,
+          content: normalizeAudioExposureContentForEdit(c.content as Record<string, unknown>),
         }
       }
       baselineScreenRef.current = c
@@ -2157,7 +2205,7 @@ export function LessonScreenEditModal({
                                   ...x,
                                   word_id: row.id,
                                   left_word_id: row.id,
-                                  left: rowAfaanText(row),
+                                  left: rowAfaanTextForBankPick(row),
                                   right: rowTranslationText(row),
                                 }
                               : x,
@@ -2313,7 +2361,7 @@ export function LessonScreenEditModal({
                   const nextOpts: QuizOptionDraft[] = [
                     ...opts,
                     {
-                      text: rowAfaanText(row),
+                      text: rowAfaanTextForBankPick(row),
                       english: rowTranslationText(row),
                       word_id: row.id,
                       ...(ar ? { audioRef: ar } : {}),
@@ -2389,52 +2437,49 @@ export function LessonScreenEditModal({
       }
       case 'speakingPractice': {
         const phraseVal = String(c.phrase ?? c.prompt ?? '')
-        const translationVal = String(c.phraseEnglish ?? '')
         return (
           <View style={styles.form}>
             <Text style={styles.hint}>
-              Type a new sentence or word and its English gloss, or type 2+ letters and pick from the word bank to
-              attach reference audio when the row has it.
+              Type in Afaan Oromo, or type 2+ letters and pick from the word bank — the English gloss comes from the
+              bank when you pick a row.
             </Text>
             <AudioExposureOromoField
               readOnly={Boolean(c.speaking_word_id)}
+              lessonHarvested={exposureWordsForAfaanPicker}
               value={phraseVal}
               onChangeText={(t) => {
                 setContent((cur) => {
                   const next: Record<string, unknown> = {
                     ...cur,
                     phrase: t,
+                    phraseEnglish: '',
                     prompt: '',
                     expectedAnswer: '',
                     speaking_word_id: null,
                   }
+                  delete next.speakingDraftTokenId
                   delete next.targetAudioRef
                   return next
                 })
               }}
               onPickFromBank={(row) => {
                 setContent((cur) => {
-                  const ref = audioRefFromWordRow(row)
+                  const bankId = isRealWordBankRowId(row) ? row.id : null
+                  const ref = bankId ? audioRefFromWordRow(row) : undefined
                   const next: Record<string, unknown> = {
                     ...cur,
-                    speaking_word_id: row.id,
-                    phrase: rowAfaanText(row),
+                    speaking_word_id: bankId,
+                    phrase: rowAfaanTextForBankPick(row),
                     phraseEnglish: rowTranslationText(row),
                     prompt: '',
                     expectedAnswer: '',
                   }
+                  delete next.speakingDraftTokenId
                   if (ref) next.targetAudioRef = ref
                   else delete next.targetAudioRef
                   return next
                 })
               }}
-            />
-            <Field
-              label="Translation (English)"
-              value={translationVal}
-              multiline
-              editable={!c.speaking_word_id}
-              onChangeText={(t) => setContent((cur) => ({ ...cur, phraseEnglish: t }))}
             />
             <Pressable
               style={styles.changeWordBtn}
@@ -2448,6 +2493,7 @@ export function LessonScreenEditModal({
                     expectedAnswer: '',
                     phraseEnglish: '',
                   }
+                  delete next.speakingDraftTokenId
                   delete next.targetAudioRef
                   return next
                 })
@@ -2500,6 +2546,7 @@ export function LessonScreenEditModal({
                 <Text style={styles.personTitle}>Word {i + 1}</Text>
                 <AudioExposureOromoField
                   readOnly={Boolean(w.word_id)}
+                  lessonHarvested={exposureWordsForAfaanPicker}
                   value={String(w.oromo ?? '')}
                   onChangeText={(t) => {
                     setContent((cur) => {
@@ -2511,14 +2558,16 @@ export function LessonScreenEditModal({
                   onPickFromBank={(row) => {
                     setContent((cur) => {
                       const ws = (cur.words as Record<string, unknown>[]) ?? []
+                      const bankId = isRealWordBankRowId(row) ? row.id : null
                       const next = ws.map((x, j) => {
                         if (j !== i) return x
                         const item: Record<string, unknown> = {
                           ...(x as Record<string, unknown>),
-                          word_id: row.id,
-                          oromo: rowAfaanText(row),
+                          word_id: bankId,
+                          oromo: rowAfaanTextForBankPick(row),
                           english: rowTranslationText(row),
                         }
+                        if (!bankId) delete item.word_id
                         applyWordBankUrlsToExposureWord(item, row)
                         return item
                       })
@@ -2556,7 +2605,7 @@ export function LessonScreenEditModal({
               onPress={() =>
                 setContent((cur) => {
                   const ws = (cur.words as Record<string, unknown>[]) ?? []
-                  return { ...cur, words: [...ws, { oromo: '', english: '' }] }
+                  return { ...cur, words: [...ws, { oromo: '', english: '', draftTokenId: newDraftTokenId() }] }
                 })
               }
             >
@@ -2746,7 +2795,7 @@ export function LessonScreenEditModal({
               label="Add option (Oromo)"
               value={null}
               onPick={(row) => {
-                const text = rowAfaanText(row)
+                const text = rowAfaanTextForBankPick(row)
                 if (!text) return
                 patchEx0((e0) => {
                   const optsRaw = Array.isArray(e0.options) ? (e0.options as unknown[]) : []
@@ -2970,6 +3019,7 @@ export function LessonScreenEditModal({
                               compact
                               hideLabel
                               readOnly={Boolean(w.word_id)}
+                              lessonHarvested={exposureWordsForAfaanPicker}
                               instanceKey={`${id}-w${wi}`}
                               externalFocusKey={videoReviewVocabFocusKey}
                               onEditorFocus={() => {
@@ -3003,14 +3053,16 @@ export function LessonScreenEditModal({
                                   const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
                                   const curLine = (arr[idx] as Record<string, unknown>) ?? {}
                                   const ws = Array.isArray(curLine.vocabWords) ? (curLine.vocabWords as Record<string, unknown>[]) : []
+                                  const bankId = isRealWordBankRowId(row) ? row.id : null
                                   const nextWs = ws.map((x, j) => {
                                     if (j !== wi) return x
                                     const item: Record<string, unknown> = {
                                       ...(x as Record<string, unknown>),
-                                      word_id: row.id,
-                                      oromo: rowAfaanText(row),
+                                      word_id: bankId,
+                                      oromo: rowAfaanTextForBankPick(row),
                                       english: rowTranslationText(row),
                                     }
+                                    if (!bankId) delete item.word_id
                                     applyWordBankUrlsToExposureWord(item, row)
                                     return item
                                   })

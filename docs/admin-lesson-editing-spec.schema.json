@@ -200,6 +200,7 @@
             "required": ["oromo", "english"],
             "properties": {
               "audioRef": { "type": "string" },
+              "draftTokenId": { "type": "string" },
               "oromo": { "type": "string" },
               "english": { "type": "string" }
             }
@@ -226,6 +227,8 @@
             "phrase": { "type": "string" },
             "phraseEnglish": { "type": "string" },
             "targetAudioRef": { "type": "string" },
+            "speaking_word_id": { "type": "string" },
+            "speakingDraftTokenId": { "type": "string" },
             "tip": { "type": "string" },
             "hint": { "type": "string" }
           }

@@ -39,7 +39,14 @@ export type Screen = {
 // Narrow “safe” content types for the common screens.
 export type IntroContent = { goal?: string; heading?: string; body?: string; [k: string]: unknown };
 
-export type AudioExposureWord = { audioRef?: string; oromo: string; english: string; [k: string]: unknown };
+export type AudioExposureWord = {
+  audioRef?: string;
+  oromo: string;
+  english: string;
+  /** Optional; admin editor assigns for speaking-practice ↔ exposure links before `word_id` exists. */
+  draftTokenId?: string;
+  [k: string]: unknown;
+};
 export type AudioExposureContent = {
   title?: string;
   subtitle?: string;

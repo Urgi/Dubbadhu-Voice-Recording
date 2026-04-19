@@ -27,6 +27,7 @@ import {
   type ScreenType,
   buildAddScreenOptionsForCurriculumEditor,
   defaultScreen,
+  findAudioExposureWordRecordByDraftTokenId,
   parseLessonContent,
   sanitizeLessonScreensForSave,
   screenSubtitleLinesForCurriculumEditor,
@@ -156,6 +157,14 @@ async function lookupWordAudioRow(args: {
   return pick ?? null
 }
 
+async function lookupWordAudioRowById(wordId: string): Promise<WordBankAudioRow | null> {
+  const id = wordId.trim()
+  if (!id) return null
+  const { data, error } = await supabase.from('words').select('*').eq('id', id).maybeSingle()
+  if (error || !data) return null
+  return data as WordBankAudioRow
+}
+
 /**
  * Hydrate legacy / missing audio refs inside a lesson from the `words` table.
  * This ensures Dubbadhu can play per-word audio even if the editor only stored text.
@@ -195,6 +204,8 @@ async function hydrateAudioRefsFromWordBank(content: Record<string, unknown>, se
     if (se?.length) wr.slowWaveformEnvelope = se
   }
 
+  const typedScreens = screens as unknown as LessonScreen[]
+
   for (const s of screens) {
     if (s == null || typeof s !== 'object' || Array.isArray(s)) continue
     const sr = s as Record<string, unknown>
@@ -226,17 +237,39 @@ async function hydrateAudioRefsFromWordBank(content: Record<string, unknown>, se
     }
 
     if (type === 'speakingPractice') {
-      const prompt = String(cr.prompt ?? '').trim()
-      const expected = String(cr.expectedAnswer ?? '').trim()
-      const phrase = String(cr.phrase ?? '').trim()
-      const lookupText = prompt && expected ? expected : phrase
-      if (lookupText) {
-        const wrow = await getRow(lookupText)
-        if (wrow) {
-          const fast = wrow.fast_audio_url?.trim()
-          const slow = wrow.slow_audio_url?.trim()
+      const swId = String(cr.speaking_word_id ?? '').trim()
+      if (swId) {
+        const byId = await lookupWordAudioRowById(swId)
+        if (byId) {
+          const fast = byId.fast_audio_url?.trim()
+          const slow = byId.slow_audio_url?.trim()
           if (fast) cr.targetAudioRef = fast
           else if (slow) cr.targetAudioRef = slow
+        }
+      } else {
+        const prompt = String(cr.prompt ?? '').trim()
+        const expected = String(cr.expectedAnswer ?? '').trim()
+        const phrase = String(cr.phrase ?? '').trim()
+        const lookupText = prompt && expected ? expected : phrase
+        if (lookupText) {
+          const wrow = await getRow(lookupText)
+          if (wrow) {
+            const fast = wrow.fast_audio_url?.trim()
+            const slow = wrow.slow_audio_url?.trim()
+            if (fast) cr.targetAudioRef = fast
+            else if (slow) cr.targetAudioRef = slow
+          }
+        }
+      }
+      const linkTok = String(cr.speakingDraftTokenId ?? '').trim()
+      if (linkTok && !isHttpUrl(cr.targetAudioRef)) {
+        const ex = findAudioExposureWordRecordByDraftTokenId(typedScreens, linkTok)
+        if (ex) {
+          const ref =
+            String(ex.audioRef ?? '').trim() ||
+            String(ex.fastAudioRef ?? '').trim() ||
+            String(ex.slowAudioRef ?? '').trim()
+          if (ref) cr.targetAudioRef = ref
         }
       }
     }
@@ -907,7 +940,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
               const upDisabled = i === 0 || draft.screens[i - 1]?.type === 'intro'
               const downDisabled =
                 i === draft.screens.length - 1 || draft.screens[i + 1]?.type === 'intro'
-              const subtitleLines = screenSubtitleLinesForCurriculumEditor(s, role ?? undefined)
+              const subtitleLines = screenSubtitleLinesForCurriculumEditor(s, role ?? undefined, draft.screens)
               return (
                 <View key={`${s.type}-${i}`} style={styles.screenRowCard}>
                   <Pressable
@@ -1061,7 +1094,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
             {viewIndex != null && draft.screens[viewIndex] ? (
               <>
                 <Text style={styles.viewScreenSummary}>
-                  {screenSubtitleLinesForCurriculumEditor(draft.screens[viewIndex], role ?? undefined).join(
+                  {screenSubtitleLinesForCurriculumEditor(draft.screens[viewIndex], role ?? undefined, draft.screens).join(
                     '\n',
                   ) ||
                     draft.screens[viewIndex].type}
@@ -1097,6 +1130,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
         visible={editingIndex !== null}
         screen={editingScreen}
         lessonScreens={draft?.screens ?? []}
+        lessonScreenIndex={editingIndex}
         // Needed for Audio exposure → word bank sync + audio availability checks.
         lessonSeries={row?.series_id ?? null}
         lessonContentSeries={

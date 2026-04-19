@@ -93,9 +93,37 @@ export function screenTypeLabelForCurriculumEditor(type: string, role: string | 
   return SCREEN_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type
 }
 
+/** Shown on lesson screen list cards when a token is taught in this lesson but not linked to `words.id`. */
+export const LESSON_INTRODUCED_IN_LESSON = '(Introduced in this lesson)'
+
+function looksLikeWordsRowUuid(id: unknown): boolean {
+  const s = typeof id === 'string' ? id.trim() : ''
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)
+}
+
+function speakingPhraseMatchesLessonExposure(primary: string, lessonScreens: LessonScreen[]): boolean {
+  const pk = celebrateAfaanDedupeKey(primary.trim())
+  if (!pk) return false
+  for (const row of celebrateExposureWordRows(lessonScreens)) {
+    if (celebrateAfaanDedupeKey(row.afaan) === pk) return true
+  }
+  return false
+}
+
+export type ScreenSubtitleContext = {
+  /** Full lesson `screens` (same draft as the list); enables “Introduced in this lesson” on list cards. */
+  lessonScreens?: LessonScreen[]
+}
+
 /** Professor list/view: no filenames or “Video:” lines for the review step. */
-export function screenSubtitleLinesForCurriculumEditor(screen: LessonScreen, role: string | undefined): string[] {
-  if (role !== 'professor' || screen.type !== 'videoReview') return screenSubtitleLines(screen)
+export function screenSubtitleLinesForCurriculumEditor(
+  screen: LessonScreen,
+  role: string | undefined,
+  lessonScreens?: LessonScreen[],
+): string[] {
+  const ctx: ScreenSubtitleContext | undefined =
+    lessonScreens && lessonScreens.length ? { lessonScreens } : undefined
+  if (role !== 'professor' || screen.type !== 'videoReview') return screenSubtitleLines(screen, ctx)
   const lines: string[] = []
   lines.push('Admin completes this step after curriculum approval')
   return lines
@@ -414,6 +442,8 @@ const AUDIO_EXPOSURE_WORD_KEYS = new Set([
   'slowAudioRef',
   'note',
   'word_id',
+  /** Stable id for linking speaking practice → exposure word in the same lesson before `word_id` exists. */
+  'draftTokenId',
   'waveformEnvelope',
   'fastWaveformEnvelope',
   'slowWaveformEnvelope',
@@ -421,6 +451,86 @@ const AUDIO_EXPOSURE_WORD_KEYS = new Set([
   'fastWaveformBars32',
   'slowWaveformBars32',
 ])
+
+/** Client-generated id so speaking practice can reference an exposure row in the same draft JSON. */
+export function newDraftTokenId(): string {
+  return `draft_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+/** Ensure every audio-exposure word has `draftTokenId` (for cross-screen links while editing). */
+export function normalizeAudioExposureContentForEdit(content: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...content }
+  const wordsRaw = out.words
+  if (!Array.isArray(wordsRaw)) return out
+  out.words = wordsRaw.map((w) => {
+    if (w == null || typeof w !== 'object' || Array.isArray(w)) return w
+    const rec = { ...(w as Record<string, unknown>) }
+    const existing = String(rec.draftTokenId ?? '').trim()
+    if (!existing) rec.draftTokenId = newDraftTokenId()
+    return rec
+  })
+  return out
+}
+
+export type AudioExposureLinkOption = {
+  draftTokenId: string
+  afaan: string
+  english: string
+  /** 1-based index in lesson `screens` (for admin display). */
+  screenIndex: number
+}
+
+/** Tokens admins can attach to speaking practice (same lesson, audio exposure screens). */
+export function listAudioExposureLinkOptionsFromScreens(screens: LessonScreen[]): AudioExposureLinkOption[] {
+  const out: AudioExposureLinkOption[] = []
+  screens.forEach((s, idx) => {
+    if (s.type !== 'audioExposure') return
+    const words = (s.content as Record<string, unknown>).words
+    if (!Array.isArray(words)) return
+    for (const w of words) {
+      if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
+      const rec = w as Record<string, unknown>
+      const id = String(rec.draftTokenId ?? '').trim()
+      const afaan = String(rec.oromo ?? rec.text ?? rec.word ?? '').trim()
+      if (!id || !afaan) continue
+      const english = String(rec.english ?? rec.translation ?? '').trim()
+      out.push({ draftTokenId: id, afaan, english, screenIndex: idx + 1 })
+    }
+  })
+  return out
+}
+
+/** Find raw exposure word object by `draftTokenId` (hydration / editor). */
+export function findAudioExposureWordRecordByDraftTokenId(
+  screens: LessonScreen[],
+  tokenId: string,
+): Record<string, unknown> | null {
+  const id = tokenId.trim()
+  if (!id) return null
+  for (const s of screens) {
+    if (s.type !== 'audioExposure') continue
+    const words = (s.content as Record<string, unknown>).words
+    if (!Array.isArray(words)) continue
+    for (const w of words) {
+      if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
+      const rec = w as Record<string, unknown>
+      if (String(rec.draftTokenId ?? '').trim() === id) return rec
+    }
+  }
+  return null
+}
+
+function speakingPracticePrimaryLine(c: Record<string, unknown>): string {
+  const prompt = String(c.prompt ?? '').trim()
+  if (prompt) return prompt
+  const phrase = String(c.phrase ?? '').trim()
+  if (phrase) return phrase
+  return String(c.expectedAnswer ?? '').trim()
+}
+
+function speakingPracticeEnglishLine(c: Record<string, unknown>): string {
+  return String(c.phraseEnglish ?? '').trim()
+}
 
 const QUIZ_OPTION_KEYS = new Set(['text', 'english', 'audioRef'])
 
@@ -531,6 +641,7 @@ export function sanitizeScreenContentForPersistence(
           'tip',
           'showAnswerAfterRecording',
           'speaking_word_id',
+          'speakingDraftTokenId',
           'syllables',
         ]),
       )
@@ -699,8 +810,18 @@ export function screenSummary(screen: LessonScreen): string {
       return String(c.question ?? '').slice(0, 60) || '—'
     case 'match':
       return Array.isArray(c.pairs) ? `${c.pairs.length} pair(s)` : '—'
-    case 'speakingPractice':
-      return String(c.prompt ?? c.phrase ?? '').slice(0, 80) || '—'
+    case 'speakingPractice': {
+      const cr = c as Record<string, unknown>
+      const primary = speakingPracticePrimaryLine(cr)
+      const en = speakingPracticeEnglishLine(cr)
+      if (!primary) return '—'
+      if (en) {
+        const a = primary.length > 52 ? `${primary.slice(0, 52)}…` : primary
+        const b = en.length > 24 ? `${en.slice(0, 24)}…` : en
+        return `${a} — ${b}`
+      }
+      return primary.slice(0, 80) || '—'
+    }
     case 'audioExposure': {
       const lines = audioExposureWordSummaryLines(c as Record<string, unknown>)
       return lines.join(' · ')
@@ -750,8 +871,9 @@ export function screenSummary(screen: LessonScreen): string {
 }
 
 /** Multi-line subtitle for the lesson screen list (and view summary). */
-export function screenSubtitleLines(screen: LessonScreen): string[] {
+export function screenSubtitleLines(screen: LessonScreen, ctx?: ScreenSubtitleContext): string[] {
   const c = screen.content
+  const lessonScreens = ctx?.lessonScreens
   switch (screen.type) {
     case 'concept': {
       const tw = String(c.targetWord ?? '').trim()
@@ -769,6 +891,39 @@ export function screenSubtitleLines(screen: LessonScreen): string[] {
       if (u) {
         const tail = (u.split('/').pop() ?? u).split('?')[0]
         lines.push(`Video: ${tail}`)
+      }
+      return lines.length ? lines : [screenSummary(screen)]
+    }
+    case 'speakingPractice': {
+      const cr = c as Record<string, unknown>
+      const lines: string[] = []
+      const primary = speakingPracticePrimaryLine(cr)
+      const en = speakingPracticeEnglishLine(cr)
+      if (primary) {
+        lines.push(en ? `${primary} — ${en}` : primary)
+      }
+      const introducedInLesson =
+        Boolean(lessonScreens?.length && primary) &&
+        !looksLikeWordsRowUuid(cr.speaking_word_id) &&
+        speakingPhraseMatchesLessonExposure(primary, lessonScreens ?? [])
+      const ref = String(cr.targetAudioRef ?? '').trim()
+      if (!ref) {
+        const fromBank = looksLikeWordsRowUuid(cr.speaking_word_id)
+        const draftLink = Boolean(String(cr.speakingDraftTokenId ?? '').trim())
+        let refLine: string
+        if (fromBank) {
+          refLine = 'Reference audio: not on word row yet (OK until recorded)'
+        } else if (draftLink) {
+          refLine = 'Reference audio: linked to exposure word (fills when exposure has audio)'
+        } else if (introducedInLesson) {
+          refLine = LESSON_INTRODUCED_IN_LESSON
+        } else {
+          refLine = 'Reference audio not set'
+        }
+        if (introducedInLesson && refLine !== LESSON_INTRODUCED_IN_LESSON) {
+          refLine = `${refLine} ${LESSON_INTRODUCED_IN_LESSON}`
+        }
+        lines.push(refLine)
       }
       return lines.length ? lines : [screenSummary(screen)]
     }

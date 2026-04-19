@@ -131,16 +131,9 @@ export type WordDiscriminationQuizContent = {
 
 /** Public video URL from bucket `Videos-Dubbadhu` (Series intro bucket). */
 export type VideoReviewContent = {
-  introMessage?: string;
   videoUrl: string;
-  /** Small gold uppercase line on the video (default in app: SERIES REVIEW). */
-  reviewLabel?: string;
-  /** Large title; empty uses lesson title in the learner app. */
-  reviewTitle?: string;
-  /** @deprecated use reviewLabel */
-  seriesReviewLabel?: string;
-  /** @deprecated use reviewTitle */
-  seriesReviewTitle?: string;
+  freezeAtSeconds?: number;
+  lines?: unknown[];
   message?: string;
   [k: string]: unknown;
 };

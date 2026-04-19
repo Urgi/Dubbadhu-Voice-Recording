@@ -96,15 +96,8 @@ export function screenTypeLabelForCurriculumEditor(type: string, role: string | 
 /** Professor list/view: no filenames or “Video:” lines for the review step. */
 export function screenSubtitleLinesForCurriculumEditor(screen: LessonScreen, role: string | undefined): string[] {
   if (role !== 'professor' || screen.type !== 'videoReview') return screenSubtitleLines(screen)
-  const c = screen.content as Record<string, unknown>
   const lines: string[] = []
-  const intro = String(c.introMessage ?? '').trim()
-  if (intro) lines.push(intro.slice(0, 100) + (intro.length > 100 ? '…' : ''))
-  const rl = String(c.reviewLabel ?? '').trim()
-  const rt = String(c.reviewTitle ?? '').trim()
-  if (rl) lines.push(`Label: ${rl}`)
-  if (rt) lines.push(`Title: ${rt}`)
-  if (lines.length === 0) lines.push('Admin completes this step after curriculum approval')
+  lines.push('Admin completes this step after curriculum approval')
   return lines
 }
 
@@ -223,11 +216,8 @@ export function defaultScreen(type: ScreenType): LessonScreen {
       return {
         type,
         content: {
-          introMessage:
-            "Let's see how much of this conversation you can pick up with no translations.",
           videoUrl: '',
-          reviewLabel: 'SERIES REVIEW',
-          reviewTitle: '',
+          lines: [],
         },
       }
     default:
@@ -369,13 +359,39 @@ export function normalizeWordDiscriminationContentForEdit(content: Record<string
 }
 
 /** Video review: only keys the app reads (drops legacy aliases from stored JSON). */
-export function normalizeVideoReviewContentForEdit(content: Record<string, unknown>): Record<string, unknown> {
-  return {
-    introMessage: String(content.introMessage ?? content.message ?? '').trim(),
-    videoUrl: String(content.videoUrl ?? '').trim(),
-    reviewLabel: String(content.reviewLabel ?? content.seriesReviewLabel ?? '').trim(),
-    reviewTitle: String(content.reviewTitle ?? content.seriesReviewTitle ?? '').trim(),
+export function normalizeVideoReviewContentForEdit(
+  content: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (content == null || typeof content !== 'object' || Array.isArray(content)) {
+    return { videoUrl: '', lines: [] }
   }
+  const freezeRaw = (content.freezeAtSeconds ?? content.freeze_at_seconds) as unknown
+  const freezeAtSeconds =
+    freezeRaw != null && Number.isFinite(Number(freezeRaw)) ? Number(freezeRaw) : undefined
+
+  const rawLines = Array.isArray(content.lines) ? (content.lines as unknown[]) : []
+  const lines = rawLines
+    .map((x, idx) => {
+      if (x == null || typeof x !== 'object' || Array.isArray(x)) {
+        return { id: `line_${idx + 1}`, text: '', vocabWords: [] }
+      }
+      const r = x as Record<string, unknown>
+      const id = String(r.id ?? `line_${idx + 1}`).trim() || `line_${idx + 1}`
+      const text = String(r.text ?? r.line ?? '').trim()
+      const vwRaw = Array.isArray(r.vocabWords) ? (r.vocabWords as unknown[]) : Array.isArray(r.words) ? (r.words as unknown[]) : []
+      const vocabWords = vwRaw
+        .filter((w) => w != null && typeof w === 'object' && !Array.isArray(w))
+        .map((w) => ({ ...(w as Record<string, unknown>) }))
+      return { id, text, vocabWords }
+    })
+    .filter((l) => String((l as Record<string, unknown>).text ?? '').trim())
+
+  const out: Record<string, unknown> = {
+    videoUrl: String(content.videoUrl ?? '').trim(),
+    lines,
+  }
+  if (freezeAtSeconds != null) out.freezeAtSeconds = freezeAtSeconds
+  return out
 }
 
 function pickAllowedKeys(obj: Record<string, unknown>, allowed: Set<string>): Record<string, unknown> {
@@ -587,8 +603,42 @@ export function sanitizeScreenContentForPersistence(
       }
       return base
     }
-    case 'videoReview':
-      return pickAllowedKeys(content, new Set(['introMessage', 'videoUrl', 'reviewLabel', 'reviewTitle']))
+    case 'videoReview': {
+      const base = pickAllowedKeys(
+        content,
+        new Set(['videoUrl', 'freezeAtSeconds', 'lines']),
+      )
+
+      const sanitizeWordArr = (arr: unknown): unknown => {
+        if (!Array.isArray(arr)) return arr
+        return arr.map((w) =>
+          w != null && typeof w === 'object' && !Array.isArray(w)
+            ? pickAllowedKeys(w as Record<string, unknown>, AUDIO_EXPOSURE_WORD_KEYS)
+            : w,
+        )
+      }
+
+      const rawLines = base.lines
+      if (Array.isArray(rawLines)) {
+        base.lines = rawLines.map((l, idx) => {
+          if (l == null || typeof l !== 'object' || Array.isArray(l)) return l
+          const rec = l as Record<string, unknown>
+          const out = pickAllowedKeys(rec, new Set(['id', 'text', 'vocabWords']))
+          const id = String(out.id ?? `line_${idx + 1}`).trim() || `line_${idx + 1}`
+          out.id = id
+          out.text = String(out.text ?? '').trim()
+          out.vocabWords = sanitizeWordArr(out.vocabWords)
+          return out
+        })
+      }
+
+      // Normalize numeric for persistence
+      const fr = base.freezeAtSeconds
+      if (fr != null && Number.isFinite(Number(fr))) base.freezeAtSeconds = Number(fr)
+      else if (fr != null) delete base.freezeAtSeconds
+
+      return base
+    }
     default:
       return { ...content }
   }
@@ -671,8 +721,7 @@ export function screenSummary(screen: LessonScreen): string {
       const u = String(c.videoUrl ?? '').trim()
       const tail = u ? (u.split('/').pop() ?? u).split('?')[0] : ''
       if (tail) return `Video: ${tail.length > 52 ? `${tail.slice(0, 52)}…` : tail}`
-      const intro = String(c.introMessage ?? '').trim()
-      return intro.slice(0, 72) || '—'
+      return '—'
     }
     case 'discriminationDrill': {
       const q = String(c.question ?? c.title ?? c.prompt ?? '').trim()
@@ -721,10 +770,6 @@ export function screenSubtitleLines(screen: LessonScreen): string[] {
         const tail = (u.split('/').pop() ?? u).split('?')[0]
         lines.push(`Video: ${tail}`)
       }
-      const rl = String(c.reviewLabel ?? '').trim()
-      const rt = String(c.reviewTitle ?? '').trim()
-      if (rl) lines.push(`Label: ${rl}`)
-      if (rt) lines.push(`Title: ${rt}`)
       return lines.length ? lines : [screenSummary(screen)]
     }
     case 'dialogue': {

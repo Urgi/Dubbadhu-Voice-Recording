@@ -47,6 +47,7 @@ import {
 } from '../../lib/seedWordsFromLessons'
 import { VOICE_BANK_LANGUAGE, voiceBankLanguageSqlValues } from '../../lib/voiceBankLabels'
 import { LessonScreenLearnerPreview } from './LessonScreenLearnerPreview'
+import { VideoReviewFreezeFrameEditor } from './VideoReviewFreezeFrameEditor'
 import { TranslationMismatchModal } from './TranslationMismatchModal'
 
 /** Public storage bucket for Word discrimination quiz question images (Supabase dashboard). */
@@ -102,11 +103,44 @@ function rowTranslationText(r: WordBankRow): string {
   return (r.translation ?? r.english ?? '').trim()
 }
 
+/** Shorter Afaan labels first (then alphabetical) so tight substring matches surface before long phrases. */
+function sortWordBankRowsShortestAfaanFirst(rows: WordBankRow[]): WordBankRow[] {
+  return [...rows].sort((a, b) => {
+    const sa = rowAfaanText(a)
+    const sb = rowAfaanText(b)
+    const la = sa.length
+    const lb = sb.length
+    if (la !== lb) return la - lb
+    const c = sa.localeCompare(sb, undefined, { sensitivity: 'base' })
+    if (c !== 0) return c
+    return a.id.localeCompare(b.id)
+  })
+}
+
 /** Dubbadhu quiz `audioRef`: prefer fast recording URL, then slow, when present on `words`. */
 function audioRefFromWordRow(row: WordBankRow): string | undefined {
   const fast = row.fast_audio_url?.trim()
   const slow = row.slow_audio_url?.trim()
   return fast || slow || undefined
+}
+
+/**
+ * Word bank → learner exposure fields (`AudioExposureScreen.resolveExposureAudioUrls`).
+ * Writes `fastAudioRef` / `slowAudioRef` only; clears legacy `audioRef` so JSON is not
+ * triple-keyed. Learner resolves fast as `fastAudioRef || audioRef` and slow as `slowAudioRef`.
+ */
+function applyWordBankUrlsToExposureWord(item: Record<string, unknown>, row: WordBankRow) {
+  const fast = row.fast_audio_url?.trim()
+  const slow = row.slow_audio_url?.trim()
+  delete item.fastAudioRef
+  delete item.slowAudioRef
+  delete item.audioRef
+  if (fast) {
+    item.fastAudioRef = fast
+  }
+  if (slow) {
+    item.slowAudioRef = slow
+  }
 }
 
 type QuizOptionDraft = {
@@ -300,8 +334,9 @@ async function fetchWordBankRows(
 
     const res = await q
     if (!res.error) {
+      const filtered = ((res.data as WordBankRow[] | null) ?? []).filter((r) => typeof r?.id === 'string')
       return {
-        data: ((res.data as WordBankRow[] | null) ?? []).filter((r) => typeof r?.id === 'string'),
+        data: sortWordBankRowsShortestAfaanFirst(filtered),
         error: null,
       }
     }
@@ -334,7 +369,7 @@ function mergeDbAndLessonHarvestForPicker(db: WordBankRow[], harvested: Harveste
       english: h.translation,
     })
   }
-  return [...db, ...extra]
+  return sortWordBankRowsShortestAfaanFirst([...db, ...extra])
 }
 
 /** Word bank rows restricted to `words.series` labels (+ language when column exists). */
@@ -368,8 +403,9 @@ async function fetchWordBankRowsForSeries(
     }
     const res = await q
     if (res.error) return { data: null, error: new Error(res.error.message) }
+    const filtered = ((res.data as WordBankRow[] | null) ?? []).filter((r) => typeof r?.id === 'string')
     return {
-      data: ((res.data as WordBankRow[] | null) ?? []).filter((r) => typeof r?.id === 'string'),
+      data: sortWordBankRowsShortestAfaanFirst(filtered),
       error: null,
     }
   }
@@ -1467,10 +1503,28 @@ function AudioExposureOromoField({
   value,
   onChangeText,
   onPickFromBank,
+  compact = false,
+  hideLabel = false,
+  onEditorFocus,
+  instanceKey,
+  externalFocusKey,
+  readOnly = false,
 }: {
   value: string
   onChangeText: (t: string) => void
   onPickFromBank: (row: WordBankRow) => void
+  /** Tighter layout (e.g. video review line vocab). */
+  compact?: boolean
+  /** Hide “Afaan Oromo” when a parent label (e.g. “Vocab Words”) is shown above. */
+  hideLabel?: boolean
+  /** Runs when the text field gains focus (e.g. activate this line in video review). */
+  onEditorFocus?: () => void
+  /** Stable id for this field (e.g. `${lineId}-w${index}`) when using `externalFocusKey`. */
+  instanceKey?: string
+  /** When set to another field’s `instanceKey` or `${lineId}:line`, this field’s suggestion list closes. */
+  externalFocusKey?: string
+  /** After picking from the word bank (`word_id` set), text is not editable — remove the row/word to change. */
+  readOnly?: boolean
 }) {
   const [rows, setRows] = useState<WordBankRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -1479,6 +1533,19 @@ function AudioExposureOromoField({
   const lastReq = useRef(0)
 
   useEffect(() => {
+    if (!instanceKey || externalFocusKey === undefined) return
+    if (externalFocusKey === instanceKey) return
+    // Hide dropdown only; keep `rows` so refocusing this field still shows matches without retyping.
+    setSuggestOpen(false)
+  }, [externalFocusKey, instanceKey])
+
+  useEffect(() => {
+    if (readOnly) {
+      setRows([])
+      setErr('')
+      setSuggestOpen(false)
+      return
+    }
     const query = value.trim()
     if (query.length < 2) {
       setRows([])
@@ -1503,20 +1570,38 @@ function AudioExposureOromoField({
       })()
     }, 250)
     return () => clearTimeout(t)
-  }, [value])
+  }, [value, readOnly])
 
   return (
-    <View style={styles.field}>
-      <Text style={styles.label}>Afaan Oromo</Text>
+    <View style={compact ? styles.fieldVideoReviewOromo : styles.field}>
+      {hideLabel ? null : (
+        <Text style={[styles.label, compact && styles.labelVideoReviewCompact]}>Afaan Oromo</Text>
+      )}
       <TextInput
-        style={styles.input}
+        style={[
+          styles.input,
+          compact && styles.inputVideoReviewCompact,
+          readOnly && styles.inputReadOnlyBank,
+        ]}
         value={value}
+        editable={!readOnly}
         onChangeText={onChangeText}
-        onFocus={() => setSuggestOpen(true)}
+        onFocus={() => {
+          onEditorFocus?.()
+          if (!readOnly) setSuggestOpen(true)
+        }}
         onBlur={() => {
           setTimeout(() => setSuggestOpen(false), 220)
         }}
-        placeholder="Type or search the word bank (2+ letters show matches)"
+        placeholder={
+          readOnly
+            ? ''
+            : compact
+              ? hideLabel
+                ? 'Search word bank (2+ letters) or type a word'
+                : 'Type or search word bank (2+ letters)'
+              : 'Type or search the word bank (2+ letters show matches)'
+        }
         placeholderTextColor="#52525b"
         autoCapitalize="none"
         autoCorrect={false}
@@ -1599,6 +1684,10 @@ export function LessonScreenEditModal({
   const [jsonError, setJsonError] = useState('')
   const [quizCorrectOpen, setQuizCorrectOpen] = useState(false)
   const [patternCorrectOpen, setPatternCorrectOpen] = useState(false)
+  /** Video review: one expanded line at a time; lines with vocab are minimized unless this is their `id` (`null` = none). */
+  const [videoReviewActiveLineId, setVideoReviewActiveLineId] = useState<string | null>(null)
+  /** Which vocab/line editor has focus — closes other rows’ word-bank dropdowns so they don’t block taps. */
+  const [videoReviewVocabFocusKey, setVideoReviewVocabFocusKey] = useState('')
   const draftRef = useRef<LessonScreen | null>(null)
   draftRef.current = draft
   const visibleRef = useRef(visible)
@@ -1645,8 +1734,18 @@ export function LessonScreenEditModal({
       }
       setDraft(c)
       setJsonError('')
+      setVideoReviewActiveLineId(null)
+      setVideoReviewVocabFocusKey('')
     }
   }, [visible, screen])
+
+  useEffect(() => {
+    if (draft?.type !== 'videoReview' || videoReviewActiveLineId == null) return
+    const c = draft.content as Record<string, unknown>
+    const lines = Array.isArray(c.lines) ? (c.lines as Record<string, unknown>[]) : []
+    const exists = lines.some((l, i) => String(l?.id ?? `line_${i + 1}`).trim() === videoReviewActiveLineId)
+    if (!exists) setVideoReviewActiveLineId(null)
+  }, [draft, videoReviewActiveLineId])
 
   const requestClose = useCallback(() => {
     if (!visible || !screen) {
@@ -1718,6 +1817,19 @@ export function LessonScreenEditModal({
     if (fn) fn('cancel')
   }, [visible])
 
+  /** Must stay above any early return — Rules of Hooks. */
+  const patchDraftContent = useCallback(
+    (patch: Record<string, unknown> | ((cur: Record<string, unknown>) => Record<string, unknown>)) => {
+      setDraft((d) => {
+        if (!d) return null
+        const curContent = d.content as Record<string, unknown>
+        const next = typeof patch === 'function' ? patch(curContent) : patch
+        return { ...d, content: next }
+      })
+    },
+    [],
+  )
+
   if (!visible || !screen || !draft) return null
 
   const applyJsonFallback = () => {
@@ -1748,17 +1860,7 @@ export function LessonScreenEditModal({
 
   const structuredForm = () => {
     const c = draft.content
-    /** Functional updates avoid stale `draft`/`c` when typing quickly across fields (e.g. Audio exposure). */
-    const setContent = (
-      patch: Record<string, unknown> | ((cur: Record<string, unknown>) => Record<string, unknown>),
-    ) => {
-      setDraft((d) => {
-        if (!d) return null
-        const curContent = d.content as Record<string, unknown>
-        const next = typeof patch === 'function' ? patch(curContent) : patch
-        return { ...d, content: next }
-      })
-    }
+    const setContent = patchDraftContent
 
     switch (draft.type) {
       case 'intro':
@@ -2295,6 +2397,7 @@ export function LessonScreenEditModal({
               attach reference audio when the row has it.
             </Text>
             <AudioExposureOromoField
+              readOnly={Boolean(c.speaking_word_id)}
               value={phraseVal}
               onChangeText={(t) => {
                 setContent((cur) => {
@@ -2330,6 +2433,7 @@ export function LessonScreenEditModal({
               label="Translation (English)"
               value={translationVal}
               multiline
+              editable={!c.speaking_word_id}
               onChangeText={(t) => setContent((cur) => ({ ...cur, phraseEnglish: t }))}
             />
             <Pressable
@@ -2395,6 +2499,7 @@ export function LessonScreenEditModal({
               <View key={i} style={styles.pairCard}>
                 <Text style={styles.personTitle}>Word {i + 1}</Text>
                 <AudioExposureOromoField
+                  readOnly={Boolean(w.word_id)}
                   value={String(w.oromo ?? '')}
                   onChangeText={(t) => {
                     setContent((cur) => {
@@ -2406,7 +2511,6 @@ export function LessonScreenEditModal({
                   onPickFromBank={(row) => {
                     setContent((cur) => {
                       const ws = (cur.words as Record<string, unknown>[]) ?? []
-                      const ar = audioRefFromWordRow(row)
                       const next = ws.map((x, j) => {
                         if (j !== i) return x
                         const item: Record<string, unknown> = {
@@ -2415,21 +2519,25 @@ export function LessonScreenEditModal({
                           oromo: rowAfaanText(row),
                           english: rowTranslationText(row),
                         }
-                        if (ar) item.audioRef = ar
-                        else delete item.audioRef
+                        applyWordBankUrlsToExposureWord(item, row)
                         return item
                       })
                       return { ...cur, words: next }
                     })
                   }}
                 />
-                <Field label="Translation" value={String(w.english ?? '')} onChangeText={(t) => {
-                  setContent((cur) => {
-                    const ws = (cur.words as Record<string, unknown>[]) ?? []
-                    const next = ws.map((x, j) => (j === i ? { ...x, english: t } : x))
-                    return { ...cur, words: next }
-                  })
-                }} />
+                <Field
+                  label="Translation"
+                  value={String(w.english ?? '')}
+                  editable={!w.word_id}
+                  onChangeText={(t) => {
+                    setContent((cur) => {
+                      const ws = (cur.words as Record<string, unknown>[]) ?? []
+                      const next = ws.map((x, j) => (j === i ? { ...x, english: t } : x))
+                      return { ...cur, words: next }
+                    })
+                  }}
+                />
                 <Pressable
                   style={styles.removeBtn}
                   onPress={() => {
@@ -2742,49 +2850,255 @@ export function LessonScreenEditModal({
         return (
           <View style={styles.form}>
             {!allowVideoReviewMediaFields ? (
-              <Text style={styles.hint}>
-                An admin completes this step after curriculum approval (intro copy and labels below are optional for
-                your draft).
-              </Text>
-            ) : null}
-            <Field
-              label="Intro message"
-              value={String(c.introMessage ?? '')}
-              multiline
-              onChangeText={(t) => setContent((cur) => ({ ...cur, introMessage: t }))}
-            />
-            {allowVideoReviewMediaFields ? (
+              <Text style={styles.hint}>An admin completes this step after curriculum approval.</Text>
+            ) : (
               <>
+                <Text style={styles.hint}>
+                  Pick the clip learners watch for this step; files live in the Videos-Dubbadhu bucket on Supabase.
+                </Text>
                 <VideoReviewDubbadhuVideoField videoUrl={String(c.videoUrl ?? '')} setContent={setContent} />
-                <Text style={styles.label}>Video URL</Text>
-                <Text style={styles.hint}>
-                  Paste a public URL if the bucket list is empty (RLS), or to override the pick above.
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  value={String(c.videoUrl ?? '')}
-                  onChangeText={(t) => setContent((cur) => ({ ...cur, videoUrl: t.trim() }))}
-                  placeholder="https://…supabase.co/storage/v1/object/public/Videos-Dubbadhu/…"
-                  placeholderTextColor="#52525b"
-                  autoCapitalize="none"
-                  autoCorrect={false}
+                <VideoReviewFreezeFrameEditor
+                  videoUrl={String(c.videoUrl ?? '')}
+                  freezeAtSeconds={c.freezeAtSeconds}
+                  setContent={setContent}
+                  enabled
                 />
-                <Text style={styles.hint}>
-                  On the video, the bottom overlay matches Series intro (gold label + title). Leave title blank to use
-                  the lesson title in the app.
-                </Text>
               </>
-            ) : null}
-            <Field
-              label="Overlay label (e.g. SERIES REVIEW)"
-              value={String(c.reviewLabel ?? '')}
-              onChangeText={(t) => setContent((cur) => ({ ...cur, reviewLabel: t }))}
-            />
-            <Field
-              label="Overlay title (optional)"
-              value={String(c.reviewTitle ?? '')}
-              onChangeText={(t) => setContent((cur) => ({ ...cur, reviewTitle: t }))}
-            />
+            )}
+            {allowVideoReviewMediaFields ? null : (
+              <VideoReviewFreezeFrameEditor
+                videoUrl={String(c.videoUrl ?? '')}
+                freezeAtSeconds={c.freezeAtSeconds}
+                setContent={setContent}
+                enabled={false}
+              />
+            )}
+            <Text style={styles.label}>Video Lines and Vocab</Text>
+            <Text style={styles.hint}>Lines to script and its associated vocab.</Text>
+            {(() => {
+              const lines = Array.isArray(c.lines) ? (c.lines as Record<string, unknown>[]) : []
+              return (
+                <>
+                  {lines.map((ln, idx) => {
+                    const id = String(ln?.id ?? `line_${idx + 1}`)
+                    const text = String(ln?.text ?? '')
+                    const vocabWords = Array.isArray(ln?.vocabWords) ? (ln.vocabWords as Record<string, unknown>[]) : []
+                    const vocabPreview = vocabWords.map((w) => String(w?.oromo ?? '').trim()).filter(Boolean)
+                    const hasVocab = vocabPreview.length > 0
+                    const lineCollapsed = hasVocab && videoReviewActiveLineId !== id
+                    return (
+                      <View key={`${id}-${idx}`} style={styles.videoReviewLineCard}>
+                        {lineCollapsed ? (
+                          <>
+                            <View style={styles.videoReviewCollapsedHeader}>
+                              <Text style={[styles.videoReviewLineTitle, styles.videoReviewLineTitleInRow]}>
+                                Line {idx + 1}
+                              </Text>
+                              <View style={styles.videoReviewHeaderActions}>
+                                <Pressable hitSlop={8} onPress={() => setVideoReviewActiveLineId(id)}>
+                                  <Text style={styles.videoReviewExpandLink}>Expand</Text>
+                                </Pressable>
+                                <Pressable
+                                  hitSlop={8}
+                                  style={styles.videoReviewRemoveLineBtnHeader}
+                                  onPress={() => {
+                                    if (videoReviewActiveLineId === id) setVideoReviewActiveLineId(null)
+                                    setContent((cur) => {
+                                      const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
+                                      return { ...cur, lines: arr.filter((_, j) => j !== idx) }
+                                    })
+                                  }}
+                                >
+                                  <Text style={styles.removeBtnText}>Remove line</Text>
+                                </Pressable>
+                              </View>
+                            </View>
+                            <Pressable onPress={() => setVideoReviewActiveLineId(id)}>
+                              <Text style={styles.videoReviewCollapsedScript} numberOfLines={5}>
+                                {text.trim() || '—'}
+                              </Text>
+                              <Text style={styles.videoReviewCollapsedWords} numberOfLines={3}>
+                                {vocabPreview.join(' · ')}
+                              </Text>
+                              <Text style={styles.videoReviewCollapsedMeta}>
+                                {vocabPreview.length} word{vocabPreview.length !== 1 ? 's' : ''} · tap to expand
+                              </Text>
+                            </Pressable>
+                          </>
+                        ) : (
+                          <>
+                        <View style={styles.videoReviewLineHeaderRow}>
+                          <Text style={[styles.videoReviewLineTitle, styles.videoReviewLineTitleInRow]}>
+                            Line {idx + 1}
+                          </Text>
+                          <Pressable
+                            hitSlop={8}
+                            style={styles.videoReviewRemoveLineBtnHeader}
+                            onPress={() => {
+                              if (videoReviewActiveLineId === id) setVideoReviewActiveLineId(null)
+                              setContent((cur) => {
+                                const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
+                                return { ...cur, lines: arr.filter((_, j) => j !== idx) }
+                              })
+                            }}
+                          >
+                            <Text style={styles.removeBtnText}>Remove line</Text>
+                          </Pressable>
+                        </View>
+                        <Field
+                          label="Line text"
+                          value={text}
+                          multiline
+                          multilineCompact
+                          onFocus={() => {
+                            setVideoReviewActiveLineId(id)
+                            setVideoReviewVocabFocusKey(`${id}:line`)
+                          }}
+                          onChangeText={(t) => {
+                            setContent((cur) => {
+                              const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
+                              const next = arr.map((x, j) => (j === idx ? { ...(x as Record<string, unknown>), id, text: t } : x))
+                              return { ...cur, lines: next }
+                            })
+                          }}
+                        />
+                        <Text style={styles.label}>Vocab Words</Text>
+                        {vocabWords.map((w, wi) => (
+                          <View key={`${id}-w-${wi}`} style={styles.videoReviewWordRow}>
+                            <View style={styles.videoReviewWordCol}>
+                            <AudioExposureOromoField
+                              compact
+                              hideLabel
+                              readOnly={Boolean(w.word_id)}
+                              instanceKey={`${id}-w${wi}`}
+                              externalFocusKey={videoReviewVocabFocusKey}
+                              onEditorFocus={() => {
+                                setVideoReviewActiveLineId(id)
+                                setVideoReviewVocabFocusKey(`${id}-w${wi}`)
+                              }}
+                              value={String(w.oromo ?? '')}
+                              onChangeText={(t) => {
+                                setContent((cur) => {
+                                  const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
+                                  const curLine = (arr[idx] as Record<string, unknown>) ?? {}
+                                  const ws = Array.isArray(curLine.vocabWords) ? (curLine.vocabWords as Record<string, unknown>[]) : []
+                                  const nextWs = ws.map((x, j) => {
+                                    if (j !== wi) return x
+                                    const prev = x as Record<string, unknown>
+                                    const nextWord: Record<string, unknown> = { ...prev, oromo: t }
+                                    if (String(t).trim() !== String(prev.oromo ?? '').trim()) {
+                                      delete nextWord.english
+                                      delete nextWord.word_id
+                                      delete nextWord.audioRef
+                                    }
+                                    return nextWord
+                                  })
+                                  const nextLine = { ...curLine, id, text: String(curLine.text ?? ''), vocabWords: nextWs }
+                                  const next = arr.map((x, j) => (j === idx ? nextLine : x))
+                                  return { ...cur, lines: next }
+                                })
+                              }}
+                              onPickFromBank={(row) => {
+                                setContent((cur) => {
+                                  const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
+                                  const curLine = (arr[idx] as Record<string, unknown>) ?? {}
+                                  const ws = Array.isArray(curLine.vocabWords) ? (curLine.vocabWords as Record<string, unknown>[]) : []
+                                  const nextWs = ws.map((x, j) => {
+                                    if (j !== wi) return x
+                                    const item: Record<string, unknown> = {
+                                      ...(x as Record<string, unknown>),
+                                      word_id: row.id,
+                                      oromo: rowAfaanText(row),
+                                      english: rowTranslationText(row),
+                                    }
+                                    applyWordBankUrlsToExposureWord(item, row)
+                                    return item
+                                  })
+                                  const nextLine = { ...curLine, id, text: String(curLine.text ?? ''), vocabWords: nextWs }
+                                  const next = arr.map((x, j) => (j === idx ? nextLine : x))
+                                  return { ...cur, lines: next }
+                                })
+                              }}
+                            />
+                            {String(w.english ?? '').trim() ? (
+                              <Text style={styles.videoReviewEnglishHint}>{String(w.english ?? '').trim()}</Text>
+                            ) : null}
+                            </View>
+                            <Pressable
+                              hitSlop={{ top: 6, bottom: 6, left: 0, right: 10 }}
+                              style={styles.videoReviewRemoveWordBtn}
+                              onPress={() => {
+                                setContent((cur) => {
+                                  const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
+                                  const curLine = (arr[idx] as Record<string, unknown>) ?? {}
+                                  const ws = Array.isArray(curLine.vocabWords) ? (curLine.vocabWords as Record<string, unknown>[]) : []
+                                  const nextWs = ws.filter((_, j) => j !== wi)
+                                  const nextLine = { ...curLine, id, text: String(curLine.text ?? ''), vocabWords: nextWs }
+                                  const next = arr.map((x, j) => (j === idx ? nextLine : x))
+                                  return { ...cur, lines: next }
+                                })
+                              }}
+                            >
+                              <Text style={styles.removeBtnText}>Remove word</Text>
+                            </Pressable>
+                          </View>
+                        ))}
+                        <Pressable
+                          style={styles.videoReviewAddWordBtn}
+                          onPress={() => {
+                            setVideoReviewActiveLineId(id)
+                            setVideoReviewVocabFocusKey(`${id}:add`)
+                            setContent((cur) => {
+                              const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
+                              const curLine = (arr[idx] as Record<string, unknown>) ?? {}
+                              const ws = Array.isArray(curLine.vocabWords) ? (curLine.vocabWords as Record<string, unknown>[]) : []
+                              const nextWs = [...ws, { oromo: '' }]
+                              const nextLine = { ...curLine, id, text: String(curLine.text ?? ''), vocabWords: nextWs }
+                              const next = arr.map((x, j) => (j === idx ? nextLine : x))
+                              return { ...cur, lines: next }
+                            })
+                          }}
+                        >
+                          <Text style={styles.videoReviewAddWordBtnText}>+ Add word</Text>
+                        </Pressable>
+                        {hasVocab ? (
+                          <Pressable
+                            style={styles.videoReviewMinimizeBtn}
+                            onPress={() => setVideoReviewActiveLineId(null)}
+                          >
+                            <Text style={styles.videoReviewMinimizeBtnText}>Minimize line</Text>
+                          </Pressable>
+                        ) : null}
+                          </>
+                        )}
+                      </View>
+                    )
+                  })}
+                  <Pressable
+                    style={styles.addBtn}
+                    onPress={() =>
+                      setContent((cur) => {
+                        const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
+                        return {
+                          ...cur,
+                          lines: [
+                            ...arr,
+                            {
+                              id: `line_${arr.length + 1}`,
+                              text: '',
+                              vocabWords: [{ oromo: '' }],
+                            },
+                          ],
+                        }
+                      })
+                    }
+                  >
+                    <Text style={styles.addBtnText}>+ Add line</Text>
+                  </Pressable>
+                </>
+              )
+            })()}
+
             <SaveRow
               onPress={() => {
                 const base = draftRef.current?.content as Record<string, unknown> | undefined
@@ -2815,7 +3129,7 @@ export function LessonScreenEditModal({
   ].includes(draft.type)
 
   return (
-    <Modal visible animationType="slide" presentationStyle="pageSheet" onRequestClose={requestClose}>
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={requestClose}>
       <View style={styles.modalRoot}>
         <View style={styles.modalHeader}>
           <Pressable onPress={requestClose} hitSlop={12}>
@@ -2828,19 +3142,22 @@ export function LessonScreenEditModal({
           </Text>
           <View style={{ width: 56 }} />
         </View>
-        <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled">
-          <View style={styles.screenHeader}>
-            <Text style={styles.screenHeaderTitle}>
-              {!allowVideoReviewMediaFields && draft.type === 'videoReview'
-                ? 'Review'
-                : screenTypeTitle(draft.type)}
-            </Text>
-            <Text style={styles.screenHeaderSubtitle}>
-              {allowJsonEditing
-                ? 'Adjust inputs below to modify/create screen.'
-                : 'Sample learner UI is shown above the form so you can match fields to what students see.'}
-            </Text>
-          </View>
+        <ScrollView
+          style={styles.modalScroll}
+          contentContainerStyle={styles.modalScrollContent}
+          keyboardShouldPersistTaps="always"
+          removeClippedSubviews={false}
+        >
+          {draft.type === 'videoReview' ? null : (
+            <View style={styles.screenHeader}>
+              <Text style={styles.screenHeaderTitle}>{screenTypeTitle(draft.type)}</Text>
+              <Text style={styles.screenHeaderSubtitle}>
+                {allowJsonEditing
+                  ? 'Adjust inputs below to modify/create screen.'
+                  : 'Sample learner UI is shown above the form so you can match fields to what students see.'}
+              </Text>
+            </View>
+          )}
           {!allowJsonEditing ? <LessonScreenLearnerPreview screenType={draft.type} /> : null}
           {!allowJsonEditing && jsonError ? <Text style={styles.jsonErr}>{jsonError}</Text> : null}
           {hasStructured ? (
@@ -2897,16 +3214,31 @@ function Field(props: {
   value: string
   onChangeText: (t: string) => void
   multiline?: boolean
+  /** Multiline with ~one-line min height; scrolls when content exceeds max height. */
+  multilineCompact?: boolean
   keyboardType?: 'default' | 'number-pad'
+  onFocus?: () => void
+  editable?: boolean
 }) {
+  const ml = !!props.multiline
+  const compact = !!props.multilineCompact
+  const editable = props.editable !== false
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{props.label}</Text>
       <TextInput
-        style={[styles.input, props.multiline && styles.inputMulti]}
+        style={[
+          styles.input,
+          ml && !compact && styles.inputMulti,
+          ml && compact && styles.inputMultiCompact,
+          !editable && styles.inputReadOnlyBank,
+        ]}
         value={props.value}
+        editable={editable}
         onChangeText={props.onChangeText}
-        multiline={props.multiline}
+        onFocus={props.onFocus}
+        multiline={ml}
+        scrollEnabled={ml && compact}
         keyboardType={props.keyboardType}
         placeholderTextColor="#52525b"
       />
@@ -2945,7 +3277,7 @@ const styles = StyleSheet.create({
   modalCancel: { color: '#a78bfa', fontSize: 16, fontWeight: '600' },
   modalTitle: { color: '#fff', fontSize: 15, fontWeight: '700', flex: 1, textAlign: 'center' },
   modalScroll: { flex: 1 },
-  modalScrollContent: { padding: 16, paddingBottom: 40 },
+  modalScrollContent: { flexGrow: 1, padding: 16, paddingBottom: 48 },
   screenHeader: { marginBottom: 12 },
   screenHeaderTitle: { color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'left' },
   screenHeaderSubtitle: { color: '#a1a1aa', fontSize: 13, marginTop: 6, textAlign: 'left', lineHeight: 18 },
@@ -2965,6 +3297,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   inputMulti: { minHeight: 88, textAlignVertical: 'top' },
+  inputMultiCompact: {
+    minHeight: 44,
+    maxHeight: 120,
+    textAlignVertical: 'top',
+    paddingTop: 10,
+    paddingBottom: 10,
+  },
   rowSwitch: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2988,6 +3327,92 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#27272a',
   },
+  videoReviewLineCard: {
+    backgroundColor: '#18181b',
+    borderRadius: 10,
+    padding: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#27272a',
+  },
+  videoReviewLineTitle: {
+    color: '#e4e4e7',
+    fontWeight: '700',
+    fontSize: 13,
+    marginBottom: 4,
+  },
+  videoReviewLineTitleInRow: { flex: 1, marginBottom: 0, minWidth: 0 },
+  videoReviewLineHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 4,
+  },
+  videoReviewHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 14, flexShrink: 0 },
+  videoReviewRemoveLineBtnHeader: { paddingVertical: 2, paddingLeft: 4 },
+  videoReviewWordRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 6,
+  },
+  videoReviewWordCol: { flex: 1, minWidth: 0 },
+  videoReviewEnglishHint: {
+    color: '#a1a1aa',
+    fontSize: 12,
+    fontStyle: 'italic',
+    marginTop: 2,
+    marginBottom: 2,
+    paddingHorizontal: 2,
+  },
+  videoReviewRemoveWordBtn: { marginTop: 10, flexShrink: 0, paddingVertical: 2, paddingLeft: 2 },
+  videoReviewAddWordBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#27272a',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginBottom: 4,
+  },
+  videoReviewAddWordBtnText: { color: '#fff', fontWeight: '600', fontSize: 13 },
+  videoReviewCollapsedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  videoReviewExpandLink: { color: '#a78bfa', fontSize: 14, fontWeight: '700' },
+  videoReviewCollapsedScript: {
+    color: '#e4e4e7',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  videoReviewCollapsedWords: {
+    color: '#d4d4d8',
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 4,
+  },
+  videoReviewCollapsedMeta: { color: '#71717a', fontSize: 11, marginBottom: 6 },
+  videoReviewMinimizeBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#52525b',
+    backgroundColor: '#111',
+  },
+  videoReviewMinimizeBtnText: { color: '#d4d4d8', fontSize: 13, fontWeight: '600' },
+  fieldVideoReviewOromo: { marginBottom: 2 },
+  labelVideoReviewCompact: { fontSize: 11, marginBottom: 4, color: '#a1a1aa' },
+  inputVideoReviewCompact: { paddingVertical: 8, fontSize: 14 },
+  inputReadOnlyBank: { color: '#a1a1aa', opacity: 0.95 },
+  row2: { flexDirection: 'row', alignItems: 'flex-start' },
+  wordRow: { marginBottom: 10 },
   removeBtn: { marginTop: 8, alignSelf: 'flex-start' },
   removeBtnText: { color: '#f87171', fontSize: 14, fontWeight: '600' },
   addBtn: {

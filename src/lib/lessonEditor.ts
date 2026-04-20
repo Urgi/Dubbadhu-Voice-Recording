@@ -185,10 +185,8 @@ export function defaultScreen(type: ScreenType): LessonScreen {
         type,
         content: {
           dialogueData: {
-            people: [
-              { name: 'Speaker A', lines: [''], translations: [''] },
-              { name: 'Speaker B', lines: [''], translations: [''] },
-            ],
+            person1: { name: 'Person 1', lines: [''], translations: [''] },
+            person2: { name: 'Person 2', lines: [''], translations: [''] },
           },
         },
       }
@@ -205,12 +203,12 @@ export function defaultScreen(type: ScreenType): LessonScreen {
     case 'speakingPractice':
       return {
         type,
-        content: { prompt: '', expectedAnswer: '' },
+        content: { word: '', word_id: '', prompt: '' },
       }
     case 'audioExposure':
       return {
         type,
-        content: { title: '', words: [{ oromo: '', english: '' }], autoPlayNext: false, delayReveal: 0 },
+        content: { words: [{ word: '', word_id: '' }] },
       }
     case 'CelebrateScreen':
       return { type, content: { message: 'Nice work.' } }
@@ -261,34 +259,87 @@ export function audioExposureWordSummaryLines(content: Record<string, unknown>):
   for (const w of words) {
     if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
     const rec = w as Record<string, unknown>
-    const afaan = String(rec.oromo ?? rec.text ?? rec.word ?? '').trim()
-    const english = String(rec.english ?? rec.translation ?? '').trim()
+    const wid = String(rec.word_id ?? '').trim().toLowerCase()
+    if (!UUID_RE_FOR_WORD_ROW.test(wid)) continue
+    const afaan = String(rec.word ?? '').trim()
+    const english = String(rec.translation ?? '').trim()
     if (!afaan && !english) continue
     lines.push(english ? `${afaan} — ${english}` : afaan)
   }
   return lines.length ? lines : ['—']
 }
 
-/** Dialogue content always has exactly two `people` entries (pads or truncates). */
+/** One side of a two-person dialogue (Person 1 speaks first; lines alternate with Person 2). */
+export function mapDialogueSide(input: Record<string, unknown> | undefined): Record<string, unknown> {
+  const name = String(input?.name ?? '').trim()
+  const linesSrc = input?.lines
+  let lines: string[] = []
+  if (Array.isArray(linesSrc)) {
+    lines = linesSrc.map((x) => String(x ?? '').trim())
+  } else if (typeof linesSrc === 'string') {
+    lines = linesSrc.split(/\r?\n/).map((s) => s.trim())
+  }
+  if (lines.length === 0) lines = ['']
+  const transSrc = input?.translations
+  let translations: string[] = []
+  if (Array.isArray(transSrc)) {
+    translations = transSrc.map((x) => (x == null ? '' : String(x)))
+  } else if (typeof transSrc === 'string') {
+    translations = transSrc.split(/\r?\n/).map((s) => s.trim())
+  }
+  while (translations.length < lines.length) translations.push('')
+  if (translations.length > lines.length) translations = translations.slice(0, lines.length)
+  return { name, lines, translations }
+}
+
 export function normalizeDialogueContent(content: Record<string, unknown>): Record<string, unknown> {
   const dd = (content.dialogueData as Record<string, unknown> | undefined) ?? {}
-  const peopleRaw = Array.isArray(dd.people) ? (dd.people as unknown[]) : []
-  const nextPeople: Record<string, unknown>[] = peopleRaw
-    .filter((p: unknown): p is Record<string, unknown> => p != null && typeof p === 'object' && !Array.isArray(p))
-    .map((p) => ({ ...p }))
-  while (nextPeople.length < 2) {
-    nextPeople.push({ name: '', lines: [''], translations: [''] })
-  }
-  if (nextPeople.length > 2) {
-    nextPeople.length = 2
+  const p1in = dd.person1
+  const p2in = dd.person2
+  let person1: Record<string, unknown>
+  let person2: Record<string, unknown>
+  if (
+    p1in != null &&
+    typeof p1in === 'object' &&
+    !Array.isArray(p1in) &&
+    p2in != null &&
+    typeof p2in === 'object' &&
+    !Array.isArray(p2in)
+  ) {
+    person1 = mapDialogueSide(p1in as Record<string, unknown>)
+    person2 = mapDialogueSide(p2in as Record<string, unknown>)
+  } else {
+    person1 = mapDialogueSide(undefined)
+    person2 = mapDialogueSide(undefined)
   }
   return {
     ...content,
     dialogueData: {
-      ...dd,
-      people: nextPeople,
+      person1,
+      person2,
     },
   }
+}
+
+/** Short label for lesson lists from `person1` / `person2` names. */
+export function dialogueNameSummaryFromContent(content: Record<string, unknown>): string {
+  const dd = content.dialogueData as Record<string, unknown> | undefined
+  if (!dd || typeof dd !== 'object') return '2 speakers'
+  const p1 = dd.person1 as Record<string, unknown> | undefined
+  const p2 = dd.person2 as Record<string, unknown> | undefined
+  if (
+    p1 != null &&
+    typeof p1 === 'object' &&
+    !Array.isArray(p1) &&
+    p2 != null &&
+    typeof p2 === 'object' &&
+    !Array.isArray(p2)
+  ) {
+    const n0 = String(p1.name ?? '').trim() || 'Person 1'
+    const n1 = String(p2.name ?? '').trim() || 'Person 2'
+    return `${n0} / ${n1}`
+  }
+  return '2 speakers'
 }
 
 /**
@@ -409,7 +460,14 @@ export function normalizeVideoReviewContentForEdit(
       const vwRaw = Array.isArray(r.vocabWords) ? (r.vocabWords as unknown[]) : Array.isArray(r.words) ? (r.words as unknown[]) : []
       const vocabWords = vwRaw
         .filter((w) => w != null && typeof w === 'object' && !Array.isArray(w))
-        .map((w) => ({ ...(w as Record<string, unknown>) }))
+        .map((w) => {
+          const rec = { ...(w as Record<string, unknown>) }
+          const afaan = String(rec.word ?? rec.oromo ?? rec.text ?? '').trim()
+          if (afaan) rec.word = afaan
+          delete rec.oromo
+          delete rec.text
+          return rec
+        })
       return { id, text, vocabWords }
     })
     .filter((l) => String((l as Record<string, unknown>).text ?? '').trim())
@@ -430,27 +488,50 @@ function pickAllowedKeys(obj: Record<string, unknown>, allowed: Set<string>): Re
   return out
 }
 
-/** Per-word keys used by Dubbadhu AudioExposure + waveform embed pipeline. */
-const AUDIO_EXPOSURE_WORD_KEYS = new Set([
-  'oromo',
-  'text',
-  'english',
-  'translation',
-  'word',
-  'audioRef',
-  'fastAudioRef',
-  'slowAudioRef',
-  'note',
-  'word_id',
-  /** Stable id for linking speaking practice → exposure word in the same lesson before `word_id` exists. */
-  'draftTokenId',
-  'waveformEnvelope',
-  'fastWaveformEnvelope',
-  'slowWaveformEnvelope',
-  'waveformBars32',
-  'fastWaveformBars32',
-  'slowWaveformBars32',
-])
+/**
+ * Defaults mirrored in learner screens; persist JSON only when it differs — keeps `lessons.content` small.
+ *
+ * - Audio exposure timing/chrome: fixed in `Dubbadhu/.../AudioExposureScreen.js` (not stored; only optional `title` + `words`).
+ * - Match subtitle line: `Dubbadhu/features/LessonTab/LessonModules/MatchScreen.js`
+ * - Dialogue translations toggle: `Dubbadhu/features/LessonTab/LessonModules/DialogueScreen.js`
+ * - Discrimination streak (legacy 2-word mode): `Dubbadhu/features/LessonTab/LessonModules/WordDiscriminationQuizScreen.js`
+ */
+export const MATCH_DEFAULT_SUBTITLE_LINE = 'Tap left, then right'
+export const DIALOGUE_DEFAULT_SHOW_TRANSLATIONS = true
+export const DISCRIMINATION_LEGACY_DEFAULT_STREAK_TARGET = 5
+
+/** Drop placeholder titles; keep only real overrides (matches learner `exposureTitleForDisplay`). */
+function normalizeAudioExposureTitleForPersistence(
+  title: unknown,
+): string | undefined {
+  const raw = String(title ?? '').trim()
+  if (!raw) return undefined
+  if (/^listen\s+&\s*learn$/i.test(raw.replace(/\s+/g, ' '))) return undefined
+  if (/^listen\s+first\s*$/i.test(raw)) return undefined
+  const m = raw.match(/^listen\s+first(\s*[:\-–—]\s*|\s+)(.+)$/i)
+  if (m) {
+    const suf = String(m[2] ?? '').trim()
+    return suf || undefined
+  }
+  return raw
+}
+
+const UUID_RE_FOR_WORD_ROW =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Persist only `{ word_id, word?, draftTokenId? }`. Invalid tokens return `null` (caller drops). */
+export function sanitizeAudioExposureWordTokenForPersistence(
+  w: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const wid = String(w.word_id ?? '').trim().toLowerCase()
+  if (!UUID_RE_FOR_WORD_ROW.test(wid)) return null
+  const wordReadable = String(w.word ?? '').trim()
+  const out: Record<string, unknown> = { word_id: wid }
+  if (wordReadable) out.word = wordReadable
+  const dt = String(w.draftTokenId ?? '').trim()
+  if (dt) out.draftTokenId = dt
+  return out
+}
 
 /** Client-generated id so speaking practice can reference an exposure row in the same draft JSON. */
 export function newDraftTokenId(): string {
@@ -465,6 +546,10 @@ export function normalizeAudioExposureContentForEdit(content: Record<string, unk
   out.words = wordsRaw.map((w) => {
     if (w == null || typeof w !== 'object' || Array.isArray(w)) return w
     const rec = { ...(w as Record<string, unknown>) }
+    const afaan = String(rec.word ?? rec.oromo ?? rec.text ?? '').trim()
+    if (afaan) rec.word = afaan
+    delete rec.oromo
+    delete rec.text
     const existing = String(rec.draftTokenId ?? '').trim()
     if (!existing) rec.draftTokenId = newDraftTokenId()
     return rec
@@ -491,9 +576,11 @@ export function listAudioExposureLinkOptionsFromScreens(screens: LessonScreen[])
       if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
       const rec = w as Record<string, unknown>
       const id = String(rec.draftTokenId ?? '').trim()
-      const afaan = String(rec.oromo ?? rec.text ?? rec.word ?? '').trim()
+      const wid = String(rec.word_id ?? '').trim().toLowerCase()
+      if (!UUID_RE_FOR_WORD_ROW.test(wid)) continue
+      const afaan = String(rec.word ?? '').trim()
       if (!id || !afaan) continue
-      const english = String(rec.english ?? rec.translation ?? '').trim()
+      const english = String(rec.translation ?? '').trim()
       out.push({ draftTokenId: id, afaan, english, screenIndex: idx + 1 })
     }
   })
@@ -523,13 +610,11 @@ export function findAudioExposureWordRecordByDraftTokenId(
 function speakingPracticePrimaryLine(c: Record<string, unknown>): string {
   const prompt = String(c.prompt ?? '').trim()
   if (prompt) return prompt
-  const phrase = String(c.phrase ?? '').trim()
-  if (phrase) return phrase
-  return String(c.expectedAnswer ?? '').trim()
+  return String(c.word ?? '').trim()
 }
 
 function speakingPracticeEnglishLine(c: Record<string, unknown>): string {
-  return String(c.phraseEnglish ?? '').trim()
+  return ''
 }
 
 const QUIZ_OPTION_KEYS = new Set(['text', 'english', 'audioRef'])
@@ -554,8 +639,12 @@ export function sanitizeScreenContentForPersistence(
   content: Record<string, unknown>,
 ): Record<string, unknown> {
   switch (type) {
-    case 'intro':
-      return pickAllowedKeys(content, new Set(['goal', 'heading', 'body', 'subheading', 'readyText']))
+    case 'intro': {
+      const base = pickAllowedKeys(content, new Set(['goal']))
+      const g = base.goal
+      base.goal = typeof g === 'string' ? g : String(g ?? '')
+      return base
+    }
     case 'concept': {
       const base = pickAllowedKeys(
         content,
@@ -579,25 +668,45 @@ export function sanitizeScreenContentForPersistence(
       if (Array.isArray(b)) {
         base.bullets = b.map((x) => (typeof x === 'string' ? x : String(x ?? '')))
       }
+      const h = String(base.heading ?? '').trim()
+      const ti = String(base.title ?? '').trim()
+      if (!h) delete base.heading
+      if (!ti) delete base.title
+      else if (h && ti === h) delete base.title
       return base
     }
     case 'dialogue': {
-      const base = pickAllowedKeys(content, new Set(['dialogueData', 'showTranslations', 'heading', 'subtitle']))
+      const base = pickAllowedKeys(content, new Set(['dialogueData', 'showTranslations']))
       const dd = base.dialogueData
       if (dd != null && typeof dd === 'object' && !Array.isArray(dd)) {
-        const ddo = dd as Record<string, unknown>
-        const peopleRaw = Array.isArray(ddo.people) ? ddo.people : []
-        const people = peopleRaw.map((p) =>
-          p != null && typeof p === 'object' && !Array.isArray(p)
-            ? pickAllowedKeys(p as Record<string, unknown>, new Set(['name', 'lines', 'translations']))
-            : p,
-        )
-        base.dialogueData = { people }
+        const merged = normalizeDialogueContent(base as Record<string, unknown>)
+        const md = merged.dialogueData as Record<string, unknown>
+        const sideKeys = new Set(['name', 'lines', 'translations'])
+        const shape = (x: unknown) =>
+          x != null && typeof x === 'object' && !Array.isArray(x)
+            ? pickAllowedKeys(x as Record<string, unknown>, sideKeys)
+            : { name: '', lines: [''], translations: [] as string[] }
+        base.dialogueData = {
+          person1: shape(md.person1),
+          person2: shape(md.person2),
+        }
+      }
+      const st = base.showTranslations
+      if (
+        st === DIALOGUE_DEFAULT_SHOW_TRANSLATIONS ||
+        st === 'true' ||
+        st == null
+      ) {
+        delete base.showTranslations
       }
       return base
     }
-    case 'match':
-      return pickAllowedKeys(content, new Set(['title', 'pairs', 'heading']))
+    case 'match': {
+      const base = pickAllowedKeys(content, new Set(['title', 'pairs']))
+      const t = String(base.title ?? '').trim()
+      if (!t || t === MATCH_DEFAULT_SUBTITLE_LINE) delete base.title
+      return base
+    }
     case 'quiz': {
       const base = pickAllowedKeys(content, new Set([
         'heading',
@@ -610,6 +719,13 @@ export function sanitizeScreenContentForPersistence(
         'explanation',
       ]))
       if (Array.isArray(base.options)) base.options = sanitizeQuizOptionsArray(base.options)
+      const rootAo = base.audioOptions
+      if (rootAo !== true && rootAo !== 'true') delete base.audioOptions
+      const h = String(base.heading ?? '').trim()
+      if (!h) delete base.heading
+      const ex0 = base.explanation
+      if (ex0 == null || !String(ex0).trim()) delete base.explanation
+
       const qs = base.questions
       if (!Array.isArray(qs)) return base
       base.questions = qs.map((q) => {
@@ -623,51 +739,74 @@ export function sanitizeScreenContentForPersistence(
           'audioOptions',
         ]))
         if (Array.isArray(qo.options)) qo.options = sanitizeQuizOptionsArray(qo.options)
+        const qao = qo.audioOptions
+        if (qao !== true && qao !== 'true') delete qo.audioOptions
+        const ex = qo.explanation
+        if (ex == null || !String(ex).trim()) delete qo.explanation
         return qo
       })
       return base
     }
-    case 'speakingPractice':
-      return pickAllowedKeys(
+    case 'speakingPractice': {
+      const sp = pickAllowedKeys(
         content,
         new Set([
-          'phrase',
-          'phraseEnglish',
-          'oromo',
-          'targetAudioRef',
+          'word',
+          'word_id',
           'prompt',
-          'expectedAnswer',
-          'hint',
           'tip',
-          'showAnswerAfterRecording',
-          'speaking_word_id',
-          'speakingDraftTokenId',
-          'syllables',
         ]),
       )
+      const wiRaw = String((sp as Record<string, unknown>).word_id ?? '').trim().toLowerCase()
+      if (UUID_RE_FOR_WORD_ROW.test(wiRaw)) {
+        ;(sp as Record<string, unknown>).word_id = wiRaw
+      } else {
+        delete (sp as Record<string, unknown>).word_id
+      }
+      const w = String((sp as Record<string, unknown>).word ?? '').trim()
+      if (!w) delete (sp as Record<string, unknown>).word
+      else (sp as Record<string, unknown>).word = w
+      const p = String((sp as Record<string, unknown>).prompt ?? '').trim()
+      if (!p) delete (sp as Record<string, unknown>).prompt
+      else (sp as Record<string, unknown>).prompt = p
+      const t = String((sp as Record<string, unknown>).tip ?? '').trim()
+      if (!t) delete (sp as Record<string, unknown>).tip
+      return sp
+    }
     case 'audioExposure': {
-      const base = pickAllowedKeys(content, new Set(['title', 'subtitle', 'words', 'autoPlayNext', 'delayReveal']))
+      const base = pickAllowedKeys(content, new Set(['title', 'words']))
       const words = base.words
       if (!Array.isArray(words)) return base
-      base.words = words.map((w) =>
-        w != null && typeof w === 'object' && !Array.isArray(w)
-          ? pickAllowedKeys(w as Record<string, unknown>, AUDIO_EXPOSURE_WORD_KEYS)
-          : w,
-      )
+      base.words = words
+        .map((w) =>
+          w != null && typeof w === 'object' && !Array.isArray(w)
+            ? sanitizeAudioExposureWordTokenForPersistence(w as Record<string, unknown>)
+            : null,
+        )
+        .filter((x): x is Record<string, unknown> => x != null)
+      const b = base as Record<string, unknown>
+      const titNorm = normalizeAudioExposureTitleForPersistence(b.title)
+      if (titNorm === undefined) delete b.title
+      else b.title = titNorm
       return base
     }
-    case 'CelebrateScreen':
-      return pickAllowedKeys(
-        content,
-        new Set(['message', 'learned', 'learned_extra', 'nextLesson', 'encouragement', 'summary']),
-      )
+    case 'CelebrateScreen': {
+      const base = pickAllowedKeys(content, new Set(['learned', 'encouragement', 'summary', 'nextLesson']))
+      const nl = base.nextLesson
+      if (nl == null || !String(nl).trim()) delete base.nextLesson
+      return base
+    }
     case 'patternPractice': {
       const base = pickAllowedKeys(content, new Set(['heading', 'instruction', 'pattern', 'exercises']))
+      for (const k of ['heading', 'instruction', 'pattern'] as const) {
+        const v = base[k]
+        if (v == null || !String(v).trim()) delete base[k]
+      }
       const ex = base.exercises
       if (!Array.isArray(ex)) return base
       base.exercises = ex.map((e) => {
         if (e == null || typeof e !== 'object' || Array.isArray(e)) return e
-        return pickAllowedKeys(e as Record<string, unknown>, new Set([
+        const row = pickAllowedKeys(e as Record<string, unknown>, new Set([
           'prompt',
           'options',
           'correctSuffix',
@@ -676,6 +815,9 @@ export function sanitizeScreenContentForPersistence(
           'suffixLabel',
           'explanation',
         ]))
+        const exRow = row.explanation
+        if (exRow == null || !String(exRow).trim()) delete row.explanation
+        return row
       })
       return base
     }
@@ -712,6 +854,59 @@ export function sanitizeScreenContentForPersistence(
             : s,
         )
       }
+      const wordRows = Array.isArray(base.words) ? base.words : []
+      const wordCount = wordRows.filter((w) => w != null && typeof w === 'object' && !Array.isArray(w)).length
+      if (wordCount >= 2) {
+        delete base.streakTarget
+        delete base.streak_target
+      } else {
+        const st = Number(base.streakTarget ?? base.streak_target)
+        if (!Number.isFinite(st) || st === DISCRIMINATION_LEGACY_DEFAULT_STREAK_TARGET) {
+          delete base.streakTarget
+          delete base.streak_target
+        }
+      }
+      for (const k of ['question', 'title', 'prompt'] as const) {
+        const v = base[k]
+        if (v == null || !String(v).trim()) delete base[k]
+      }
+      return base
+    }
+    case 'firstLook': {
+      const base = pickAllowedKeys(content, new Set(['entries', 'heading', 'note']))
+      const ent = base.entries
+      if (Array.isArray(ent)) {
+        const ek = new Set(['word', 'translation', 'audio', 'oromo', 'english'])
+        base.entries = ent.map((e) =>
+          e != null && typeof e === 'object' && !Array.isArray(e)
+            ? pickAllowedKeys(e as Record<string, unknown>, ek)
+            : e,
+        )
+      }
+      for (const k of ['heading', 'note'] as const) {
+        const v = base[k]
+        if (v == null || !String(v).trim()) delete base[k]
+      }
+      return base
+    }
+    case 'communityBoard':
+      return pickAllowedKeys(content, new Set(['prompt', 'topic']))
+    case 'word-breakdown': {
+      const base = pickAllowedKeys(content, new Set(['heading', 'original', 'words', 'tip']))
+      const wr = base.words
+      if (Array.isArray(wr)) {
+        base.words = wr.map((w) =>
+          w != null && typeof w === 'object' && !Array.isArray(w)
+            ? pickAllowedKeys(w as Record<string, unknown>, new Set(['oromo', 'english', 'meaning', 'note']))
+            : w,
+        )
+      }
+      for (const k of ['heading', 'tip'] as const) {
+        const v = base[k]
+        if (v == null || !String(v).trim()) delete base[k]
+      }
+      const orig = base.original
+      if (orig == null || !String(orig).trim()) delete base.original
       return base
     }
     case 'videoReview': {
@@ -722,11 +917,13 @@ export function sanitizeScreenContentForPersistence(
 
       const sanitizeWordArr = (arr: unknown): unknown => {
         if (!Array.isArray(arr)) return arr
-        return arr.map((w) =>
-          w != null && typeof w === 'object' && !Array.isArray(w)
-            ? pickAllowedKeys(w as Record<string, unknown>, AUDIO_EXPOSURE_WORD_KEYS)
-            : w,
-        )
+        return arr
+          .map((w) =>
+            w != null && typeof w === 'object' && !Array.isArray(w)
+              ? sanitizeAudioExposureWordTokenForPersistence(w as Record<string, unknown>)
+              : null,
+          )
+          .filter((x): x is Record<string, unknown> => x != null)
       }
 
       const rawLines = base.lines
@@ -755,6 +952,22 @@ export function sanitizeScreenContentForPersistence(
   }
 }
 
+export function normalizeSpeakingPracticeContentForSave(content: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...content }
+  const word = String(out.word ?? '').trim()
+  let prompt = String(out.prompt ?? '').trim()
+  if (!prompt && word) prompt = word
+  const tip = String(out.tip ?? '').trim()
+  const wi = String(out.word_id ?? '').trim().toLowerCase()
+  out.word = word
+  out.prompt = prompt
+  if (tip) out.tip = tip
+  else delete out.tip
+  if (UUID_RE_FOR_WORD_ROW.test(wi)) out.word_id = wi
+  else delete out.word_id
+  return out
+}
+
 /** Normalize + strip before persisting a single screen (modal save + full lesson save). */
 export function finalizeScreenContentPayload(
   type: ScreenType,
@@ -762,6 +975,7 @@ export function finalizeScreenContentPayload(
 ): Record<string, unknown> {
   let c = { ...content }
   if (type === 'dialogue') c = normalizeDialogueContent(c)
+  if (type === 'speakingPractice') c = normalizeSpeakingPracticeContentForSave(c)
   if (type === 'discriminationDrill') c = normalizeWordDiscriminationContentForEdit(c)
   if (type === 'videoReview') c = normalizeVideoReviewContentForEdit(c)
   return sanitizeScreenContentForPersistence(type, c)
@@ -778,14 +992,20 @@ export function finalizeLessonScreenForSave(screen: LessonScreen): LessonScreen 
 }
 
 export function sanitizeLessonScreensForSave(screens: LessonScreen[]): LessonScreen[] {
-  return screens.map(finalizeLessonScreenForSave)
+  return screens
+    .map(finalizeLessonScreenForSave)
+    .filter((s) => {
+      if (s.type !== 'audioExposure') return true
+      const w = (s.content as Record<string, unknown>).words
+      return Array.isArray(w) && w.length > 0
+    })
 }
 
 export function screenSummary(screen: LessonScreen): string {
   const c = screen.content
   switch (screen.type) {
     case 'intro':
-      return String(c.goal ?? c.heading ?? '').slice(0, 80) || '—'
+      return String(c.goal ?? '').slice(0, 80) || '—'
     case 'concept': {
       const tw = String(c.targetWord ?? '').trim()
       if (tw) {
@@ -794,17 +1014,8 @@ export function screenSummary(screen: LessonScreen): string {
       }
       return String(c.heading ?? c.title ?? '').slice(0, 80) || '—'
     }
-    case 'dialogue': {
-      const people = (c.dialogueData as Record<string, unknown> | undefined)?.people
-      if (Array.isArray(people) && people.length >= 2) {
-        const p0 = people[0] as Record<string, unknown> | undefined
-        const p1 = people[1] as Record<string, unknown> | undefined
-        const n0 = String(p0?.name ?? '').trim() || 'Speaker 1'
-        const n1 = String(p1?.name ?? '').trim() || 'Speaker 2'
-        return `${n0} / ${n1}`
-      }
-      return '2 speakers'
-    }
+    case 'dialogue':
+      return dialogueNameSummaryFromContent(c as Record<string, unknown>)
     case 'quiz':
       if (Array.isArray(c.questions)) return `${c.questions.length} question(s)`
       return String(c.question ?? '').slice(0, 60) || '—'
@@ -826,8 +1037,12 @@ export function screenSummary(screen: LessonScreen): string {
       const lines = audioExposureWordSummaryLines(c as Record<string, unknown>)
       return lines.join(' · ')
     }
-    case 'CelebrateScreen':
-      return String(c.message ?? '').slice(0, 80) || '—'
+    case 'CelebrateScreen': {
+      const learned = c.learned
+      if (Array.isArray(learned) && learned.length) return `${learned.length} learned`
+      const s = String(c.summary ?? c.encouragement ?? (c as { message?: unknown }).message ?? '').trim()
+      return s.slice(0, 80) || '—'
+    }
     case 'patternPractice': {
       const ex = c.exercises
       if (Array.isArray(ex) && ex.length > 0) {
@@ -927,17 +1142,8 @@ export function screenSubtitleLines(screen: LessonScreen, ctx?: ScreenSubtitleCo
       }
       return lines.length ? lines : [screenSummary(screen)]
     }
-    case 'dialogue': {
-      const people = ((c.dialogueData as Record<string, unknown> | undefined)?.people ?? []) as unknown[]
-      if (Array.isArray(people) && people.length >= 2) {
-        const p0 = people[0] as Record<string, unknown> | undefined
-        const p1 = people[1] as Record<string, unknown> | undefined
-        const n0 = String(p0?.name ?? '').trim() || 'Speaker 1'
-        const n1 = String(p1?.name ?? '').trim() || 'Speaker 2'
-        return [`${n0} / ${n1}`]
-      }
-      return ['2 speakers']
-    }
+    case 'dialogue':
+      return [dialogueNameSummaryFromContent(c as Record<string, unknown>)]
     default:
       return [screenSummary(screen)]
   }
@@ -957,8 +1163,8 @@ export function celebrateExposureWordRows(screens: LessonScreen[]): { afaan: str
     for (const w of words) {
       if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
       const rec = w as Record<string, unknown>
-      const afaan = String(rec.oromo ?? rec.text ?? rec.word ?? '').trim()
-      const english = String(rec.english ?? rec.translation ?? '').trim()
+      const afaan = String(rec.word ?? '').trim()
+      const english = String(rec.translation ?? '').trim()
       if (!afaan) continue
       if (seen.has(afaan)) continue
       seen.add(afaan)

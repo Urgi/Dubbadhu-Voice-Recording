@@ -23,6 +23,13 @@ export type VoiceBankHarvestHit = {
   screenIndex: number
 }
 
+const UUID_RE_FOR_WORD_ROW =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function isWordRowUuid(s: unknown): boolean {
+  return typeof s === 'string' && UUID_RE_FOR_WORD_ROW.test(s.trim().toLowerCase())
+}
+
 function compareSourceTagKeys(a: string, b: string): number {
   const pa = /^L(\d+)S(\d+)$/.exec(a)
   const pb = /^L(\d+)S(\d+)$/.exec(b)
@@ -85,21 +92,20 @@ export function collectVoiceBankHitsFromScreens(
         for (const item of words) {
           if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
           const rec = item as Record<string, unknown>
-          const afaan = String(rec.oromo ?? rec.text ?? rec.word ?? '').trim()
+          if (!isWordRowUuid(rec.word_id)) continue
+          const afaan = String(rec.word ?? '').trim()
           if (!afaan) continue
-          const english = String(rec.english ?? rec.translation ?? '').trim() || null
+          const english = String(rec.translation ?? '').trim() || null
           out.push({ word: afaan, translation: english, lessonNumber, screenIndex })
         }
       }
     }
 
     if (type === 'speakingPractice') {
-      const phrase = String(cr.phrase ?? '').trim()
-      const expectedAnswer = String(cr.expectedAnswer ?? '').trim()
-      const oromo = phrase || expectedAnswer
-      if (!oromo) continue
-      const gloss = String(cr.phraseEnglish ?? '').trim() || null
-      out.push({ word: oromo, translation: gloss, lessonNumber, screenIndex })
+      if (!isWordRowUuid(cr.word_id)) continue
+      const word = String(cr.word ?? '').trim()
+      if (!word) continue
+      out.push({ word, translation: null, lessonNumber, screenIndex })
     }
   }
 
@@ -262,7 +268,7 @@ function pushHarvestUnique(
 
 /**
  * Tokens that sync to `words` / VA on **Approve Series**: only **audioExposure** (`content.words[]`)
- * and **speakingPractice** (phrase / expected answer). Excludes quiz, dialogue, match, celebrate, etc.
+ * and **speakingPractice** (`word` + required `word_id` UUID). Excludes quiz, dialogue, match, celebrate, etc.
  */
 export function harvestWordsForVoiceBank(content: unknown): HarvestedWord[] {
   const screens = extractLessonScreensForHarvest(content)
@@ -299,13 +305,13 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
         for (const item of words) {
           if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
           const rec = item as Record<string, unknown>
-          const afaan = String(rec.oromo ?? rec.text ?? rec.word ?? '').trim()
-          const english = String(rec.english ?? rec.translation ?? '').trim() || null
+          if (!isWordRowUuid(rec.word_id)) continue
+          const afaan = String(rec.word ?? '').trim()
+          if (!afaan) continue
+          const english = String(rec.translation ?? '').trim() || null
           pushHarvestUnique(out, seen, afaan, english)
         }
       }
-      const titleWord = String(cr.word ?? '').trim()
-      if (titleWord) pushHarvestUnique(out, seen, titleWord, null)
     }
 
     if (type === 'CelebrateScreen') {
@@ -353,11 +359,12 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
     }
 
     if (type === 'speakingPractice') {
-      const phrase = String(cr.phrase ?? '').trim()
-      const expectedAnswer = String(cr.expectedAnswer ?? '').trim()
-      const oromo = phrase || expectedAnswer
-      const gloss = String(cr.phraseEnglish ?? '').trim() || null
-      if (oromo) pushHarvestUnique(out, seen, oromo, gloss)
+      if (!isWordRowUuid(cr.word_id)) continue
+      const word = String(cr.word ?? '').trim()
+      if (!word) continue
+      const gloss =
+        String(cr.phraseEnglish ?? cr.translation ?? cr.english ?? '').trim() || null
+      pushHarvestUnique(out, seen, word, gloss)
     }
 
     if (type === 'discriminationDrill' || type === 'wordDiscriminationQuiz') {
@@ -383,8 +390,11 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
 
     if (type === 'dialogue') {
       const dd = cr.dialogueData as Record<string, unknown> | undefined
-      const people = dd && Array.isArray(dd.people) ? (dd.people as unknown[]) : []
-      for (const p of people) {
+      const sides: unknown[] = []
+      if (dd && typeof dd === 'object' && dd.person1 != null && dd.person2 != null) {
+        sides.push(dd.person1, dd.person2)
+      }
+      for (const p of sides) {
         if (p == null || typeof p !== 'object' || Array.isArray(p)) continue
         const pr = p as Record<string, unknown>
         const lines = Array.isArray(pr.lines) ? pr.lines : []

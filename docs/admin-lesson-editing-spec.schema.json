@@ -105,11 +105,9 @@
     },
     "introContent": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
-        "goal": { "type": "string" },
-        "heading": { "type": "string" },
-        "body": { "type": "string" }
+        "goal": { "type": "string" }
       }
     },
     "conceptContent": {
@@ -154,6 +152,16 @@
         }
       ]
     },
+    "dialogueSide": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "lines"],
+      "properties": {
+        "name": { "type": "string" },
+        "lines": { "type": "array", "items": { "type": "string" } },
+        "translations": { "type": "array", "items": { "type": ["string", "null"] } }
+      }
+    },
     "dialogueContent": {
       "type": "object",
       "additionalProperties": true,
@@ -162,22 +170,11 @@
         "showTranslations": { "type": "boolean" },
         "dialogueData": {
           "type": "object",
-          "required": ["people"],
+          "additionalProperties": true,
+          "required": ["person1", "person2"],
           "properties": {
-            "people": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "object",
-                "additionalProperties": true,
-                "required": ["name", "lines"],
-                "properties": {
-                  "name": { "type": "string" },
-                  "lines": { "type": "array", "items": { "type": "string" } },
-                  "translations": { "type": "array", "items": { "type": ["string", "null"] } }
-                }
-              }
-            }
+            "person1": { "$ref": "#/$defs/dialogueSide" },
+            "person2": { "$ref": "#/$defs/dialogueSide" }
           }
         }
       }
@@ -188,22 +185,33 @@
       "required": ["words"],
       "properties": {
         "title": { "type": "string" },
-        "subtitle": { "type": "string" },
-        "autoPlayNext": { "type": "boolean" },
-        "delayReveal": { "type": "number" },
         "words": {
           "type": "array",
           "minItems": 1,
           "items": {
-            "type": "object",
-            "additionalProperties": true,
-            "required": ["oromo", "english"],
-            "properties": {
-              "audioRef": { "type": "string" },
-              "draftTokenId": { "type": "string" },
-              "oromo": { "type": "string" },
-              "english": { "type": "string" }
-            }
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": true,
+                "required": ["word_id"],
+                "properties": {
+                  "word_id": { "type": "string" },
+                  "word": { "type": "string" },
+                  "draftTokenId": { "type": "string" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": true,
+                "required": ["oromo", "english"],
+                "properties": {
+                  "audioRef": { "type": "string" },
+                  "draftTokenId": { "type": "string" },
+                  "oromo": { "type": "string" },
+                  "english": { "type": "string" }
+                }
+              }
+            ]
           }
         }
       }

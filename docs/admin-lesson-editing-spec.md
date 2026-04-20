@@ -103,14 +103,10 @@ Notes:
 - Fields marked **required** are necessary to avoid client errors or “empty screen”.
 
 ### `intro`
-Used as the first screen of a lesson.
+Used as the first screen of a lesson. The learner only reads **`goal`**; series and lesson titles come from catalog / lesson metadata, not intro JSON.
 
 **content**
-- **`goal`**: `string` (recommended; used by UI)
-- `heading`: `string` (optional; some lessons include)
-- `body`: `string` (optional; some lessons include)
-
-Minimal safe:
+- **`goal`**: `string` (only persisted field)
 
 ```json
 { "goal": "Learn X" }
@@ -140,14 +136,16 @@ Example:
 - **`keyPoints`**: `{ title: string, text: string, icon?: string }[]` (>= 1)
 
 ### `dialogue`
-**Required**: `dialogueData.people[]`
+**Required**: `dialogueData.person1` and `dialogueData.person2` (two objects). There are **always exactly two speakers**; legacy `people` must have **exactly two** object rows. Anything else is invalid: the learner drops that screen at runtime, and the admin editor removes it on full-lesson save (or you can delete it in the screen modal).
+
+**Person 1** speaks first; the learner alternates lines by index (`person1.lines[i]`, then `person2.lines[i]`, then `person1.lines[i+1]`, …).
 
 **content**
 - **`dialogueData`**: object
-  - **`people`**: array (>= 1)
+  - **`person1`**, **`person2`**: each
     - **`name`**: `string`
-    - **`lines`**: `string[]`
-    - `translations`: `(string|null)[]` (optional)
+    - **`lines`**: `string[]` (one string per turn for that speaker, in order)
+    - `translations`: `(string|null)[]` (optional; parallel to `lines`)
 - `showTranslations`: `boolean` (optional; default true)
 
 Example:
@@ -155,10 +153,8 @@ Example:
 ```json
 {
   "dialogueData": {
-    "people": [
-      { "name": "A", "lines": ["Akkam?"], "translations": ["Hello?"] },
-      { "name": "B", "lines": ["Naguma."], "translations": ["I’m good."] }
-    ]
+    "person1": { "name": "A", "lines": ["Akkam?"], "translations": ["Hello?"] },
+    "person2": { "name": "B", "lines": ["Naguma."], "translations": ["I’m good."] }
   },
   "showTranslations": true
 }
@@ -168,14 +164,10 @@ Example:
 Audio-first vocab. Dubbadhu supports **text-only mode** if `audioRef` is missing.
 
 **content**
-- `title`: `string` (optional)
-- `subtitle`: `string` (optional)
-- **`words`**: array (>= 1)
-  - `audioRef`: `string` (optional)
-  - **`oromo`**: `string` (required)
-  - **`english`**: `string` (required)
-- `autoPlayNext`: `boolean` (optional; default true)
-- `delayReveal`: `number` ms (optional; default 2000)
+- `title`: `string` (optional) — real headline override only. Do not store bare `Listen First` / `Listen & Learn` (learner treats those as defaults). Prefer `Listen First: Foo` → persist `Foo` only.
+- **`words`**: array (>= 1). Each item is either:
+  - **Lean (preferred when linked to `public.words`)**: `word_id` (UUID), optional `word` (Afaan display string for JSON size), optional `draftTokenId` (editor / speaking links). URLs and `oromo`/`english` are filled at runtime in the learner app.
+  - **Legacy / text-only**: `oromo` + `english`, optional `audioRef` / `fastAudioRef` / `slowAudioRef`, etc.
 
 Example (text-only safe):
 
@@ -184,14 +176,12 @@ Example (text-only safe):
   "title": "Listen First",
   "words": [
     { "oromo": "Akkam", "english": "Hello" }
-  ],
-  "autoPlayNext": false,
-  "delayReveal": 0
+  ]
 }
 ```
 
 ### Field precedence (Oromo vs English in shared shapes)
-When an object can carry both languages under different keys, **Dubbadhu prefers `oromo` over `text` over `word`** for the Afaan line, and **`definition` / `english` / `translation`** for the English gloss. That matches `features/LessonTab/lessonTextFields.js` and avoids showing English as the main drill line when admin JSON keys are inconsistent.
+When an object can carry both languages under different keys, **Dubbadhu prefers `oromo` over `word` over `text`** for the Afaan line, and **`definition` / `english` / `translation`** for the English gloss. That matches `features/LessonTab/lessonTextFields.js` and avoids showing English as the main drill line when admin JSON keys are inconsistent.
 
 ### `speakingPractice`
 Supports two modes. **Do not mix** Mode A and Mode B in one screen: if `phrase` is set, leave `prompt` and `expectedAnswer` empty (the Dubbadhu app treats `phrase` as the spoken Oromo line and ignores stale English in `expectedAnswer`).

@@ -51,6 +51,7 @@ import { VOICE_BANK_LANGUAGE, voiceBankLanguageSqlValues } from '../../lib/voice
 import { LessonScreenLearnerPreview } from './LessonScreenLearnerPreview'
 import { VideoReviewFreezeFrameEditor } from './VideoReviewFreezeFrameEditor'
 import { TranslationMismatchModal } from './TranslationMismatchModal'
+import { DialogueTwoPersonEditor } from './DialogueTwoPersonEditor'
 
 /** Public storage bucket for Word discrimination quiz question images (Supabase dashboard). */
 const WORD_DISCRIMINATION_IMAGES_BUCKET = 'word-comparison-images'
@@ -143,8 +144,7 @@ function audioRefFromWordRow(row: WordBankRow): string | undefined {
 
 /**
  * Word bank → learner exposure fields (`AudioExposureScreen.resolveExposureAudioUrls`).
- * Writes `fastAudioRef` / `slowAudioRef` only; clears legacy `audioRef` so JSON is not
- * triple-keyed. Learner resolves fast as `fastAudioRef || audioRef` and slow as `slowAudioRef`.
+ * Writes `fastAudioRef` / `slowAudioRef` only; clears legacy `audioRef`.
  */
 function applyWordBankUrlsToExposureWord(item: Record<string, unknown>, row: WordBankRow) {
   const fast = row.fast_audio_url?.trim()
@@ -275,8 +275,8 @@ async function resolveAudioExposureWordsAgainstBank(
   const conflicts: Collected[] = []
   for (let i = 0; i < out.length; i++) {
     const item = out[i] as Record<string, unknown>
-    const o = String(item.oromo ?? '').trim()
-    const e = String(item.english ?? '').trim()
+    const o = String(item.word ?? '').trim()
+    const e = String(item.translation ?? item.english ?? '').trim()
     if (!o || !e) throw new Error('Audio exposure words require both Afaan Oromo text and translation.')
 
     const row = await lookupWordBankRowWithSeriesLabels(labels, o)
@@ -306,7 +306,7 @@ async function resolveAudioExposureWordsAgainstBank(
 
     if (choice === 'database') {
       const item = out[wordIndex] as Record<string, unknown>
-      out[wordIndex] = { ...item, english: databaseTranslation }
+      out[wordIndex] = { ...item, translation: databaseTranslation, english: undefined }
     }
   }
   return out
@@ -1740,7 +1740,9 @@ export function LessonScreenEditModal({
   useEffect(() => {
     if (visible && screen) {
       let c = cloneScreen(screen)
-      if (c.type === 'dialogue') {
+      if (
+        c.type === 'dialogue'
+      ) {
         c = {
           ...c,
           content: normalizeDialogueContent(c.content as Record<string, unknown>),
@@ -1915,15 +1917,12 @@ export function LessonScreenEditModal({
         return (
           <View style={styles.form}>
             <Field label="Goal" value={String(c.goal ?? '')} onChangeText={(t) => setContent((cur) => ({ ...cur, goal: t }))} />
-            <Field label="Heading (optional)" value={String(c.heading ?? '')} onChangeText={(t) => setContent((cur) => ({ ...cur, heading: t }))} />
-            <Field label="Body (optional)" value={String(c.body ?? '')} multiline onChangeText={(t) => setContent((cur) => ({ ...cur, body: t }))} />
             <SaveRow
               onPress={() => {
                 const d = draftRef.current
                 if (!d) return
-                const next = { ...(d.content as Record<string, unknown>) }
-                if (typeof next.goal !== 'string') next.goal = String(next.goal ?? '')
-                saveStructured(next)
+                const goal = String((d.content as Record<string, unknown>).goal ?? '')
+                saveStructured({ goal })
               }}
             />
           </View>
@@ -2101,53 +2100,12 @@ export function LessonScreenEditModal({
         )
       }
       case 'dialogue': {
-        const nc = normalizeDialogueContent(c)
-        const dd = (nc.dialogueData as Record<string, unknown>) ?? {}
-        const people = (dd.people as Record<string, unknown>[]) ?? []
-        const updatePerson = (i: number, patch: Record<string, unknown>) => {
-          setContent((cur) => {
-            const normalized = normalizeDialogueContent(cur)
-            const d2 = (normalized.dialogueData as Record<string, unknown>) ?? {}
-            const ppl = (d2.people as Record<string, unknown>[]) ?? []
-            const next = ppl.map((p, j) => (j === i ? { ...p, ...patch } : p))
-            return { ...cur, dialogueData: { ...d2, people: next } }
-          })
-        }
         return (
-          <View style={styles.form}>
-            <Text style={styles.hint}>Dialogue uses two speakers (fixed).</Text>
-            {people.map((p, i) => (
-              <View key={i} style={styles.personCard}>
-                <Text style={styles.personTitle}>Speaker {i + 1}</Text>
-                <Field
-                  label="Name"
-                  value={String(p.name ?? '')}
-                  onChangeText={(t) => updatePerson(i, { name: t })}
-                />
-                <Field
-                  label="Lines (one per line)"
-                  value={Array.isArray(p.lines) ? (p.lines as string[]).join('\n') : ''}
-                  multiline
-                  onChangeText={(t) =>
-                    updatePerson(i, {
-                      lines: t.split('\n').length ? t.split('\n') : [''],
-                    })
-                  }
-                />
-                <Field
-                  label="Translations (optional, one per line)"
-                  value={Array.isArray(p.translations) ? (p.translations as string[]).join('\n') : ''}
-                  multiline
-                  onChangeText={(t) =>
-                    updatePerson(i, {
-                      translations: t.split('\n').length ? t.split('\n') : [''],
-                    })
-                  }
-                />
-              </View>
-            ))}
-            <SaveRow onPress={() => saveStructured({ ...draft.content })} />
-          </View>
+          <DialogueTwoPersonEditor
+            content={c}
+            setContent={setContent}
+            onSave={() => saveStructured({ ...draft.content })}
+          />
         )
       }
       case 'match': {
@@ -2436,7 +2394,7 @@ export function LessonScreenEditModal({
         )
       }
       case 'speakingPractice': {
-        const phraseVal = String(c.phrase ?? c.prompt ?? '')
+        const phraseVal = String(c.word ?? c.prompt ?? '')
         return (
           <View style={styles.form}>
             <Text style={styles.hint}>
@@ -2444,39 +2402,32 @@ export function LessonScreenEditModal({
               bank when you pick a row.
             </Text>
             <AudioExposureOromoField
-              readOnly={Boolean(c.speaking_word_id)}
+              readOnly={Boolean(c.word_id)}
               lessonHarvested={exposureWordsForAfaanPicker}
               value={phraseVal}
               onChangeText={(t) => {
                 setContent((cur) => {
                   const next: Record<string, unknown> = {
                     ...cur,
-                    phrase: t,
-                    phraseEnglish: '',
-                    prompt: '',
-                    expectedAnswer: '',
-                    speaking_word_id: null,
+                    word: t,
+                    prompt: t,
+                    word_id: null,
+                    tip: '',
                   }
-                  delete next.speakingDraftTokenId
-                  delete next.targetAudioRef
+                  if (!next.word_id) delete next.word_id
                   return next
                 })
               }}
               onPickFromBank={(row) => {
                 setContent((cur) => {
                   const bankId = isRealWordBankRowId(row) ? row.id : null
-                  const ref = bankId ? audioRefFromWordRow(row) : undefined
                   const next: Record<string, unknown> = {
                     ...cur,
-                    speaking_word_id: bankId,
-                    phrase: rowAfaanTextForBankPick(row),
-                    phraseEnglish: rowTranslationText(row),
-                    prompt: '',
-                    expectedAnswer: '',
+                    word_id: bankId,
+                    word: rowAfaanTextForBankPick(row),
+                    prompt: rowAfaanTextForBankPick(row),
                   }
-                  delete next.speakingDraftTokenId
-                  if (ref) next.targetAudioRef = ref
-                  else delete next.targetAudioRef
+                  if (!bankId) delete next.word_id
                   return next
                 })
               }}
@@ -2487,37 +2438,28 @@ export function LessonScreenEditModal({
                 setContent((cur) => {
                   const next: Record<string, unknown> = {
                     ...cur,
-                    speaking_word_id: null,
+                    word_id: null,
+                    word: '',
                     prompt: '',
-                    phrase: '',
-                    expectedAnswer: '',
-                    phraseEnglish: '',
+                    tip: '',
                   }
-                  delete next.speakingDraftTokenId
-                  delete next.targetAudioRef
+                  if (!next.word_id) delete next.word_id
                   return next
                 })
               }}
             >
-              <Text style={styles.changeWordBtnText}>Clear phrase & translation</Text>
+              <Text style={styles.changeWordBtnText}>Clear</Text>
             </Pressable>
             <Field
-              label="Hint (optional)"
-              value={String(c.hint ?? c.tip ?? '')}
-              onChangeText={(t) => setContent((cur) => ({ ...cur, hint: t, tip: t }))}
+              label="Tip (optional)"
+              value={String(c.tip ?? '')}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, tip: t }))}
             />
             <SaveRow
               onPress={() => {
                 const d = draftRef.current
                 if (!d) return
-                const content = { ...(d.content as Record<string, unknown>) }
-                delete content.showAnswerAfterRecording
-                const phraseT = String(content.phrase ?? '').trim()
-                if (phraseT) {
-                  content.prompt = ''
-                  content.expectedAnswer = ''
-                }
-                saveStructured(content)
+                saveStructured({ ...(d.content as Record<string, unknown>) })
               }}
             />
           </View>
@@ -2537,8 +2479,8 @@ export function LessonScreenEditModal({
             ) : null}
             {words.length ? (
               <Text style={styles.hint}>
-                In Afaan Oromo, type two or more letters to see word-bank matches under the field. Tap a match to fill
-                translation and audio, or keep typing a custom phrase.
+                Each row must be linked to the word bank (tap a match) so the lesson stores a valid word_id and
+                learner audio URLs work. Free-typed text alone cannot be saved for this screen.
               </Text>
             ) : null}
             {words.map((w, i) => (
@@ -2547,11 +2489,18 @@ export function LessonScreenEditModal({
                 <AudioExposureOromoField
                   readOnly={Boolean(w.word_id)}
                   lessonHarvested={exposureWordsForAfaanPicker}
-                  value={String(w.oromo ?? '')}
+                  value={String(w.word ?? '')}
                   onChangeText={(t) => {
                     setContent((cur) => {
                       const ws = (cur.words as Record<string, unknown>[]) ?? []
-                      const next = ws.map((x, j) => (j === i ? { ...x, oromo: t } : x))
+                      const next = ws.map((x, j) => {
+                        if (j !== i) return x
+                        const nx: Record<string, unknown> = { ...(x as Record<string, unknown>), word: t }
+                        delete nx.oromo
+                        delete nx.english
+                        delete nx.translation
+                        return nx
+                      })
                       return { ...cur, words: next }
                     })
                   }}
@@ -2564,9 +2513,11 @@ export function LessonScreenEditModal({
                         const item: Record<string, unknown> = {
                           ...(x as Record<string, unknown>),
                           word_id: bankId,
-                          oromo: rowAfaanTextForBankPick(row),
-                          english: rowTranslationText(row),
+                          word: rowAfaanTextForBankPick(row),
+                          translation: rowTranslationText(row),
                         }
+                        delete item.oromo
+                        delete item.english
                         if (!bankId) delete item.word_id
                         applyWordBankUrlsToExposureWord(item, row)
                         return item
@@ -2577,12 +2528,17 @@ export function LessonScreenEditModal({
                 />
                 <Field
                   label="Translation"
-                  value={String(w.english ?? '')}
+                  value={String(w.translation ?? w.english ?? '')}
                   editable={!w.word_id}
                   onChangeText={(t) => {
                     setContent((cur) => {
                       const ws = (cur.words as Record<string, unknown>[]) ?? []
-                      const next = ws.map((x, j) => (j === i ? { ...x, english: t } : x))
+                      const next = ws.map((x, j) => {
+                        if (j !== i) return x
+                        const nx: Record<string, unknown> = { ...(x as Record<string, unknown>), translation: t }
+                        delete nx.english
+                        return nx
+                      })
                       return { ...cur, words: next }
                     })
                   }}
@@ -2605,7 +2561,10 @@ export function LessonScreenEditModal({
               onPress={() =>
                 setContent((cur) => {
                   const ws = (cur.words as Record<string, unknown>[]) ?? []
-                  return { ...cur, words: [...ws, { oromo: '', english: '', draftTokenId: newDraftTokenId() }] }
+                  return {
+                    ...cur,
+                    words: [...ws, { word: '', english: '', draftTokenId: newDraftTokenId() }],
+                  }
                 })
               }
             >
@@ -2932,7 +2891,9 @@ export function LessonScreenEditModal({
                     const id = String(ln?.id ?? `line_${idx + 1}`)
                     const text = String(ln?.text ?? '')
                     const vocabWords = Array.isArray(ln?.vocabWords) ? (ln.vocabWords as Record<string, unknown>[]) : []
-                    const vocabPreview = vocabWords.map((w) => String(w?.oromo ?? '').trim()).filter(Boolean)
+                    const vocabPreview = vocabWords
+                      .map((w) => String(w?.word ?? '').trim())
+                      .filter(Boolean)
                     const hasVocab = vocabPreview.length > 0
                     const lineCollapsed = hasVocab && videoReviewActiveLineId !== id
                     return (
@@ -3026,7 +2987,7 @@ export function LessonScreenEditModal({
                                 setVideoReviewActiveLineId(id)
                                 setVideoReviewVocabFocusKey(`${id}-w${wi}`)
                               }}
-                              value={String(w.oromo ?? '')}
+                              value={String(w.word ?? '')}
                               onChangeText={(t) => {
                                 setContent((cur) => {
                                   const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
@@ -3035,11 +2996,16 @@ export function LessonScreenEditModal({
                                   const nextWs = ws.map((x, j) => {
                                     if (j !== wi) return x
                                     const prev = x as Record<string, unknown>
-                                    const nextWord: Record<string, unknown> = { ...prev, oromo: t }
-                                    if (String(t).trim() !== String(prev.oromo ?? '').trim()) {
+                                    const prevText = String(prev.word ?? '').trim()
+                                    const nextWord: Record<string, unknown> = { ...prev, word: t }
+                                    delete nextWord.oromo
+                                    if (String(t).trim() !== prevText) {
                                       delete nextWord.english
+                                      delete nextWord.translation
                                       delete nextWord.word_id
                                       delete nextWord.audioRef
+                                      delete nextWord.fastAudioRef
+                                      delete nextWord.slowAudioRef
                                     }
                                     return nextWord
                                   })
@@ -3059,9 +3025,11 @@ export function LessonScreenEditModal({
                                     const item: Record<string, unknown> = {
                                       ...(x as Record<string, unknown>),
                                       word_id: bankId,
-                                      oromo: rowAfaanTextForBankPick(row),
-                                      english: rowTranslationText(row),
+                                      word: rowAfaanTextForBankPick(row),
+                                      translation: rowTranslationText(row),
                                     }
+                                    delete item.oromo
+                                    delete item.english
                                     if (!bankId) delete item.word_id
                                     applyWordBankUrlsToExposureWord(item, row)
                                     return item
@@ -3072,8 +3040,10 @@ export function LessonScreenEditModal({
                                 })
                               }}
                             />
-                            {String(w.english ?? '').trim() ? (
-                              <Text style={styles.videoReviewEnglishHint}>{String(w.english ?? '').trim()}</Text>
+                            {String(w.translation ?? w.english ?? '').trim() ? (
+                              <Text style={styles.videoReviewEnglishHint}>
+                                {String(w.translation ?? w.english ?? '').trim()}
+                              </Text>
                             ) : null}
                             </View>
                             <Pressable
@@ -3104,7 +3074,7 @@ export function LessonScreenEditModal({
                               const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
                               const curLine = (arr[idx] as Record<string, unknown>) ?? {}
                               const ws = Array.isArray(curLine.vocabWords) ? (curLine.vocabWords as Record<string, unknown>[]) : []
-                              const nextWs = [...ws, { oromo: '' }]
+                              const nextWs = [...ws, { word: '' }]
                               const nextLine = { ...curLine, id, text: String(curLine.text ?? ''), vocabWords: nextWs }
                               const next = arr.map((x, j) => (j === idx ? nextLine : x))
                               return { ...cur, lines: next }
@@ -3138,7 +3108,7 @@ export function LessonScreenEditModal({
                             {
                               id: `line_${arr.length + 1}`,
                               text: '',
-                              vocabWords: [{ oromo: '' }],
+                              vocabWords: [{ word: '' }],
                             },
                           ],
                         }

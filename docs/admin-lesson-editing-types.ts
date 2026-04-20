@@ -37,12 +37,20 @@ export type Screen = {
 };
 
 // Narrow “safe” content types for the common screens.
-export type IntroContent = { goal?: string; heading?: string; body?: string; [k: string]: unknown };
+export type IntroContent = { goal?: string };
 
 export type AudioExposureWord = {
+  /** When set to a real `public.words` id, persisted JSON may be lean: `word_id` + optional `word` only. */
+  word_id?: string;
+  /** Afaan display string kept in JSON for readability when `word_id` is set. */
+  word?: string;
   audioRef?: string;
-  oromo: string;
-  english: string;
+  fastAudioRef?: string;
+  slowAudioRef?: string;
+  oromo?: string;
+  english?: string;
+  translation?: string;
+  text?: string;
   /** Optional; admin editor assigns for speaking-practice ↔ exposure links before `word_id` exists. */
   draftTokenId?: string;
   [k: string]: unknown;
@@ -56,14 +64,16 @@ export type AudioExposureContent = {
   [k: string]: unknown;
 };
 
-export type DialoguePerson = {
+/** One speaker in a two-person dialogue (Person 1 speaks first; lines alternate with Person 2). */
+export type DialogueSide = {
   name: string;
   lines: string[];
   translations?: Array<string | null>;
   [k: string]: unknown;
 };
+/** Exactly two speakers (`person1`, `person2`). No additional speaker rows. */
 export type DialogueContent = {
-  dialogueData: { people: DialoguePerson[]; [k: string]: unknown };
+  dialogueData: { person1: DialogueSide; person2: DialogueSide; [k: string]: unknown };
   showTranslations?: boolean;
   [k: string]: unknown;
 };

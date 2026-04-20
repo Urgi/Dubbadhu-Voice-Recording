@@ -519,7 +519,10 @@ function normalizeAudioExposureTitleForPersistence(
 const UUID_RE_FOR_WORD_ROW =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-/** Persist only `{ word_id, word?, draftTokenId? }`. Invalid tokens return `null` (caller drops). */
+/**
+ * Persist `{ word_id, word?, draftTokenId?, translation? }` (lean; learner hydrates gloss from DB too).
+ * Optional `translation` keeps admin / Celebrate subtitles readable when JSON has no inline gloss.
+ */
 export function sanitizeAudioExposureWordTokenForPersistence(
   w: Record<string, unknown>,
 ): Record<string, unknown> | null {
@@ -530,6 +533,8 @@ export function sanitizeAudioExposureWordTokenForPersistence(
   if (wordReadable) out.word = wordReadable
   const dt = String(w.draftTokenId ?? '').trim()
   if (dt) out.draftTokenId = dt
+  const gloss = String(w.translation ?? w.english ?? '').trim()
+  if (gloss) out.translation = gloss
   return out
 }
 
@@ -550,6 +555,11 @@ export function normalizeAudioExposureContentForEdit(content: Record<string, unk
     if (afaan) rec.word = afaan
     delete rec.oromo
     delete rec.text
+    const gloss = String(rec.translation ?? rec.english ?? '').trim()
+    if (gloss) {
+      rec.translation = gloss
+      delete rec.english
+    }
     const existing = String(rec.draftTokenId ?? '').trim()
     if (!existing) rec.draftTokenId = newDraftTokenId()
     return rec

@@ -40,7 +40,7 @@ export type Screen = {
 export type IntroContent = { goal?: string };
 
 export type AudioExposureWord = {
-  /** When set to a real `public.words` id, persisted JSON may be lean: `word_id` + optional `word` only. */
+  /** When set to a real `public.words` id, JSON is usually lean (`word_id`, optional `word`); optional `translation` is kept for admin / Celebrate. */
   word_id?: string;
   /** Afaan display string kept in JSON for readability when `word_id` is set. */
   word?: string;

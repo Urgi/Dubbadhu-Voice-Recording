@@ -323,6 +323,25 @@ function isUuidLike(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)
 }
 
+/** Gloss from `public.words` for tokens that only store `word_id` (admin editor + bank compare). */
+async function fetchWordTranslationsByIds(ids: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  const unique = [
+    ...new Set(ids.map((id) => id.trim().toLowerCase()).filter((id) => isUuidLike(id))),
+  ]
+  if (unique.length === 0) return map
+  const { data, error } = await supabase
+    .from('words')
+    .select('id,translation,english')
+    .in('id', unique)
+  if (error || !Array.isArray(data)) return map
+  for (const row of data as { id: string; translation?: string | null; english?: string | null }[]) {
+    const gloss = String(row.translation ?? row.english ?? '').trim()
+    if (gloss) map.set(String(row.id).trim().toLowerCase(), gloss)
+  }
+  return map
+}
+
 function screenTypeTitle(type: string): string {
   return SCREEN_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type
 }
@@ -1789,6 +1808,58 @@ export function LessonScreenEditModal({
     }
   }, [visible, screen])
 
+  /** Lean `word_id` tokens often omit `translation` in JSON; fill from `words` so the Translation row is visible. */
+  useEffect(() => {
+    if (!visible || !screen || screen.type !== 'audioExposure') return
+    const normalized = normalizeAudioExposureContentForEdit(screen.content as Record<string, unknown>)
+    const wordsRaw = normalized.words
+    if (!Array.isArray(wordsRaw)) return
+    const needIds: string[] = []
+    for (const w of wordsRaw) {
+      if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
+      const rec = w as Record<string, unknown>
+      const wid = String(rec.word_id ?? '').trim().toLowerCase()
+      if (!isUuidLike(wid)) continue
+      const gloss = String(rec.translation ?? rec.english ?? '').trim()
+      if (!gloss) needIds.push(wid)
+    }
+    if (needIds.length === 0) return
+    let cancelled = false
+    const t = setTimeout(() => {
+      void (async () => {
+        const byId = await fetchWordTranslationsByIds(needIds)
+        if (cancelled || byId.size === 0) return
+        setDraft((d) => {
+          if (!d || d.type !== 'audioExposure') return d
+          const co = d.content as Record<string, unknown>
+          const ws = (co.words as Record<string, unknown>[]) ?? []
+          if (!Array.isArray(ws)) return d
+          let changed = false
+          const next = ws.map((item) => {
+            if (item == null || typeof item !== 'object' || Array.isArray(item)) return item
+            const rec = item as Record<string, unknown>
+            const wid = String(rec.word_id ?? '').trim().toLowerCase()
+            if (!isUuidLike(wid)) return item
+            const have = String(rec.translation ?? rec.english ?? '').trim()
+            if (have) return item
+            const g = byId.get(wid)
+            if (!g) return item
+            changed = true
+            const merged: Record<string, unknown> = { ...rec, translation: g }
+            delete merged.english
+            return merged
+          })
+          if (!changed) return d
+          return { ...d, content: { ...co, words: next } }
+        })
+      })()
+    }, 0)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [visible, screen])
+
   useEffect(() => {
     if (draft?.type !== 'videoReview' || videoReviewActiveLineId == null) return
     const c = draft.content as Record<string, unknown>
@@ -2529,7 +2600,7 @@ export function LessonScreenEditModal({
                 <Field
                   label="Translation"
                   value={String(w.translation ?? w.english ?? '')}
-                  editable={!w.word_id}
+                  editable
                   onChangeText={(t) => {
                     setContent((cur) => {
                       const ws = (cur.words as Record<string, unknown>[]) ?? []

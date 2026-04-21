@@ -81,6 +81,9 @@ export type DialogueContent = {
 export type MatchPair = { left: string; right: string; [k: string]: unknown };
 export type MatchContent = { title?: string; pairs: MatchPair[]; [k: string]: unknown };
 
+/** `concept` screen — learner animates `targetWord` and up to three `bullets`. */
+export type ConceptContent = { targetWord: string; bullets: string[] };
+
 export type QuizOption = string | { text: string; audioRef: string; [k: string]: unknown };
 export type QuizQuestion = {
   question: string;

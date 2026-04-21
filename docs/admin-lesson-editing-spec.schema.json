@@ -83,7 +83,7 @@
         },
         {
           "if": { "properties": { "type": { "const": "animatedConcept" } } },
-          "then": { "properties": { "content": { "$ref": "#/$defs/animatedConceptContent" } } }
+          "then": { "properties": { "content": { "$ref": "#/$defs/conceptContent" } } }
         },
         {
           "if": { "properties": { "type": { "const": "firstLook" } } },
@@ -112,45 +112,12 @@
     },
     "conceptContent": {
       "type": "object",
-      "additionalProperties": true,
-      "oneOf": [
-        {
-          "required": ["heading", "bullets"],
-          "properties": {
-            "heading": { "type": "string" },
-            "bullets": { "type": "array", "minItems": 1, "items": { "type": "string" } },
-            "note": { "type": "string" }
-          }
-        },
-        {
-          "required": ["title", "keyPoints"],
-          "properties": {
-            "title": { "type": "string" },
-            "subtitle": { "type": "string" },
-            "keyPoints": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "object",
-                "additionalProperties": true,
-                "required": ["title", "text"],
-                "properties": {
-                  "title": { "type": "string" },
-                  "text": { "type": "string" },
-                  "icon": { "type": "string" }
-                }
-              }
-            }
-          }
-        },
-        {
-          "required": ["heading", "concept"],
-          "properties": {
-            "heading": { "type": "string" },
-            "concept": { "type": "string" }
-          }
-        }
-      ]
+      "additionalProperties": false,
+      "required": ["targetWord", "bullets"],
+      "properties": {
+        "targetWord": { "type": "string" },
+        "bullets": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "type": "string" } }
+      }
     },
     "dialogueSide": {
       "type": "object",
@@ -317,15 +284,6 @@
             }
           }
         }
-      }
-    },
-    "animatedConceptContent": {
-      "type": "object",
-      "additionalProperties": true,
-      "required": ["targetWord", "bullets"],
-      "properties": {
-        "targetWord": { "type": "string" },
-        "bullets": { "type": "array", "minItems": 1, "items": { "type": "string" } }
       }
     },
     "firstLookContent": {

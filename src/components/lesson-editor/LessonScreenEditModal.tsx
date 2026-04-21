@@ -89,36 +89,28 @@ function patternOptionString(x: unknown): string {
   return String(x ?? '').trim()
 }
 
-/** Row from `public.words`. Production uses `word` + `translation`; optional fields support alternate schemas. */
+/** Row from `public.words` (`word` + `translation` + audio URLs). Lesson-only harvest rows reuse the same shape. */
 type WordBankRow = {
   id: string
   word?: string | null
-  oromo?: string | null
   translation?: string | null
-  english?: string | null
   slow_audio_url?: string | null
   fast_audio_url?: string | null
 }
 
+/** Columns returned for word-bank search / pick lists (matches `public.words`). */
+const WORD_BANK_LIST_COLUMNS = 'id,word,translation,slow_audio_url,fast_audio_url'
+
 function rowAfaanText(r: WordBankRow): string {
-  return (r.word ?? r.oromo ?? '').trim()
+  return String(r.word ?? '').trim()
 }
 
-/**
- * Text to store when admin picks a word-bank row. If both `word` and `oromo` exist (common legacy /
- * mixed-schema rows), prefer the longer non-empty string so a short `word` substring does not replace
- * a full `oromo` phrase when the user selects the long option in the list.
- */
 function rowAfaanTextForBankPick(r: WordBankRow): string {
-  const w = String(r.word ?? '').trim()
-  const o = String(r.oromo ?? '').trim()
-  if (!w) return o
-  if (!o) return w
-  return o.length > w.length ? o : w
+  return String(r.word ?? '').trim()
 }
 
 function rowTranslationText(r: WordBankRow): string {
-  return (r.translation ?? r.english ?? '').trim()
+  return String(r.translation ?? '').trim()
 }
 
 /** Shorter Afaan labels first (then alphabetical) so tight substring matches surface before long phrases. */
@@ -226,8 +218,8 @@ function quizContentWithAudioOptionsFlag(content: Record<string, unknown>): Reco
   return { ...content, audioOptions: hasAudio }
 }
 
-function glossFromWordRow(row: { translation?: string | null; english?: string | null }): string {
-  return (row.translation ?? row.english ?? '').trim()
+function glossFromWordRow(row: { translation?: string | null }): string {
+  return String(row.translation ?? '').trim()
 }
 
 type TranslationConflictChoice = 'lesson' | 'database' | 'cancel'
@@ -330,13 +322,10 @@ async function fetchWordTranslationsByIds(ids: string[]): Promise<Map<string, st
     ...new Set(ids.map((id) => id.trim().toLowerCase()).filter((id) => isUuidLike(id))),
   ]
   if (unique.length === 0) return map
-  const { data, error } = await supabase
-    .from('words')
-    .select('id,translation,english')
-    .in('id', unique)
+  const { data, error } = await supabase.from('words').select('id,translation').in('id', unique)
   if (error || !Array.isArray(data)) return map
-  for (const row of data as { id: string; translation?: string | null; english?: string | null }[]) {
-    const gloss = String(row.translation ?? row.english ?? '').trim()
+  for (const row of data as { id: string; translation?: string | null }[]) {
+    const gloss = String(row.translation ?? '').trim()
     if (gloss) map.set(String(row.id).trim().toLowerCase(), gloss)
   }
   return map
@@ -346,42 +335,16 @@ function screenTypeTitle(type: string): string {
   return SCREEN_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type
 }
 
-async function fetchWordBankRows(
-  query: string,
-  searchMode: 'both' | 'oromo',
-): Promise<{ data: WordBankRow[] | null; error: Error | null }> {
-  const isUuid = isUuidLike(query)
-  const variants = [
-    'id,word,translation,slow_audio_url,fast_audio_url',
-    'id,oromo,english,slow_audio_url,fast_audio_url',
-  ] as const
-
-  let lastMsg = ''
-  for (const cols of variants) {
-    let q = supabase.from('words').select(cols).limit(25)
-    if (isUuid) q = q.eq('id', query)
-    else if (searchMode === 'oromo') {
-      q = cols.startsWith('id,word') ? q.ilike('word', `%${query}%`) : q.ilike('oromo', `%${query}%`)
-    } else {
-      q = cols.startsWith('id,word')
-        ? q.or(`word.ilike.%${query}%,translation.ilike.%${query}%`)
-        : q.or(`oromo.ilike.%${query}%,english.ilike.%${query}%`)
-    }
-
-    const res = await q
-    if (!res.error) {
-      const filtered = ((res.data as WordBankRow[] | null) ?? []).filter((r) => typeof r?.id === 'string')
-      return {
-        data: sortWordBankRowsShortestAfaanFirst(filtered),
-        error: null,
-      }
-    }
-    lastMsg = res.error.message
-    if (!/column .* does not exist|Could not find/i.test(res.error.message)) {
-      return { data: null, error: new Error(res.error.message) }
-    }
-  }
-  return { data: null, error: new Error(lastMsg || 'words search failed') }
+async function fetchWordBankRows(query: string): Promise<{ data: WordBankRow[] | null; error: Error | null }> {
+  const trimmed = query.trim()
+  const isUuid = isUuidLike(trimmed)
+  let q = supabase.from('words').select(WORD_BANK_LIST_COLUMNS).limit(25)
+  if (isUuid) q = q.eq('id', trimmed)
+  else q = q.or(`word.ilike.%${trimmed}%,translation.ilike.%${trimmed}%`)
+  const res = await q
+  if (res.error) return { data: null, error: new Error(res.error.message) }
+  const filtered = ((res.data as WordBankRow[] | null) ?? []).filter((r) => typeof r?.id === 'string')
+  return { data: sortWordBankRowsShortestAfaanFirst(filtered), error: null }
 }
 
 const LESSON_PICK_ID_PREFIX = 'lesson-token:'
@@ -400,9 +363,7 @@ function mergeDbAndLessonHarvestForPicker(db: WordBankRow[], harvested: Harveste
     extra.push({
       id: `${LESSON_PICK_ID_PREFIX}${k}`,
       word: w,
-      oromo: w,
       translation: h.translation,
-      english: h.translation,
     })
   }
   return sortWordBankRowsShortestAfaanFirst([...db, ...extra])
@@ -423,60 +384,37 @@ function isRealWordBankRowId(row: WordBankRow): boolean {
 /** Word bank rows restricted to `words.series` labels (+ language when column exists). */
 async function fetchWordBankRowsForSeries(
   query: string,
-  searchMode: 'both' | 'oromo',
   seriesLabels: string[],
 ): Promise<{ data: WordBankRow[] | null; error: Error | null }> {
   if (!seriesLabels.length) return { data: [], error: null }
   const trimmed = query.trim()
   const isUuid = isUuidLike(trimmed)
   const langVals = voiceBankLanguageSqlValues()
-  const variants = [
-    'id,word,translation,slow_audio_url,fast_audio_url',
-    'id,oromo,english,slow_audio_url,fast_audio_url',
-  ] as const
 
-  const runVariant = async (
-    cols: (typeof variants)[number],
-    useLanguage: boolean,
-  ): Promise<{ data: WordBankRow[] | null; error: Error | null }> => {
-    let q = supabase.from('words').select(cols).in('series', seriesLabels).limit(25)
+  const run = async (useLanguage: boolean): Promise<{ data: WordBankRow[] | null; error: Error | null }> => {
+    let q = supabase.from('words').select(WORD_BANK_LIST_COLUMNS).in('series', seriesLabels).limit(25)
     if (useLanguage) q = q.in('language', langVals)
     if (isUuid) q = q.eq('id', trimmed)
-    else if (searchMode === 'oromo') {
-      q = cols.startsWith('id,word') ? q.ilike('word', `%${trimmed}%`) : q.ilike('oromo', `%${trimmed}%`)
-    } else {
-      q = cols.startsWith('id,word')
-        ? q.or(`word.ilike.%${trimmed}%,translation.ilike.%${trimmed}%`)
-        : q.or(`oromo.ilike.%${trimmed}%,english.ilike.%${trimmed}%`)
-    }
+    else q = q.or(`word.ilike.%${trimmed}%,translation.ilike.%${trimmed}%`)
     const res = await q
     if (res.error) return { data: null, error: new Error(res.error.message) }
     const filtered = ((res.data as WordBankRow[] | null) ?? []).filter((r) => typeof r?.id === 'string')
-    return {
-      data: sortWordBankRowsShortestAfaanFirst(filtered),
-      error: null,
-    }
+    return { data: sortWordBankRowsShortestAfaanFirst(filtered), error: null }
   }
 
   let lastMsg = ''
-  for (const cols of variants) {
-    for (const useLang of [true, false]) {
-      const { data, error } = await runVariant(cols, useLang)
-      if (!error && data) {
-        return { data, error: null }
+  for (const useLang of [true, false]) {
+    const { data, error } = await run(useLang)
+    if (!error && data) return { data, error: null }
+    if (error) {
+      lastMsg = error.message
+      if (
+        useLang &&
+        /column .* does not exist|Could not find|does not exist|PGRST100/i.test(error.message)
+      ) {
+        continue
       }
-      if (error) {
-        lastMsg = error.message
-        if (
-          useLang &&
-          /column .* does not exist|Could not find|does not exist|PGRST100/i.test(error.message)
-        ) {
-          continue
-        }
-        if (!/column .* does not exist|Could not find|does not exist|PGRST100/i.test(error.message)) {
-          return { data: null, error }
-        }
-      }
+      return { data: null, error }
     }
   }
   return { data: null, error: new Error(lastMsg || 'words search failed') }
@@ -514,7 +452,7 @@ function LessonAndSeriesWordPicker({
     setErr('')
     const t = setTimeout(() => {
       void (async () => {
-        const { data, error } = await fetchWordBankRowsForSeries(query, 'oromo', seriesLabels)
+        const { data, error } = await fetchWordBankRowsForSeries(query, seriesLabels)
         if (reqId !== lastReq.current) return
         setLoading(false)
         if (error || data == null) {
@@ -1453,13 +1391,11 @@ function WordBankPicker({
   value,
   onPick,
   placeholder = 'Search word bank…',
-  searchMode = 'both',
 }: {
   label: string
   value: WordBankRow | null
   onPick: (row: WordBankRow) => void
   placeholder?: string
-  searchMode?: 'both' | 'oromo'
 }) {
   const [q, setQ] = useState('')
   const [loading, setLoading] = useState(false)
@@ -1480,15 +1416,10 @@ function WordBankPicker({
     const t = setTimeout(() => {
       void (async () => {
         const isUuid = isUuidLike(query)
-        const base = supabase
-          .from('words')
-          .select('id,word,translation,slow_audio_url,fast_audio_url')
-          .limit(25)
+        const base = supabase.from('words').select(WORD_BANK_LIST_COLUMNS).limit(25)
         const res = isUuid
           ? await base.eq('id', query)
-          : searchMode === 'oromo'
-            ? await base.ilike('word', `%${query}%`)
-            : await base.or(`word.ilike.%${query}%,translation.ilike.%${query}%`)
+          : await base.or(`word.ilike.%${query}%,translation.ilike.%${query}%`)
         if (reqId !== lastReq.current) return
         setLoading(false)
         if (res.error) {
@@ -1500,7 +1431,7 @@ function WordBankPicker({
       })()
     }, 250)
     return () => clearTimeout(t)
-  }, [q, searchMode])
+  }, [q])
 
   return (
     <View style={styles.wordPicker}>
@@ -1605,7 +1536,7 @@ function AudioExposureOromoField({
     setErr('')
     const t = setTimeout(() => {
       void (async () => {
-        const { data, error } = await fetchWordBankRows(query, 'oromo')
+        const { data, error } = await fetchWordBankRows(query)
         if (reqId !== lastReq.current) return
         setLoading(false)
         if (error || data == null) {
@@ -1999,15 +1930,11 @@ export function LessonScreenEditModal({
           </View>
         )
       case 'concept': {
-        const animMode = String(c.targetWord ?? '').trim().length > 0
-        const bulletsArr = Array.isArray(c.bullets) ? (c.bullets as string[]) : null
         const hasLegacySections = Array.isArray(c.sections)
-        const isBulletsFormat = Array.isArray(bulletsArr)
-        const rawBullets = isBulletsFormat ? bulletsArr : ['']
-        const bullets = animMode ? rawBullets.slice(0, 3) : rawBullets
+        const rawBullets = Array.isArray(c.bullets) ? (c.bullets as string[]) : ['']
+        const bullets = rawBullets.slice(0, 3)
         const setBullets = (next: string[]) => {
-          const capped = animMode ? next.slice(0, 3) : next
-          setContent((cur) => ({ ...cur, bullets: capped }))
+          setContent((cur) => ({ ...cur, bullets: next.slice(0, 3) }))
         }
 
         const moveBullet = (idx: number, dir: -1 | 1) => {
@@ -2024,71 +1951,63 @@ export function LessonScreenEditModal({
         }
 
         const addBullet = () => {
-          if (animMode && bullets.length >= 3) return
+          if (bullets.length >= 3) return
           setBullets([...bullets, ''])
         }
 
-        const convertLegacyToBullets = () => {
-          const parts: string[] = []
-          if (typeof c.heading === 'string') parts.push(c.heading)
-          if (typeof c.title === 'string' && !parts.length) parts.push(c.title)
-          const heading = parts[0] ?? 'Concept'
-
+        const convertLegacySectionsToCanonical = () => {
+          const heading =
+            (typeof c.heading === 'string' && c.heading.trim()) ||
+            (typeof c.title === 'string' && c.title.trim()) ||
+            'Concept'
           const sections = Array.isArray(c.sections) ? (c.sections as Record<string, unknown>[]) : []
           const converted = sections
             .map((s) => {
               const t = typeof s.title === 'string' ? s.title : ''
-              const body = typeof s.content === 'string' ? s.content : typeof s.text === 'string' ? s.text : ''
+              const body =
+                typeof s.content === 'string' ? s.content : typeof s.text === 'string' ? s.text : ''
               const both = [t, body].filter(Boolean).join(' — ')
               return both.trim()
             })
             .filter(Boolean)
-
-          setContent((cur) => ({
-            ...cur,
-            heading,
-            bullets: converted.length ? converted : [''],
-            note: typeof cur.note === 'string' ? cur.note : undefined,
+          setContent(() => ({
+            targetWord: heading,
+            bullets: converted.length ? converted.slice(0, 3) : [''],
           }))
         }
 
         return (
           <View style={styles.form}>
-            {!isBulletsFormat && hasLegacySections ? (
+            {hasLegacySections ? (
               <View style={styles.warningBox}>
-                <Text style={styles.warningTitle}>This concept uses an older format (sections[])</Text>
+                <Text style={styles.warningTitle}>This concept still has legacy `sections[]` in JSON</Text>
                 <Text style={styles.warningBody}>
-                  The visual editor expects bullets format. You can convert it
-                  {allowJsonEditing ? ' (or edit raw JSON below if needed).' : '.'}
+                  The learner expects `targetWord` and `bullets` only. Convert here, or clean the row in Supabase / raw
+                  JSON.
+                  {allowJsonEditing ? ' Raw JSON is available below if needed.' : ''}
                 </Text>
-                <Pressable style={styles.convertBtn} onPress={convertLegacyToBullets}>
-                  <Text style={styles.convertBtnText}>Convert to bullets format</Text>
+                <Pressable style={styles.convertBtn} onPress={convertLegacySectionsToCanonical}>
+                  <Text style={styles.convertBtnText}>Convert to target word + bullets</Text>
                 </Pressable>
               </View>
             ) : null}
 
             <Field
-              label="Target word (typing intro — optional)"
+              label="Target word"
               value={String(c.targetWord ?? '')}
               onChangeText={(t) =>
                 setContent((cur) => ({
                   ...cur,
                   targetWord: t,
-                  bullets: t.trim() ? (Array.isArray(cur.bullets) ? (cur.bullets as string[]).slice(0, 3) : ['']) : cur.bullets,
+                  bullets: (Array.isArray(cur.bullets) ? (cur.bullets as string[]) : ['']).slice(0, 3),
                 }))
               }
             />
             <Text style={styles.hint}>
-              Leave target word blank for reading-style concept (heading + bullets). If set, the app animates the word and
-              shows up to 3 bullets.
+              Learner shows an animated reveal for the target word and up to three bullets. Persist only these fields.
             </Text>
 
-            <Field
-              label="Heading"
-              value={String(c.heading ?? c.title ?? '')}
-              onChangeText={(t) => setContent((cur) => ({ ...cur, heading: t, title: t }))}
-            />
-            <Text style={styles.label}>{animMode ? 'Bullets (max 3)' : 'Bullets'}</Text>
+            <Text style={styles.label}>Bullets (max 3)</Text>
             {bullets.map((b, i) => (
               <View key={i} style={styles.bulletRow}>
                 <TextInput
@@ -2138,33 +2057,23 @@ export function LessonScreenEditModal({
                 </Pressable>
               </View>
             ))}
-            <Pressable style={styles.addBtn} onPress={addBullet} disabled={animMode && bullets.length >= 3}>
-              <Text style={[styles.addBtnText, animMode && bullets.length >= 3 && styles.bulletMiniDisabled]}>
-                + Add bullet
-              </Text>
+            <Pressable style={styles.addBtn} onPress={addBullet} disabled={bullets.length >= 3}>
+              <Text style={[styles.addBtnText, bullets.length >= 3 && styles.bulletMiniDisabled]}>+ Add bullet</Text>
             </Pressable>
-            <Field label="Note (optional)" value={String(c.note ?? '')} multiline onChangeText={(t) => setContent((cur) => ({ ...cur, note: t }))} />
             <SaveRow
               onPress={() => {
                 const tw = String(c.targetWord ?? '').trim()
                 const cleaned = bullets.map((x) => String(x ?? '').trim()).filter(Boolean)
-                if (tw) {
-                  if (cleaned.length < 1) {
-                    setJsonError('Concept with a target word needs at least 1 bullet.')
-                    return
-                  }
-                  setJsonError('')
-                  saveStructured({ ...draft.content, targetWord: tw, bullets: cleaned.slice(0, 3) })
+                if (!tw) {
+                  setJsonError('Concept needs a target word.')
                   return
                 }
                 if (cleaned.length < 1) {
-                  setJsonError('Concept needs at least 1 bullet.')
+                  setJsonError('Concept needs at least one non-empty bullet.')
                   return
                 }
                 setJsonError('')
-                const base = { ...(draft.content as Record<string, unknown>) }
-                delete base.targetWord
-                saveStructured({ ...base, bullets: cleaned })
+                saveStructured({ targetWord: tw, bullets: cleaned.slice(0, 3) })
               }}
             />
           </View>
@@ -2243,7 +2152,6 @@ export function LessonScreenEditModal({
                         })
                       }}
                       placeholder="Search Oromo word…"
-                      searchMode="oromo"
                     />
                     <Text style={styles.matchRightPreviewLabel}>Right option (English)</Text>
                     <Text style={styles.matchRightPreview}>—</Text>
@@ -2407,7 +2315,6 @@ export function LessonScreenEditModal({
                 })
               }}
               placeholder="Search Oromo word…"
-              searchMode="oromo"
             />
             <Pressable
               style={styles.quizCorrectBtn}
@@ -2838,7 +2745,6 @@ export function LessonScreenEditModal({
                 })
               }}
               placeholder="Search Oromo word…"
-              searchMode="oromo"
             />
             <Pressable
               style={styles.quizCorrectBtn}

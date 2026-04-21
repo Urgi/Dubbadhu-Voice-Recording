@@ -162,23 +162,19 @@ function mapWordsRowToConflictShape(row: Record<string, unknown>): {
 } | null {
   if (typeof row.id !== 'string') return null
   const tr = row.translation
-  const en = row.english
-  const def = row.definition
-  const gloss =
-    (typeof tr === 'string' ? tr.trim() : '') ||
-    (typeof en === 'string' ? en.trim() : '') ||
-    (typeof def === 'string' ? def.trim() : '') ||
-    null
+  const gloss = typeof tr === 'string' ? tr.trim() : ''
   return {
     id: row.id,
-    translation: gloss,
-    english: typeof en === 'string' ? en : null,
+    translation: gloss || null,
+    english: null,
   }
 }
 
+const WORD_BANK_LOOKUP_COLUMNS = 'id,word,translation'
+
 /**
  * Find a voice-bank row for an Afaan token restricted to the given `words.series` labels.
- * Uses `select('*')` and tries `word` / `oromo` so schema variants still match.
+ * Matches on `public.words.word` only (`word` + `translation` schema).
  */
 export async function lookupWordBankRowWithSeriesLabels(
   seriesLabels: string[],
@@ -188,17 +184,13 @@ export async function lookupWordBankRowWithSeriesLabels(
   if (!o || seriesLabels.length === 0) return null
   const langVals = voiceBankLanguageSqlValues()
 
-  const base = () => supabase.from('words').select('*').in('series', seriesLabels)
+  const base = () => supabase.from('words').select(WORD_BANK_LOOKUP_COLUMNS).in('series', seriesLabels)
 
   const runners = [
     () => base().eq('word', o).in('language', langVals).limit(1),
     () => base().ilike('word', o).in('language', langVals).limit(1),
-    () => base().eq('oromo', o).in('language', langVals).limit(1),
-    () => base().ilike('oromo', o).in('language', langVals).limit(1),
     () => base().eq('word', o).limit(1),
     () => base().ilike('word', o).limit(1),
-    () => base().eq('oromo', o).limit(1),
-    () => base().ilike('oromo', o).limit(1),
   ]
 
   for (const run of runners) {

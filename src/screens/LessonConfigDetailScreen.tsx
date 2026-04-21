@@ -29,9 +29,11 @@ import {
   defaultScreen,
   findAudioExposureWordRecordByDraftTokenId,
   parseLessonContent,
+  looksLikeWordsRowUuid,
   sanitizeLessonScreensForSave,
   screenSubtitleLinesForCurriculumEditor,
   screenTypeLabelForCurriculumEditor,
+  speakingPracticeWordsBankRowId,
   syncCelebrateScreensWithAudioExposure,
 } from '../lib/lessonEditor'
 import {
@@ -168,35 +170,45 @@ async function lookupWordAudioRowById(wordId: string): Promise<WordBankAudioRow 
 /**
  * Hydrate legacy / missing audio refs inside a lesson from the `words` table.
  * This ensures Dubbadhu can play per-word audio even if the editor only stored text.
+ * By-`word_id` lookups run without a series id; text-based lookup requires `seriesId`.
  */
 async function hydrateAudioRefsFromWordBank(content: Record<string, unknown>, seriesId: string | null, language: string): Promise<void> {
   const sid = (seriesId ?? '').trim()
-  if (!sid) return
   const lang = canonicalWordBankLanguage(language)
 
   const screens = content.screens
   if (!Array.isArray(screens) || screens.length === 0) return
 
-  const cache = new Map<string, WordBankAudioRow | null>()
-  const getRow = async (text: string): Promise<WordBankAudioRow | null> => {
-    const key = text.trim()
-    if (!key) return null
-    if (cache.has(key)) return cache.get(key) ?? null
-    const row = await lookupWordAudioRow({ seriesId: sid, language: lang, word: key })
-    cache.set(key, row)
+  const idCache = new Map<string, WordBankAudioRow | null>()
+  const getRowById = async (rawId: string): Promise<WordBankAudioRow | null> => {
+    const id = rawId.trim().toLowerCase()
+    if (!looksLikeWordsRowUuid(id)) return null
+    if (idCache.has(id)) return idCache.get(id) ?? null
+    const row = await lookupWordAudioRowById(id)
+    idCache.set(id, row)
     return row
   }
+
+  const cache = new Map<string, WordBankAudioRow | null>()
+  const getRow = sid
+    ? async (text: string): Promise<WordBankAudioRow | null> => {
+        const key = text.trim()
+        if (!key) return null
+        if (cache.has(key)) return cache.get(key) ?? null
+        const row = await lookupWordAudioRow({ seriesId: sid, language: lang, word: key })
+        cache.set(key, row)
+        return row
+      }
+    : null
 
   const applyWordRowToToken = (wr: Record<string, unknown>, row: WordBankAudioRow | null) => {
     if (!row) return
     const fast = row.fast_audio_url?.trim() || null
     const slow = row.slow_audio_url?.trim() || null
-    if (fast) {
-      wr.fastAudioRef = fast
-      wr.audioRef = fast
-    } else if (slow) {
-      wr.audioRef = slow
-    }
+    delete wr.audioRef
+    delete wr.fastAudioRef
+    delete wr.slowAudioRef
+    if (fast) wr.fastAudioRef = fast
     if (slow) wr.slowAudioRef = slow
     const fe = normalizeEnvelopeArray(row.fast_waveform_envelope)
     const se = normalizeEnvelopeArray(row.slow_waveform_envelope)
@@ -221,23 +233,61 @@ async function hydrateAudioRefsFromWordBank(content: Record<string, unknown>, se
           (words as unknown[]).map(async (w) => {
             if (w == null || typeof w !== 'object' || Array.isArray(w)) return w
             const wr = { ...(w as Record<string, unknown>) }
-            const text = String(wr.oromo ?? wr.word ?? '').trim()
-            const row = text ? await getRow(text) : null
-            if (row) applyWordRowToToken(wr, row)
+            const wid = String(wr.word_id ?? '').trim()
+            let rowById: WordBankAudioRow | null = null
+            if (looksLikeWordsRowUuid(wid)) {
+              rowById = await getRowById(wid)
+              if (rowById) applyWordRowToToken(wr, rowById)
+            }
+            if (!rowById && getRow) {
+              const text = String(wr.oromo ?? wr.word ?? '').trim()
+              const row = text ? await getRow(text) : null
+              if (row) applyWordRowToToken(wr, row)
+            }
             return wr
           }),
         )
         cr.words = next
       }
       const titleWord = String(cr.word ?? '').trim()
-      if (titleWord && !isHttpUrl(cr.audioRef)) {
+      if (titleWord && !isHttpUrl(cr.fastAudioRef) && getRow) {
         const row = await getRow(titleWord)
-        if (row?.fast_audio_url?.trim()) cr.audioRef = row.fast_audio_url.trim()
+        if (row?.fast_audio_url?.trim()) cr.fastAudioRef = row.fast_audio_url.trim()
+      }
+      delete cr.audioRef
+    }
+
+    if (type === 'videoReview') {
+      const lines = cr.lines
+      if (!Array.isArray(lines)) continue
+      for (const line of lines) {
+        if (line == null || typeof line !== 'object' || Array.isArray(line)) continue
+        const lr = line as Record<string, unknown>
+        const vocab = lr.vocabWords
+        if (!Array.isArray(vocab)) continue
+        lr.vocabWords = await Promise.all(
+          vocab.map(async (w) => {
+            if (w == null || typeof w !== 'object' || Array.isArray(w)) return w
+            const wr = { ...(w as Record<string, unknown>) }
+            const wid = String(wr.word_id ?? '').trim()
+            let rowById: WordBankAudioRow | null = null
+            if (looksLikeWordsRowUuid(wid)) {
+              rowById = await getRowById(wid)
+              if (rowById) applyWordRowToToken(wr, rowById)
+            }
+            if (!rowById && getRow) {
+              const text = String(wr.oromo ?? wr.word ?? '').trim()
+              const row = text ? await getRow(text) : null
+              if (row) applyWordRowToToken(wr, row)
+            }
+            return wr
+          }),
+        )
       }
     }
 
     if (type === 'speakingPractice') {
-      const swId = String(cr.speaking_word_id ?? '').trim()
+      const swId = speakingPracticeWordsBankRowId(cr) ?? ''
       if (swId) {
         const byId = await lookupWordAudioRowById(swId)
         if (byId) {
@@ -266,9 +316,9 @@ async function hydrateAudioRefsFromWordBank(content: Record<string, unknown>, se
         const ex = findAudioExposureWordRecordByDraftTokenId(typedScreens, linkTok)
         if (ex) {
           const ref =
-            String(ex.audioRef ?? '').trim() ||
             String(ex.fastAudioRef ?? '').trim() ||
-            String(ex.slowAudioRef ?? '').trim()
+            String(ex.slowAudioRef ?? '').trim() ||
+            String(ex.audioRef ?? '').trim()
           if (ref) cr.targetAudioRef = ref
         }
       }
@@ -865,13 +915,25 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
   }
 
   const applyScreenEdit = (idx: number, s: LessonScreen) => {
+    if (!draft) return
     markUnsaved()
-    setDraft((d) => {
-      if (!d) return d
-      const screens = [...d.screens]
-      screens[idx] = s
-      return { ...d, screens: syncCelebrateScreensWithAudioExposure(screens) }
-    })
+    const mergedScreens = syncCelebrateScreensWithAudioExposure(
+      draft.screens.map((cur, i) => (i === idx ? s : cur)),
+    )
+    setDraft({ ...draft, screens: mergedScreens })
+    if (!row) return
+    void (async () => {
+      try {
+        await hydrateAudioRefsFromWordBank(
+          { screens: mergedScreens as unknown[] } as Record<string, unknown>,
+          row.series_id ?? null,
+          VOICE_BANK_LANGUAGE,
+        )
+        setDraft((cur) => (cur ? { ...cur } : cur))
+      } catch {
+        // Hydration is best-effort; edited screen is already in state.
+      }
+    })()
   }
 
   const editingScreen = editingIndex != null ? draft.screens[editingIndex] ?? null : null

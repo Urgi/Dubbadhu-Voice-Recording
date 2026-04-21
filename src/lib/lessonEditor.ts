@@ -93,25 +93,24 @@ export function screenTypeLabelForCurriculumEditor(type: string, role: string | 
   return SCREEN_TYPE_OPTIONS.find((o) => o.value === type)?.label ?? type
 }
 
-/** Shown on lesson screen list cards when a token is taught in this lesson but not linked to `words.id`. */
-export const LESSON_INTRODUCED_IN_LESSON = '(Introduced in this lesson)'
-
-function looksLikeWordsRowUuid(id: unknown): boolean {
+/** True when `id` looks like a `public.words` primary key (used before DB round-trips). */
+export function looksLikeWordsRowUuid(id: unknown): boolean {
   const s = typeof id === 'string' ? id.trim() : ''
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)
 }
 
-function speakingPhraseMatchesLessonExposure(primary: string, lessonScreens: LessonScreen[]): boolean {
-  const pk = celebrateAfaanDedupeKey(primary.trim())
-  if (!pk) return false
-  for (const row of celebrateExposureWordRows(lessonScreens)) {
-    if (celebrateAfaanDedupeKey(row.afaan) === pk) return true
-  }
-  return false
+/**
+ * Speaking practice JSON uses `word_id` (same as learner). Older drafts used `speaking_word_id`.
+ * Used for list subtitles and optional hydration from `public.words`.
+ */
+export function speakingPracticeWordsBankRowId(content: Record<string, unknown>): string | null {
+  const raw = String(content.word_id ?? content.speaking_word_id ?? '').trim()
+  if (!looksLikeWordsRowUuid(raw)) return null
+  return raw.toLowerCase()
 }
 
 export type ScreenSubtitleContext = {
-  /** Full lesson `screens` (same draft as the list); enables “Introduced in this lesson” on list cards. */
+  /** Full lesson `screens` (same draft as the list); reserved for cross-screen list hints. */
   lessonScreens?: LessonScreen[]
 }
 
@@ -179,7 +178,7 @@ export function defaultScreen(type: ScreenType): LessonScreen {
     case 'intro':
       return { type, content: { goal: '' } }
     case 'concept':
-      return { type, content: { targetWord: '', heading: '', bullets: [''] } }
+      return { type, content: { targetWord: '', bullets: [''] } }
     case 'dialogue':
       return {
         type,
@@ -562,6 +561,7 @@ export function normalizeAudioExposureContentForEdit(content: Record<string, unk
     }
     const existing = String(rec.draftTokenId ?? '').trim()
     if (!existing) rec.draftTokenId = newDraftTokenId()
+    delete rec.audioRef
     return rec
   })
   return out
@@ -656,33 +656,21 @@ export function sanitizeScreenContentForPersistence(
       return base
     }
     case 'concept': {
-      const base = pickAllowedKeys(
-        content,
-        new Set([
-          'targetWord',
-          'heading',
-          'title',
-          'concept',
-          'examples',
-          'pattern',
-          'tip',
-          'culturalNote',
-          'subtitle',
-          'keyPoints',
-          'bullets',
-          'note',
-          'sections',
-        ]),
-      )
+      const base = pickAllowedKeys(content, new Set(['targetWord', 'bullets']))
+      base.targetWord = String(base.targetWord ?? '').trim()
       const b = base.bullets
       if (Array.isArray(b)) {
-        base.bullets = b.map((x) => (typeof x === 'string' ? x : String(x ?? '')))
+        base.bullets = b
+          .map((x) => (typeof x === 'string' ? x : String(x ?? '')))
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .slice(0, 3)
+      } else {
+        base.bullets = []
       }
-      const h = String(base.heading ?? '').trim()
-      const ti = String(base.title ?? '').trim()
-      if (!h) delete base.heading
-      if (!ti) delete base.title
-      else if (h && ti === h) delete base.title
+      if (!Array.isArray(base.bullets) || base.bullets.length === 0) {
+        base.bullets = ['']
+      }
       return base
     }
     case 'dialogue': {
@@ -1018,11 +1006,9 @@ export function screenSummary(screen: LessonScreen): string {
       return String(c.goal ?? '').slice(0, 80) || '—'
     case 'concept': {
       const tw = String(c.targetWord ?? '').trim()
-      if (tw) {
-        const n = Array.isArray(c.bullets) ? c.bullets.length : 0
-        return `Target Word: ${tw} · Number of Points: ${n}`
-      }
-      return String(c.heading ?? c.title ?? '').slice(0, 80) || '—'
+      const n = Array.isArray(c.bullets) ? c.bullets.length : 0
+      if (tw) return `Target Word: ${tw} · Number of Points: ${n}`
+      return n ? `${n} bullet(s) (set target word)` : '—'
     }
     case 'dialogue':
       return dialogueNameSummaryFromContent(c as Record<string, unknown>)
@@ -1096,16 +1082,13 @@ export function screenSummary(screen: LessonScreen): string {
 }
 
 /** Multi-line subtitle for the lesson screen list (and view summary). */
-export function screenSubtitleLines(screen: LessonScreen, ctx?: ScreenSubtitleContext): string[] {
+export function screenSubtitleLines(screen: LessonScreen, _ctx?: ScreenSubtitleContext): string[] {
   const c = screen.content
-  const lessonScreens = ctx?.lessonScreens
   switch (screen.type) {
     case 'concept': {
       const tw = String(c.targetWord ?? '').trim()
-      if (tw) {
-        const n = Array.isArray(c.bullets) ? c.bullets.length : 0
-        return [`Target Word: ${tw}`, `Number of Points: ${n}`]
-      }
+      const n = Array.isArray(c.bullets) ? c.bullets.length : 0
+      if (tw) return [`Target Word: ${tw}`, `Number of Points: ${n}`]
       return [screenSummary(screen)]
     }
     case 'audioExposure':
@@ -1121,36 +1104,12 @@ export function screenSubtitleLines(screen: LessonScreen, ctx?: ScreenSubtitleCo
     }
     case 'speakingPractice': {
       const cr = c as Record<string, unknown>
-      const lines: string[] = []
       const primary = speakingPracticePrimaryLine(cr)
       const en = speakingPracticeEnglishLine(cr)
       if (primary) {
-        lines.push(en ? `${primary} — ${en}` : primary)
+        return [en ? `${primary} — ${en}` : primary]
       }
-      const introducedInLesson =
-        Boolean(lessonScreens?.length && primary) &&
-        !looksLikeWordsRowUuid(cr.speaking_word_id) &&
-        speakingPhraseMatchesLessonExposure(primary, lessonScreens ?? [])
-      const ref = String(cr.targetAudioRef ?? '').trim()
-      if (!ref) {
-        const fromBank = looksLikeWordsRowUuid(cr.speaking_word_id)
-        const draftLink = Boolean(String(cr.speakingDraftTokenId ?? '').trim())
-        let refLine: string
-        if (fromBank) {
-          refLine = 'Reference audio: not on word row yet (OK until recorded)'
-        } else if (draftLink) {
-          refLine = 'Reference audio: linked to exposure word (fills when exposure has audio)'
-        } else if (introducedInLesson) {
-          refLine = LESSON_INTRODUCED_IN_LESSON
-        } else {
-          refLine = 'Reference audio not set'
-        }
-        if (introducedInLesson && refLine !== LESSON_INTRODUCED_IN_LESSON) {
-          refLine = `${refLine} ${LESSON_INTRODUCED_IN_LESSON}`
-        }
-        lines.push(refLine)
-      }
-      return lines.length ? lines : [screenSummary(screen)]
+      return [screenSummary(screen)]
     }
     case 'dialogue':
       return [dialogueNameSummaryFromContent(c as Record<string, unknown>)]

@@ -259,11 +259,17 @@ export function audioExposureWordSummaryLines(content: Record<string, unknown>):
     if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
     const rec = w as Record<string, unknown>
     const wid = String(rec.word_id ?? '').trim().toLowerCase()
-    if (!UUID_RE_FOR_WORD_ROW.test(wid)) continue
     const afaan = String(rec.word ?? '').trim()
     const english = String(rec.translation ?? '').trim()
     if (!afaan && !english) continue
-    lines.push(english ? `${afaan} — ${english}` : afaan)
+    const label = english ? `${afaan} — ${english}` : afaan
+    if (UUID_RE_FOR_WORD_ROW.test(wid)) {
+      lines.push(label)
+      continue
+    }
+    const dt = String(rec.draftTokenId ?? '').trim()
+    if (!dt || !afaan) continue
+    lines.push(`${label} (no audio yet)`)
   }
   return lines.length ? lines : ['—']
 }
@@ -312,7 +318,6 @@ export function normalizeDialogueContent(content: Record<string, unknown>): Reco
     person2 = mapDialogueSide(undefined)
   }
   return {
-    ...content,
     dialogueData: {
       person1,
       person2,
@@ -492,11 +497,10 @@ function pickAllowedKeys(obj: Record<string, unknown>, allowed: Set<string>): Re
  *
  * - Audio exposure timing/chrome: fixed in `Dubbadhu/.../AudioExposureScreen.js` (not stored; only optional `title` + `words`).
  * - Match subtitle line: `Dubbadhu/features/LessonTab/LessonModules/MatchScreen.js`
- * - Dialogue translations toggle: `Dubbadhu/features/LessonTab/LessonModules/DialogueScreen.js`
+ * - Dialogue translations: hidden by default in `DialogueScreen.js` (learner can tap Show).
  * - Discrimination streak (legacy 2-word mode): `Dubbadhu/features/LessonTab/LessonModules/WordDiscriminationQuizScreen.js`
  */
 export const MATCH_DEFAULT_SUBTITLE_LINE = 'Tap left, then right'
-export const DIALOGUE_DEFAULT_SHOW_TRANSLATIONS = true
 export const DISCRIMINATION_LEGACY_DEFAULT_STREAK_TARGET = 5
 
 /** Drop placeholder titles; keep only real overrides (matches learner `exposureTitleForDisplay`). */
@@ -520,19 +524,28 @@ const UUID_RE_FOR_WORD_ROW =
 
 /**
  * Persist `{ word_id, word?, draftTokenId?, translation? }` (lean; learner hydrates gloss from DB too).
+ * When there is no `word_id` yet, persist `{ draftTokenId, word, translation? }` so exposure rows stay
+ * in the lesson until they are linked to the word bank (same `draftTokenId` for speaking practice).
  * Optional `translation` keeps admin / Celebrate subtitles readable when JSON has no inline gloss.
  */
 export function sanitizeAudioExposureWordTokenForPersistence(
   w: Record<string, unknown>,
 ): Record<string, unknown> | null {
   const wid = String(w.word_id ?? '').trim().toLowerCase()
-  if (!UUID_RE_FOR_WORD_ROW.test(wid)) return null
   const wordReadable = String(w.word ?? '').trim()
-  const out: Record<string, unknown> = { word_id: wid }
-  if (wordReadable) out.word = wordReadable
   const dt = String(w.draftTokenId ?? '').trim()
-  if (dt) out.draftTokenId = dt
   const gloss = String(w.translation ?? w.english ?? '').trim()
+
+  if (UUID_RE_FOR_WORD_ROW.test(wid)) {
+    const out: Record<string, unknown> = { word_id: wid }
+    if (wordReadable) out.word = wordReadable
+    if (dt) out.draftTokenId = dt
+    if (gloss) out.translation = gloss
+    return out
+  }
+
+  if (!dt || !wordReadable) return null
+  const out: Record<string, unknown> = { draftTokenId: dt, word: wordReadable }
   if (gloss) out.translation = gloss
   return out
 }
@@ -586,8 +599,6 @@ export function listAudioExposureLinkOptionsFromScreens(screens: LessonScreen[])
       if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
       const rec = w as Record<string, unknown>
       const id = String(rec.draftTokenId ?? '').trim()
-      const wid = String(rec.word_id ?? '').trim().toLowerCase()
-      if (!UUID_RE_FOR_WORD_ROW.test(wid)) continue
       const afaan = String(rec.word ?? '').trim()
       if (!id || !afaan) continue
       const english = String(rec.translation ?? '').trim()
@@ -674,7 +685,7 @@ export function sanitizeScreenContentForPersistence(
       return base
     }
     case 'dialogue': {
-      const base = pickAllowedKeys(content, new Set(['dialogueData', 'showTranslations']))
+      const base = pickAllowedKeys(content, new Set(['dialogueData']))
       const dd = base.dialogueData
       if (dd != null && typeof dd === 'object' && !Array.isArray(dd)) {
         const merged = normalizeDialogueContent(base as Record<string, unknown>)
@@ -688,14 +699,6 @@ export function sanitizeScreenContentForPersistence(
           person1: shape(md.person1),
           person2: shape(md.person2),
         }
-      }
-      const st = base.showTranslations
-      if (
-        st === DIALOGUE_DEFAULT_SHOW_TRANSLATIONS ||
-        st === 'true' ||
-        st == null
-      ) {
-        delete base.showTranslations
       }
       return base
     }
@@ -753,6 +756,7 @@ export function sanitizeScreenContentForPersistence(
           'word_id',
           'prompt',
           'tip',
+          'speakingDraftTokenId',
         ]),
       )
       const wiRaw = String((sp as Record<string, unknown>).word_id ?? '').trim().toLowerCase()
@@ -761,6 +765,9 @@ export function sanitizeScreenContentForPersistence(
       } else {
         delete (sp as Record<string, unknown>).word_id
       }
+      const linkTok = String((sp as Record<string, unknown>).speakingDraftTokenId ?? '').trim()
+      if (linkTok) (sp as Record<string, unknown>).speakingDraftTokenId = linkTok
+      else delete (sp as Record<string, unknown>).speakingDraftTokenId
       const w = String((sp as Record<string, unknown>).word ?? '').trim()
       if (!w) delete (sp as Record<string, unknown>).word
       else (sp as Record<string, unknown>).word = w
@@ -957,12 +964,15 @@ export function normalizeSpeakingPracticeContentForSave(content: Record<string, 
   if (!prompt && word) prompt = word
   const tip = String(out.tip ?? '').trim()
   const wi = String(out.word_id ?? '').trim().toLowerCase()
+  const linkTok = String(out.speakingDraftTokenId ?? '').trim()
   out.word = word
   out.prompt = prompt
   if (tip) out.tip = tip
   else delete out.tip
   if (UUID_RE_FOR_WORD_ROW.test(wi)) out.word_id = wi
   else delete out.word_id
+  if (linkTok) out.speakingDraftTokenId = linkTok
+  else delete out.speakingDraftTokenId
   return out
 }
 

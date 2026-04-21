@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native'
+import { useEffect, useMemo, useState } from 'react'
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { normalizeDialogueContent } from '../../lib/lessonEditor'
 
 type Props = {
@@ -24,8 +24,65 @@ function padTranslations(trans: string[], lineCount: number): string[] {
   return o
 }
 
+/** Append a line + translation, replacing a lone empty placeholder row if present. */
+function pushLineAndTrans(lines: string[], trans: string[], line: string, tr: string) {
+  const l = [...lines]
+  const t = padTranslations([...trans], l.length)
+  if (
+    l.length === 1 &&
+    !String(l[0] ?? '').trim() &&
+    (!t.length || !String(t[0] ?? '').trim())
+  ) {
+    return { lines: [line], translations: [tr] }
+  }
+  l.push(line)
+  const t2 = padTranslations(t, l.length - 1)
+  t2.push(tr)
+  return { lines: l, translations: t2 }
+}
+
+function validateDialogueForSave(content: Record<string, unknown>): string | null {
+  const nc = normalizeDialogueContent(content)
+  const dd = (nc.dialogueData ?? {}) as Record<string, unknown>
+  const a = (dd.person1 ?? {}) as Record<string, unknown>
+  const b = (dd.person2 ?? {}) as Record<string, unknown>
+  const l1 = (Array.isArray(a.lines) ? a.lines : []) as string[]
+  const l2 = (Array.isArray(b.lines) ? b.lines : []) as string[]
+  const tr1 = padTranslations(
+    (Array.isArray(a.translations) ? a.translations : []) as string[],
+    Math.max(l1.length, 1),
+  )
+  const tr2 = padTranslations(
+    (Array.isArray(b.translations) ? b.translations : []) as string[],
+    Math.max(l2.length, 1),
+  )
+  const maxLen = Math.max(l1.length, l2.length)
+  let anyLine = false
+  for (let i = 0; i < maxLen; i++) {
+    const check = (line: string, tr: string, label: string) => {
+      const lt = String(line ?? '').trim()
+      const tt = String(tr ?? '').trim()
+      if (lt || tt) {
+        anyLine = true
+        if (!lt) return `${label} (turn ${i + 1}): line text is required.`
+        if (!tt) return `${label} (turn ${i + 1}): translation is required.`
+      }
+      return null
+    }
+    const e1 = check(String(l1[i] ?? ''), String(tr1[i] ?? ''), 'Person 1')
+    if (e1) return e1
+    const e2 = check(String(l2[i] ?? ''), String(tr2[i] ?? ''), 'Person 2')
+    if (e2) return e2
+  }
+  if (!anyLine) return 'Add at least one line with both Afaan text and translation.'
+  return null
+}
+
 export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) {
   const [draftLine, setDraftLine] = useState('')
+  const [draftTranslation, setDraftTranslation] = useState('')
+  const [draftSpeaker, setDraftSpeaker] = useState<1 | 2>(1)
+  const [saveError, setSaveError] = useState('')
   const nc = useMemo(() => normalizeDialogueContent(content), [content])
   const dd = (nc.dialogueData ?? {}) as Record<string, unknown>
   const p1 = (dd.person1 ?? {}) as Record<string, unknown>
@@ -36,38 +93,51 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
   const lines2 = (Array.isArray(p2.lines) ? p2.lines : ['']) as string[]
   const tr1 = (Array.isArray(p1.translations) ? p1.translations : []) as string[]
   const tr2 = (Array.isArray(p2.translations) ? p2.translations : []) as string[]
-  const showTrans = content.showTranslations !== false && content.showTranslations !== 'false'
 
   const turns = useMemo(() => {
+    const l1 = lines1
+    const l2 = lines2
+    const t1 = padTranslations([...tr1], l1.length)
+    const t2 = padTranslations([...tr2], l2.length)
+    const maxLen = Math.max(l1.length, l2.length, 1)
+    const lineOrTrans = (line: unknown, tr: unknown) =>
+      String(line ?? '').trim() !== '' || String(tr ?? '').trim() !== ''
+    const hasAny =
+      l1.some((ln, i) => lineOrTrans(ln, t1[i])) || l2.some((ln, i) => lineOrTrans(ln, t2[i]))
+    const isDefaultEmptySlot =
+      maxLen === 1 &&
+      !hasAny &&
+      String(l1[0] ?? '').trim() === '' &&
+      String(l2[0] ?? '').trim() === ''
+    if (isDefaultEmptySlot) return []
+
     const out: TurnRow[] = []
-    const maxLen = Math.max(lines1.length, lines2.length)
     for (let i = 0; i < maxLen; i++) {
-      const t1 = lines1[i]
-      if (t1 != null && String(t1).trim() !== '') {
+      if (i < l1.length) {
         out.push({
           speaker: 1,
           lineIndex: i,
           name: name1.trim() || 'Person 1',
-          text: String(t1),
-          trans: String(tr1[i] ?? ''),
+          text: String(l1[i] ?? ''),
+          trans: String(t1[i] ?? ''),
         })
       }
-      const t2 = lines2[i]
-      if (t2 != null && String(t2).trim() !== '') {
+      if (i < l2.length) {
         out.push({
           speaker: 2,
           lineIndex: i,
           name: name2.trim() || 'Person 2',
-          text: String(t2),
-          trans: String(tr2[i] ?? ''),
+          text: String(l2[i] ?? ''),
+          trans: String(t2[i] ?? ''),
         })
       }
     }
     return out
   }, [lines1, lines2, tr1, tr2, name1, name2])
 
-  const nextIsPerson1 = lines1.length <= lines2.length
-  const nextLabel = nextIsPerson1 ? name1.trim() || 'Person 1' : name2.trim() || 'Person 2'
+  useEffect(() => {
+    setDraftSpeaker(lines1.length <= lines2.length ? 1 : 2)
+  }, [lines1.length, lines2.length])
 
   const setPerson = (slot: 1 | 2, patch: Record<string, unknown>) => {
     setContent((cur) => {
@@ -80,8 +150,9 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
   }
 
   const addLine = () => {
-    const t = draftLine.trim()
-    if (!t) return
+    const line = draftLine.trim()
+    const trans = draftTranslation.trim()
+    if (!line || !trans) return
     setContent((cur) => {
       const n = normalizeDialogueContent(cur)
       const d = (n.dialogueData ?? {}) as Record<string, unknown>
@@ -97,22 +168,29 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
         (Array.isArray(b.translations) ? (b.translations as string[]) : []) as string[],
         l2.length,
       )
-      if (l1.length <= l2.length) {
-        l1.push(t)
-        t1.push('')
+      let nl1 = l1
+      let nt1 = t1
+      let nl2 = l2
+      let nt2 = t2
+      if (draftSpeaker === 1) {
+        const r = pushLineAndTrans(l1, t1, line, trans)
+        nl1 = r.lines
+        nt1 = r.translations
       } else {
-        l2.push(t)
-        t2.push('')
+        const r = pushLineAndTrans(l2, t2, line, trans)
+        nl2 = r.lines
+        nt2 = r.translations
       }
       return {
         ...cur,
         dialogueData: {
-          person1: { ...a, lines: l1, translations: t1 },
-          person2: { ...b, lines: l2, translations: t2 },
+          person1: { ...a, lines: nl1, translations: nt1 },
+          person2: { ...b, lines: nl2, translations: nt2 },
         },
       }
     })
     setDraftLine('')
+    setDraftTranslation('')
   }
 
   const removeTurn = (speaker: 1 | 2, lineIndex: number) => {
@@ -189,23 +267,53 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
     })
   }
 
+  const updateLineText = (speaker: 1 | 2, lineIndex: number, text: string) => {
+    setContent((cur) => {
+      const n = normalizeDialogueContent(cur)
+      const d = (n.dialogueData ?? {}) as Record<string, unknown>
+      const a = { ...((d.person1 as Record<string, unknown>) ?? {}) }
+      const b = { ...((d.person2 as Record<string, unknown>) ?? {}) }
+      const l1 = [...(Array.isArray(a.lines) ? (a.lines as string[]) : [])]
+      const l2 = [...(Array.isArray(b.lines) ? (b.lines as string[]) : [])]
+      const t1 = padTranslations(
+        (Array.isArray(a.translations) ? (a.translations as string[]) : []) as string[],
+        l1.length,
+      )
+      const t2 = padTranslations(
+        (Array.isArray(b.translations) ? (b.translations as string[]) : []) as string[],
+        l2.length,
+      )
+      if (speaker === 1 && lineIndex >= 0 && lineIndex < l1.length) {
+        l1[lineIndex] = text
+      } else if (speaker === 2 && lineIndex >= 0 && lineIndex < l2.length) {
+        l2[lineIndex] = text
+      }
+      return {
+        ...cur,
+        dialogueData: {
+          person1: { ...a, lines: l1, translations: t1 },
+          person2: { ...b, lines: l2, translations: t2 },
+        },
+      }
+    })
+  }
+
+  const handleSave = () => {
+    const err = validateDialogueForSave(content)
+    if (err) {
+      setSaveError(err)
+      return
+    }
+    setSaveError('')
+    onSave()
+  }
+
   return (
     <View style={styles.form}>
       <Text style={styles.hint}>
-        Person 1 speaks first. Lines alternate in the app (Person 1, Person 2, Person 1…). Add one line at a time.
+        Person 1 speaks first in the app. Under “Next line”, pick who speaks, then enter line + translation (both
+        required). Learners see translations only after they tap Show on the device.
       </Text>
-      <View style={styles.row}>
-        <Text style={styles.label}>Show translations in app</Text>
-        <Switch
-          value={showTrans}
-          onValueChange={(v) =>
-            setContent((cur) => ({
-              ...cur,
-              showTranslations: v,
-            }))
-          }
-        />
-      </View>
       <Text style={styles.sectionTitle}>Names</Text>
       <Text style={styles.fieldLabel}>Person 1</Text>
       <TextInput
@@ -225,7 +333,7 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
       />
 
       <Text style={styles.sectionTitle}>Conversation</Text>
-      <ScrollView style={styles.turnList} nestedScrollEnabled>
+      <View>
         {turns.length === 0 ? (
           <Text style={styles.muted}>No lines yet — add the first line below.</Text>
         ) : (
@@ -239,33 +347,74 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
                   <Text style={styles.removeBtnText}>Remove</Text>
                 </Pressable>
               </View>
-              <Text style={styles.turnAfaan}>{row.text}</Text>
+              <Text style={styles.fieldLabel}>Line</Text>
+              <TextInput
+                style={styles.input}
+                value={row.text}
+                onChangeText={(t) => updateLineText(row.speaker, row.lineIndex, t)}
+                placeholder="Afaan Oromo"
+                placeholderTextColor="#888"
+                multiline
+              />
+              <Text style={styles.fieldLabel}>Translation</Text>
               <TextInput
                 style={styles.transInput}
                 value={row.trans}
                 onChangeText={(t) => updateTranslation(row.speaker, row.lineIndex, t)}
-                placeholder="Translation (optional)"
+                placeholder="English"
                 placeholderTextColor="#666"
+                multiline
               />
             </View>
           ))
         )}
-      </ScrollView>
+      </View>
 
-      <Text style={styles.nextHint}>Next line is for: {nextLabel}</Text>
+      <Text style={styles.sectionTitle}>Next line</Text>
+      <Text style={styles.fieldLabel}>Speaker</Text>
+      <View style={styles.speakerPick}>
+        <Pressable
+          style={[styles.speakerChip, draftSpeaker === 1 && styles.speakerChipActive]}
+          onPress={() => setDraftSpeaker(1)}
+        >
+          <Text style={[styles.speakerChipText, draftSpeaker === 1 && styles.speakerChipTextActive]}>
+            Person 1 · {name1.trim() || '—'}
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.speakerChip, draftSpeaker === 2 && styles.speakerChipActive]}
+          onPress={() => setDraftSpeaker(2)}
+        >
+          <Text style={[styles.speakerChipText, draftSpeaker === 2 && styles.speakerChipTextActive]}>
+            Person 2 · {name2.trim() || '—'}
+          </Text>
+        </Pressable>
+      </View>
+      <Text style={styles.fieldLabel}>Line</Text>
       <TextInput
         style={styles.input}
         value={draftLine}
         onChangeText={setDraftLine}
-        placeholder="Afaan line…"
+        placeholder="Afaan Oromo"
+        placeholderTextColor="#888"
+        multiline
+      />
+      <Text style={styles.fieldLabel}>Translation</Text>
+      <TextInput
+        style={styles.input}
+        value={draftTranslation}
+        onChangeText={setDraftTranslation}
+        placeholder="English"
         placeholderTextColor="#888"
         multiline
       />
       <Pressable style={styles.addBtn} onPress={addLine}>
-        <Text style={styles.addBtnText}>+ Add line</Text>
+        <Text style={styles.addBtnText}>Add line</Text>
       </Pressable>
 
-      <Pressable style={styles.saveBtn} onPress={() => onSave()}>
+      {saveError ? <Text style={styles.errorText}>{saveError}</Text> : null}
+
+      <Pressable style={styles.saveBtn} onPress={handleSave}>
         <Text style={styles.saveBtnText}>Save screen</Text>
       </Pressable>
     </View>
@@ -277,8 +426,6 @@ const styles = StyleSheet.create({
   hint: { color: '#9ca3af', fontSize: 13, lineHeight: 18, marginBottom: 4 },
   sectionTitle: { color: '#e5e7eb', fontSize: 15, fontWeight: '700', marginTop: 8 },
   fieldLabel: { color: '#9ca3af', fontSize: 12, marginTop: 6 },
-  label: { color: '#e5e7eb', fontSize: 14, flex: 1 },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginVertical: 4 },
   input: {
     borderWidth: 1,
     borderColor: '#374151',
@@ -288,7 +435,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     minHeight: 44,
   },
-  turnList: { maxHeight: 220 },
   muted: { color: '#6b7280', fontSize: 13, paddingVertical: 8 },
   turnCard: {
     borderWidth: 1,
@@ -300,7 +446,7 @@ const styles = StyleSheet.create({
   },
   turnHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   turnSpeaker: { color: '#93c5fd', fontSize: 12, fontWeight: '600' },
-  turnAfaan: { color: '#f9fafb', fontSize: 16, marginTop: 6 },
+  errorText: { color: '#f87171', fontSize: 13, marginTop: 6 },
   transInput: {
     marginTop: 8,
     borderWidth: 1,
@@ -312,7 +458,22 @@ const styles = StyleSheet.create({
   },
   removeBtn: { paddingVertical: 4, paddingHorizontal: 8 },
   removeBtnText: { color: '#f87171', fontSize: 13, fontWeight: '600' },
-  nextHint: { color: '#fcd34d', fontSize: 13, fontWeight: '600', marginTop: 8 },
+  speakerPick: { flexDirection: 'row', gap: 8 },
+  speakerChip: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#4b5563',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#111827',
+  },
+  speakerChipActive: {
+    borderColor: '#60a5fa',
+    backgroundColor: '#1e3a5f',
+  },
+  speakerChipText: { color: '#d1d5db', fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  speakerChipTextActive: { color: '#fff' },
   addBtn: {
     backgroundColor: '#2563eb',
     borderRadius: 10,

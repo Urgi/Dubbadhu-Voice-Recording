@@ -146,7 +146,8 @@ Example:
     - **`name`**: `string`
     - **`lines`**: `string[]` (one string per turn for that speaker, in order)
     - `translations`: `(string|null)[]` (optional; parallel to `lines`)
-- `showTranslations`: `boolean` (optional; default true)
+
+The learner starts with translations hidden; learners can tap **Show** on the dialogue screen. Do not persist a `showTranslations` flag.
 
 Example:
 
@@ -155,8 +156,7 @@ Example:
   "dialogueData": {
     "person1": { "name": "A", "lines": ["Akkam?"], "translations": ["Hello?"] },
     "person2": { "name": "B", "lines": ["Naguma."], "translations": ["I’m good."] }
-  },
-  "showTranslations": true
+  }
 }
 ```
 

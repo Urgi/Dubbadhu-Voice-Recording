@@ -74,8 +74,6 @@ export type DialogueSide = {
 /** Exactly two speakers (`person1`, `person2`). No additional speaker rows. */
 export type DialogueContent = {
   dialogueData: { person1: DialogueSide; person2: DialogueSide; [k: string]: unknown };
-  showTranslations?: boolean;
-  [k: string]: unknown;
 };
 
 export type MatchPair = { left: string; right: string; [k: string]: unknown };

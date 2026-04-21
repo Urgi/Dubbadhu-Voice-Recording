@@ -131,10 +131,9 @@
     },
     "dialogueContent": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": ["dialogueData"],
       "properties": {
-        "showTranslations": { "type": "boolean" },
         "dialogueData": {
           "type": "object",
           "additionalProperties": true,

@@ -31,6 +31,7 @@ import {
   celebrateSanitizedLearnedExtra,
   mergeCelebrateLearnedFromExposureAndExtra,
   finalizeScreenContentPayload,
+  listAudioExposureLinkOptionsFromScreens,
   normalizeAudioExposureContentForEdit,
   normalizeDialogueContent,
   newDraftTokenId,
@@ -1687,6 +1688,18 @@ export function LessonScreenEditModal({
     return harvestAudioExposureWordsForPicker(screens)
   }, [lessonScreens, lessonScreenIndex, draft, screen])
 
+  const audioExposureSpeakingLinkOptions = useMemo(() => {
+    const idx = lessonScreenIndex
+    let screens = lessonScreens
+    if (typeof idx === 'number' && idx >= 0 && idx < lessonScreens.length) {
+      const overlay = draft ?? screen
+      if (overlay) {
+        screens = lessonScreens.map((s, i) => (i === idx ? overlay : s))
+      }
+    }
+    return listAudioExposureLinkOptionsFromScreens(screens)
+  }, [lessonScreens, lessonScreenIndex, draft, screen])
+
   useEffect(() => {
     if (visible && screen) {
       let c = cloneScreen(screen)
@@ -2373,6 +2386,7 @@ export function LessonScreenEditModal({
       }
       case 'speakingPractice': {
         const phraseVal = String(c.word ?? c.prompt ?? '')
+        const exposureLinked = Boolean(String(c.speakingDraftTokenId ?? '').trim())
         return (
           <View style={styles.form}>
             <Text style={styles.hint}>
@@ -2380,7 +2394,7 @@ export function LessonScreenEditModal({
               bank when you pick a row.
             </Text>
             <AudioExposureOromoField
-              readOnly={Boolean(c.word_id)}
+              readOnly={Boolean(c.word_id) || exposureLinked}
               lessonHarvested={exposureWordsForAfaanPicker}
               value={phraseVal}
               onChangeText={(t) => {
@@ -2393,6 +2407,7 @@ export function LessonScreenEditModal({
                     tip: '',
                   }
                   if (!next.word_id) delete next.word_id
+                  delete next.speakingDraftTokenId
                   return next
                 })
               }}
@@ -2406,10 +2421,47 @@ export function LessonScreenEditModal({
                     prompt: rowAfaanTextForBankPick(row),
                   }
                   if (!bankId) delete next.word_id
+                  delete next.speakingDraftTokenId
                   return next
                 })
               }}
             />
+            {audioExposureSpeakingLinkOptions.length ? (
+              <View style={{ marginTop: 14 }}>
+                <Text style={[styles.hint, { marginBottom: 8 }]}>
+                  Or link this screen to a word from an Audio exposure step in this lesson (works even when that word
+                  is not in the word bank yet). Example audio appears once exposure has clips or after you add the word
+                  to the bank.
+                </Text>
+                {audioExposureSpeakingLinkOptions.map((opt) => (
+                  <Pressable
+                    key={opt.draftTokenId}
+                    style={styles.quizCorrectChoice}
+                    onPress={() => {
+                      setContent((cur) => {
+                        const next: Record<string, unknown> = {
+                          ...cur,
+                          word: opt.afaan,
+                          prompt: opt.afaan,
+                          speakingDraftTokenId: opt.draftTokenId,
+                          tip: '',
+                        }
+                        delete next.word_id
+                        return next
+                      })
+                    }}
+                  >
+                    <Text style={styles.quizCorrectChoiceText}>
+                      {opt.afaan}
+                      {opt.screenIndex ? ` · exposure screen #${opt.screenIndex}` : ''}
+                    </Text>
+                    {opt.english.trim() ? (
+                      <Text style={styles.quizCorrectChoiceSub}>{opt.english.trim()}</Text>
+                    ) : null}
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
             <Pressable
               style={styles.changeWordBtn}
               onPress={() => {
@@ -2422,6 +2474,7 @@ export function LessonScreenEditModal({
                     tip: '',
                   }
                   if (!next.word_id) delete next.word_id
+                  delete next.speakingDraftTokenId
                   return next
                 })
               }}

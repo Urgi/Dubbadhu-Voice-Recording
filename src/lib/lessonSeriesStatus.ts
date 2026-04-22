@@ -5,6 +5,7 @@ export type LessonSeriesStatus =
   | 'submitted'
   | 'approved'
   | 'complete'
+  | 'testing'
   | 'published'
 
 export const SERIES_STATUS_ORDER: LessonSeriesStatus[] = [
@@ -13,6 +14,7 @@ export const SERIES_STATUS_ORDER: LessonSeriesStatus[] = [
   'submitted',
   'approved',
   'complete',
+  'testing',
   'published',
 ]
 
@@ -21,8 +23,8 @@ export function legacyFlagsFromSeriesStatus(st: LessonSeriesStatus): {
   audio_recorded: boolean
 } {
   return {
-    approved: st === 'approved' || st === 'complete' || st === 'published',
-    audio_recorded: st === 'complete' || st === 'published',
+    approved: st === 'approved' || st === 'complete' || st === 'testing' || st === 'published',
+    audio_recorded: st === 'complete' || st === 'testing' || st === 'published',
   }
 }
 
@@ -36,6 +38,7 @@ export function normalizeSeriesStatus(raw: string | null | undefined): LessonSer
     s === 'submitted' ||
     s === 'approved' ||
     s === 'complete' ||
+    s === 'testing' ||
     s === 'published'
   ) {
     return s
@@ -55,6 +58,8 @@ export function seriesStatusLabel(st: LessonSeriesStatus): string {
       return 'Approved'
     case 'complete':
       return 'Audio complete'
+    case 'testing':
+      return 'Testing (pre-release)'
     case 'published':
       return 'Published'
     default:
@@ -64,7 +69,7 @@ export function seriesStatusLabel(st: LessonSeriesStatus): string {
 
 /** Admin: structure locked after audio complete / shipped. */
 export function isLessonStructureFrozen(st: LessonSeriesStatus): boolean {
-  return st === 'complete' || st === 'published'
+  return st === 'complete' || st === 'testing' || st === 'published'
 }
 
 /**

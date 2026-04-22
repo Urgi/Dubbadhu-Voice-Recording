@@ -190,6 +190,9 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     if (seriesStatus === 'published') {
       return 'Published — this series status is locked.'
     }
+    if (seriesStatus === 'testing') {
+      return 'Testing — learner dev builds can list this series on Speak; production shows it only after you publish below.'
+    }
     if (!vaProgress || vaProgress.totalLessonWords === 0) {
       return 'Add vocabulary in lessons (audio exposure / celebrate) so we can detect when all VA audio is done.'
     }
@@ -202,7 +205,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       } in this batch still need recording (pending or re-record).`
     }
     if (seriesStatus === 'complete') {
-      return 'Audio approved — run npm run series:pull in the Dubbadhu app repo to publish to the learner bundle.'
+      return 'Audio complete — run npm run series:pull in the Dubbadhu app repo to import waveforms and move this series to Testing.'
     }
     return 'When all batch words are recorded or approved, an admin can tap Mark audio complete below.'
   }, [lessonSeriesRowExists, seriesStatus, vaProgress])
@@ -232,7 +235,10 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     isAdmin && lessonSeriesRowExists && seriesStatus !== 'published' && seriesStatus !== 'draft'
 
   const showProfessorWorkflow =
-    isProfessor && lessonSeriesRowExists && seriesStatus !== 'published'
+    isProfessor &&
+    lessonSeriesRowExists &&
+    seriesStatus !== 'published' &&
+    seriesStatus !== 'testing'
 
   const releaseMediaReady = useMemo(
     () =>
@@ -281,7 +287,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       }
       return 'View only. Admin owns curriculum and audio workflow for this series now.'
     }
-    return 'Handle submitted series or admin drafts: approve curriculum to seed the voice queue, finish recording, add Speak cover + series intro video + review URLs in lessons, then mark audio complete. Run npm run series:pull in the Dubbadhu repo to publish.'
+    return 'Handle submitted series or admin drafts: approve curriculum to seed the voice queue, finish recording, add Speak cover + series intro video + review URLs in lessons, then mark audio complete. Run npm run series:pull in the Dubbadhu repo to import lessons and set Testing; publish here when ready for production learners.'
   }, [lessonSeriesRowExists, isProfessor, seriesStatus])
 
   const adminApproveLabel = 'Approve Series'
@@ -675,6 +681,24 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     )
   }, [canMarkAudioComplete, markAudioCompleteBaseEnabled, persistSeriesStatus, load, vaProgress])
 
+  const onPublishToLearnerCatalog = useCallback(() => {
+    Alert.alert(
+      'Publish to learner catalog?',
+      'Production builds list only published series on Speak. Continue when this series is ready for all learners.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Publish',
+          style: 'default',
+          onPress: async () => {
+            const ok = await persistSeriesStatus('published')
+            if (ok) void load()
+          },
+        },
+      ],
+    )
+  }, [persistSeriesStatus, load])
+
   const onApproveContent = useCallback(async () => {
     if (!lessonSeriesRowExists || !canAdminApproveCurriculum) return
     setVaSyncing(true)
@@ -803,11 +827,11 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     seriesTitle,
   ])
 
-  const canSwipeDeleteLesson = seriesStatus !== 'published'
+  const canSwipeDeleteLesson = seriesStatus !== 'published' && seriesStatus !== 'testing'
 
   const performDeleteLesson = useCallback(
     async (lesson: LessonRow) => {
-      if (seriesStatus === 'published') return
+      if (seriesStatus === 'published' || seriesStatus === 'testing') return
       const { error: delErr } = await supabase.from('lessons').delete().eq('id', lesson.id)
       if (delErr) {
         Alert.alert('Could not delete lesson', withLessonsRlsHint(delErr.message))
@@ -879,7 +903,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
 
   const confirmDeleteLesson = useCallback(
     (lesson: LessonRow) => {
-      if (seriesStatus === 'published') return
+      if (seriesStatus === 'published' || seriesStatus === 'testing') return
       lessonSwipeRefs.current[lesson.id]?.close()
       Alert.alert(
         'Delete lesson?',
@@ -1158,6 +1182,23 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                 >
                   <Text style={styles.markAudioCompleteBtnText}>Mark audio complete</Text>
                 </Pressable>
+              ) : null}
+              {seriesStatus === 'testing' ? (
+                <>
+                  <Text style={styles.testingPublishHint}>
+                    Learner app: dev builds also list Testing on Speak; release builds only show Published.
+                  </Text>
+                  <Pressable
+                    style={[
+                      styles.primaryOutlineBtn,
+                      (seriesStatusSaving || vaSyncing) && styles.btnDisabledOpacity,
+                    ]}
+                    onPress={() => void onPublishToLearnerCatalog()}
+                    disabled={seriesStatusSaving || vaSyncing}
+                  >
+                    <Text style={styles.primaryOutlineBtnText}>Publish to learner catalog</Text>
+                  </Pressable>
+                </>
               ) : null}
             </>
           ) : null}
@@ -1548,6 +1589,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   primaryOutlineBtnText: { color: '#34c759', fontSize: 15, fontWeight: '700' },
+  testingPublishHint: {
+    marginTop: 14,
+    color: '#8e8e93',
+    fontSize: 13,
+    lineHeight: 19,
+  },
   wordBankReviewBlock: {
     marginTop: 14,
     padding: 12,

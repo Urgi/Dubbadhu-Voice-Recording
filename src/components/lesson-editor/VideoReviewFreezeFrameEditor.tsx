@@ -25,13 +25,21 @@ type Props = {
   setContent: SetContent
   /** When false (e.g. professor draft), only a short note is shown. */
   enabled: boolean
+  /** When true with enabled, show still preview but do not change freeze time (admin-draft preview). */
+  readOnly?: boolean
 }
 
 /**
  * Picks which moment in the source video becomes the dimmed background still behind the review lines.
  * Uses expo-video-thumbnails (no expo-av Video in this ScrollView — that crashed iOS).
  */
-export function VideoReviewFreezeFrameEditor({ videoUrl, freezeAtSeconds, setContent, enabled }: Props) {
+export function VideoReviewFreezeFrameEditor({
+  videoUrl,
+  freezeAtSeconds,
+  setContent,
+  enabled,
+  readOnly = false,
+}: Props) {
   const uri = String(videoUrl ?? '').trim()
   const [freezeDraft, setFreezeDraft] = useState('')
   const [thumbUri, setThumbUri] = useState<string | null>(null)
@@ -125,7 +133,7 @@ export function VideoReviewFreezeFrameEditor({ videoUrl, freezeAtSeconds, setCon
     setFreezeNumber(Math.min(n, MAX_FRAME_SEC))
   }
 
-  if (!enabled) {
+  if (!enabled && !readOnly) {
     return null
   }
 
@@ -165,7 +173,11 @@ export function VideoReviewFreezeFrameEditor({ videoUrl, freezeAtSeconds, setCon
       </View>
 
       <View style={styles.row}>
-        <Pressable style={[styles.btn, freezeParsed == null && styles.btnOn]} onPress={() => clearFreezeToMiddleDefault()}>
+        <Pressable
+          style={[styles.btn, freezeParsed == null && styles.btnOn]}
+          disabled={readOnly}
+          onPress={() => clearFreezeToMiddleDefault()}
+        >
           <Text style={[styles.btnText, freezeParsed == null && styles.btnTextOn]}>Middle of video (default)</Text>
         </Pressable>
       </View>
@@ -178,6 +190,7 @@ export function VideoReviewFreezeFrameEditor({ videoUrl, freezeAtSeconds, setCon
         placeholder="e.g. 12.5 — leave empty for middle"
         placeholderTextColor="#52525b"
         keyboardType="decimal-pad"
+        editable={!readOnly}
       />
     </View>
   )

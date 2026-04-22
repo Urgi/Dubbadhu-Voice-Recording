@@ -69,6 +69,26 @@ export const SCREEN_TYPE_OPTIONS: { value: ScreenType; label: string }[] = [
 export type ScreenTypeOption = { value: ScreenType; label: string }
 
 /**
+ * Order for “Add screen” (intro is not addable — it stays first). Matches how lessons are usually built:
+ * preview → teach → hear words → speak → pattern drill → check → match → discriminate → analyze → celebrate → extras → video.
+ */
+const ADD_SCREEN_CURRICULUM_ORDER: ScreenType[] = [
+  'firstLook',
+  'concept',
+  'dialogue',
+  'audioExposure',
+  'speakingPractice',
+  'patternPractice',
+  'quiz',
+  'match',
+  'discriminationDrill',
+  'word-breakdown',
+  'CelebrateScreen',
+  'communityBoard',
+  'videoReview',
+]
+
+/**
  * Options for “Add screen”. Professors omit video review — admins attach that after curriculum approval.
  */
 export function buildAddScreenOptionsForCurriculumEditor(role: string | undefined): ScreenTypeOption[] {
@@ -82,9 +102,19 @@ export function buildAddScreenOptionsForCurriculumEditor(role: string | undefine
   if (!excludeVideoReview && !byValue.has('videoReview')) {
     byValue.set('videoReview', { value: 'videoReview', label: 'Video review' })
   }
-  return [...byValue.values()].sort((a, b) =>
-    a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
-  )
+  const ordered: ScreenTypeOption[] = []
+  const placed = new Set<string>()
+  for (const value of ADD_SCREEN_CURRICULUM_ORDER) {
+    const o = byValue.get(value)
+    if (o) {
+      ordered.push(o)
+      placed.add(value)
+    }
+  }
+  for (const o of byValue.values()) {
+    if (!placed.has(o.value)) ordered.push(o)
+  }
+  return ordered
 }
 
 /** Professor-facing label hides “video” wording for the review step. */

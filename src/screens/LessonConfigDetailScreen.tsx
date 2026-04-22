@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
+import { usePreventRemove } from '@react-navigation/native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import {
   ADMIN_ACCENT_GOLD,
@@ -390,6 +391,8 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
   const [pickTypeOpen, setPickTypeOpen] = useState(false)
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [viewIndex, setViewIndex] = useState<number | null>(null)
+  /** Professor admin_draft: structured screen preview (read-only), not raw JSON. */
+  const [previewReadOnlyIndex, setPreviewReadOnlyIndex] = useState<number | null>(null)
   const [seriesStatus, setSeriesStatus] = useState<LessonSeriesStatus>('draft')
 
   const addScreenOptions = useMemo(
@@ -398,37 +401,17 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
   )
 
   const unsavedRef = useRef(false)
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const rowRef = useRef<LessonRecord | null>(null)
   const swipeBlockedRef = useRef(false)
   const markUnsaved = useCallback(() => {
     unsavedRef.current = true
+    setHasUnsavedChanges(true)
   }, [])
   const clearUnsaved = useCallback(() => {
     unsavedRef.current = false
+    setHasUnsavedChanges(false)
   }, [])
-
-  useEffect(() => {
-    const sub = navigation.addListener('beforeRemove', (e) => {
-      if (!unsavedRef.current) return
-      e.preventDefault()
-      Alert.alert(
-        'Discard changes?',
-        'You have unsaved changes to this lesson.',
-        [
-          { text: 'Keep editing', style: 'cancel' },
-          {
-            text: 'Leave without saving',
-            style: 'destructive',
-            onPress: () => {
-              unsavedRef.current = false
-              navigation.dispatch(e.data.action)
-            },
-          },
-        ],
-      )
-    })
-    return sub
-  }, [navigation])
 
   const load = useCallback(async () => {
     setError('')
@@ -636,6 +619,47 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
     }
   }, [row, draft, rawJson, rawJsonMode, clearUnsaved, lessonContentEditable, role])
 
+  const onPreventRemoveLesson = useCallback(
+    ({ data }: { data: { action: Parameters<typeof navigation.dispatch>[0] } }) => {
+      const action = data.action
+      const leave = () => {
+        clearUnsaved()
+        navigation.dispatch(action)
+      }
+      const buttons: {
+        text: string
+        style?: 'default' | 'cancel' | 'destructive'
+        onPress?: () => void
+      }[] = [{ text: 'Keep editing', style: 'cancel' }]
+      if (lessonContentEditable) {
+        buttons.push({
+          text: 'Save',
+          onPress: () => {
+            void (async () => {
+              const ok = await save()
+              if (ok) navigation.dispatch(action)
+            })()
+          },
+        })
+      }
+      buttons.push({
+        text: lessonContentEditable ? 'Discard' : 'Leave without saving',
+        style: 'destructive',
+        onPress: leave,
+      })
+      Alert.alert(
+        'Unsaved changes',
+        lessonContentEditable
+          ? 'Save this lesson, discard your edits, or keep editing.'
+          : 'You have unsaved local changes. You can leave without saving or keep editing.',
+        buttons,
+      )
+    },
+    [navigation, save, clearUnsaved, lessonContentEditable],
+  )
+
+  usePreventRemove(hasUnsavedChanges, onPreventRemoveLesson)
+
   const handleSwipeLessonNavigate = useCallback(
     async (direction: 'prev' | 'next') => {
       if (swipeBlockedRef.current) return
@@ -664,7 +688,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
       const replaceAnim = direction === 'prev' ? 'pop' : 'push'
 
       const replaceToTarget = () => {
-        unsavedRef.current = false
+        clearUnsaved()
         navigation.replace('LessonConfigDetail', {
           lessonId: targetId,
           lessonNavReplaceAnimation: replaceAnim,
@@ -699,7 +723,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
         ],
       )
     },
-    [navigation, save],
+    [navigation, save, clearUnsaved],
   )
 
   const lessonSwipeGesture = useMemo(
@@ -776,7 +800,12 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
 
   rowRef.current = row
   swipeBlockedRef.current =
-    saving || loading || editingIndex !== null || viewIndex !== null || pickTypeOpen
+    saving ||
+    loading ||
+    editingIndex !== null ||
+    viewIndex !== null ||
+    previewReadOnlyIndex !== null ||
+    pickTypeOpen
 
   if (loading) {
     return (
@@ -1007,9 +1036,17 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
                 <View key={`${s.type}-${i}`} style={styles.screenRowCard}>
                   <Pressable
                     style={styles.screenRowMain}
-                    onPress={() =>
-                      lessonContentEditable ? setEditingIndex(i) : setViewIndex(i)
-                    }
+                    onPress={() => {
+                      if (lessonContentEditable) {
+                        setEditingIndex(i)
+                        return
+                      }
+                      if (professorAdminDraftPreview) {
+                        setPreviewReadOnlyIndex(i)
+                        return
+                      }
+                      setViewIndex(i)
+                    }}
                     android_ripple={{ color: '#333' }}
                   >
                     <View style={styles.screenBadge}>
@@ -1209,6 +1246,25 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
           applyScreenEdit(editingIndex, next)
           setEditingIndex(null)
         }}
+      />
+
+      <LessonScreenEditModal
+        visible={previewReadOnlyIndex !== null}
+        readOnly
+        screen={previewReadOnlyIndex != null ? draft.screens[previewReadOnlyIndex] ?? null : null}
+        lessonScreens={draft?.screens ?? []}
+        lessonScreenIndex={previewReadOnlyIndex}
+        lessonSeries={row?.series_id ?? null}
+        lessonContentSeries={
+          draft?.series != null && typeof draft.series === 'string' && draft.series.trim()
+            ? draft.series.trim()
+            : null
+        }
+        wordBankLanguage={VOICE_BANK_LANGUAGE}
+        allowJsonEditing={false}
+        allowVideoReviewMediaFields
+        onClose={() => setPreviewReadOnlyIndex(null)}
+        onApply={() => {}}
       />
     </View>
   )

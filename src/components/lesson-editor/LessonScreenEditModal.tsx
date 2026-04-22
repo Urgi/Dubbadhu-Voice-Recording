@@ -1,6 +1,9 @@
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -54,6 +57,20 @@ import { VideoReviewFreezeFrameEditor } from './VideoReviewFreezeFrameEditor'
 import { TranslationMismatchModal } from './TranslationMismatchModal'
 import { DialogueTwoPersonEditor } from './DialogueTwoPersonEditor'
 
+const STRUCTURED_SCREEN_TYPES_FOR_HEADER_SAVE = new Set([
+  'intro',
+  'concept',
+  'dialogue',
+  'match',
+  'quiz',
+  'speakingPractice',
+  'audioExposure',
+  'CelebrateScreen',
+  'patternPractice',
+  'discriminationDrill',
+  'videoReview',
+])
+
 /** Public storage bucket for Word discrimination quiz question images (Supabase dashboard). */
 const WORD_DISCRIMINATION_IMAGES_BUCKET = 'word-comparison-images'
 
@@ -76,8 +93,16 @@ type Props = {
   allowJsonEditing?: boolean
   /** Professors: false — no storage picker / URL fields for the review step (admin adds later). */
   allowVideoReviewMediaFields?: boolean
+  /** Preview-only: same structured UI as admins, no edits or save (e.g. professor viewing admin_draft). */
+  readOnly?: boolean
   onClose: () => void
   onApply: (next: LessonScreen) => void
+}
+
+const LessonEditorReadOnlyContext = createContext(false)
+
+function useLessonEditorReadOnly() {
+  return useContext(LessonEditorReadOnlyContext)
 }
 
 /** Normalize pattern practice / legacy option entries to display text (no audio refs persisted). */
@@ -612,9 +637,11 @@ function isVideoStorageObjectFile(f: { name: string; id?: string | null }): bool
 function VideoReviewDubbadhuVideoField({
   videoUrl,
   setContent,
+  readOnly = false,
 }: {
   videoUrl: string
   setContent: (patch: Record<string, unknown> | ((cur: Record<string, unknown>) => Record<string, unknown>)) => void
+  readOnly?: boolean
 }) {
   const [browseOpen, setBrowseOpen] = useState(false)
   const [bucketFiles, setBucketFiles] = useState<string[]>([])
@@ -697,14 +724,18 @@ function VideoReviewDubbadhuVideoField({
     <View style={{ marginBottom: 10 }}>
       <Text style={styles.label}>Video (Videos-Dubbadhu bucket)</Text>
       <Text style={[styles.hint, !v && styles.imagePickStatusEmpty]}>{statusLine}</Text>
-      <Pressable style={styles.quizCorrectBtn} onPress={() => setBrowseOpen(true)}>
-        <Text style={styles.quizCorrectBtnLabel}>Browse bucket</Text>
-      </Pressable>
-      {v ? (
-        <Pressable style={styles.removeBtn} onPress={() => setContent((cur) => ({ ...cur, videoUrl: '' }))}>
-          <Text style={styles.removeBtnText}>Clear video</Text>
-        </Pressable>
-      ) : null}
+      {readOnly ? null : (
+        <>
+          <Pressable style={styles.quizCorrectBtn} onPress={() => setBrowseOpen(true)}>
+            <Text style={styles.quizCorrectBtnLabel}>Browse bucket</Text>
+          </Pressable>
+          {v ? (
+            <Pressable style={styles.removeBtn} onPress={() => setContent((cur) => ({ ...cur, videoUrl: '' }))}>
+              <Text style={styles.removeBtnText}>Clear video</Text>
+            </Pressable>
+          ) : null}
+        </>
+      )}
 
       <Modal visible={browseOpen} transparent animationType="fade" onRequestClose={() => setBrowseOpen(false)}>
         <Pressable style={styles.quizCorrectOverlay} onPress={() => setBrowseOpen(false)}>
@@ -1032,6 +1063,8 @@ function WordDiscriminationQuizEditor({
   saveStructured,
   draftRef,
   setJsonError,
+  registerPrimarySave,
+  readOnly = false,
 }: {
   content: Record<string, unknown>
   setContent: (patch: Record<string, unknown> | ((cur: Record<string, unknown>) => Record<string, unknown>)) => void
@@ -1041,6 +1074,8 @@ function WordDiscriminationQuizEditor({
   saveStructured: (c: Record<string, unknown>) => void
   draftRef: MutableRefObject<LessonScreen | null>
   setJsonError: (s: string) => void
+  registerPrimarySave?: (fn: () => void) => void
+  readOnly?: boolean
 }) {
   const [seriesLabels, setSeriesLabels] = useState<string[]>([])
   const harvested = useMemo(() => harvestWordsFromLessonScreens(lessonScreens as unknown[]), [lessonScreens])
@@ -1055,6 +1090,142 @@ function WordDiscriminationQuizEditor({
       cancel = true
     }
   }, [lessonSeries, lessonContentSeries])
+
+  const runDiscriminationPrimarySave = useCallback(() => {
+    void (async () => {
+      setJsonError('')
+      const d = draftRef.current
+      if (!d) return
+      const payload = { ...(d.content as Record<string, unknown>) }
+      const sharedQ = String(payload.question ?? payload.title ?? payload.prompt ?? '').trim()
+      if (!sharedQ) {
+        setJsonError('Enter the Title Question (shown above images for every question).')
+        return
+      }
+      const wordsRaw = (payload.words as Record<string, unknown>[] | undefined) ?? []
+      if (!Array.isArray(wordsRaw) || wordsRaw.length < 2) {
+        setJsonError('Add at least two words.')
+        return
+      }
+      const texts: string[] = []
+      for (let wi = 0; wi < wordsRaw.length; wi++) {
+        const wr = wordsRaw[wi]
+        if (!wr || typeof wr !== 'object' || Array.isArray(wr)) {
+          setJsonError(`Word ${wi + 1} is invalid.`)
+          return
+        }
+        const tw = String((wr as Record<string, unknown>).text ?? '').trim()
+        if (!tw) {
+          setJsonError(`Word ${wi + 1}: pick or enter a word.`)
+          return
+        }
+        texts.push(tw)
+      }
+      const seen = new Set<string>()
+      for (const tw of texts) {
+        const k = celebrateAfaanDedupeKey(tw)
+        if (seen.has(k)) {
+          setJsonError('All words on this screen must be different.')
+          return
+        }
+        seen.add(k)
+      }
+      const hw = harvestWordsFromLessonScreens(lessonScreens as unknown[])
+      for (let wi = 0; wi < texts.length; wi++) {
+        const ok = await isWordAllowedForDiscrimination(
+          texts[wi],
+          lessonSeries,
+          lessonContentSeries,
+          hw,
+        )
+        if (!ok) {
+          setJsonError(
+            'Each word must appear in this lesson (any screen) or exist in the series word bank. Adjust titles/series or pick again.',
+          )
+          return
+        }
+      }
+      const resolvedWords: Record<string, unknown>[] = []
+      for (let wi = 0; wi < wordsRaw.length; wi++) {
+        const wr = wordsRaw[wi] as Record<string, unknown>
+        const tw = texts[wi]
+        const def = await resolveDiscriminationDefinition(tw, lessonSeries, lessonContentSeries, hw)
+        const entry: Record<string, unknown> = { text: tw, definition: def }
+        const wid = wr.word_id
+        if (typeof wid === 'string' && isUuidLike(wid) && !wid.startsWith(LESSON_PICK_ID_PREFIX)) {
+          entry.word_id = wid
+        }
+        resolvedWords.push(entry)
+      }
+      const nWords = resolvedWords.length
+      const scRaw = (payload.scenes as Record<string, unknown>[] | undefined) ?? []
+      if (!Array.isArray(scRaw) || scRaw.length === 0) {
+        setJsonError('Add at least one question.')
+        return
+      }
+      const outScenes: Record<string, unknown>[] = []
+      for (let si = 0; si < scRaw.length; si++) {
+        const s = scRaw[si]
+        if (!s || typeof s !== 'object' || Array.isArray(s)) {
+          setJsonError(`Question ${si + 1} is invalid.`)
+          return
+        }
+        const sr = s as Record<string, unknown>
+        const img = String(sr.image ?? '').trim()
+        const reqDesc = String(sr.imageRequestDescription ?? '').trim()
+        const expl = String(sr.explanation ?? '').trim()
+        if (!img && !reqDesc) {
+          setJsonError(`Question ${si + 1}: choose an available image or enter a new-image request.`)
+          return
+        }
+        if (!expl) {
+          setJsonError(`Question ${si + 1}: explanation required.`)
+          return
+        }
+        let cwi =
+          typeof sr.correctWordIndex === 'number' && Number.isFinite(sr.correctWordIndex)
+            ? Math.floor(sr.correctWordIndex)
+            : String(sr.correct ?? 'A').toUpperCase().startsWith('B')
+              ? 1
+              : 0
+        if (cwi < 0 || cwi >= nWords) cwi = 0
+        const sceneOut: Record<string, unknown> = {
+          image: img,
+          explanation: expl,
+          correctWordIndex: cwi,
+        }
+        if (reqDesc && !img) {
+          sceneOut.imageRequestDescription = reqDesc
+        }
+        outScenes.push(sceneOut)
+      }
+      payload.question = sharedQ
+      delete payload.title
+      delete payload.prompt
+      delete payload.wordA
+      delete payload.wordB
+      delete payload.word_a
+      delete payload.word_b
+      delete payload.definitionA
+      delete payload.definitionB
+      delete payload.wordA_id
+      delete payload.wordB_id
+      payload.words = resolvedWords
+      payload.scenes = outScenes
+      payload.streakTarget = nWords
+      saveStructured(payload)
+    })()
+  }, [draftRef, lessonScreens, lessonSeries, lessonContentSeries, saveStructured, setJsonError])
+
+  useLayoutEffect(() => {
+    if (!registerPrimarySave) return
+    if (readOnly) {
+      registerPrimarySave(() => {})
+      return () => registerPrimarySave(() => {})
+    }
+    registerPrimarySave(runDiscriminationPrimarySave)
+    return () => registerPrimarySave(() => {})
+  }, [registerPrimarySave, runDiscriminationPrimarySave, readOnly])
 
   let words = (content.words as Record<string, unknown>[] | undefined) ?? []
   if (!Array.isArray(words) || words.length < 2) {
@@ -1256,133 +1427,6 @@ function WordDiscriminationQuizEditor({
       >
         <Text style={styles.addBtnText}>+ Add question</Text>
       </Pressable>
-      <SaveRow
-        onPress={() => {
-          void (async () => {
-            setJsonError('')
-            const d = draftRef.current
-            if (!d) return
-            const payload = { ...(d.content as Record<string, unknown>) }
-            const sharedQ = String(payload.question ?? payload.title ?? payload.prompt ?? '').trim()
-            if (!sharedQ) {
-              setJsonError('Enter the Title Question (shown above images for every question).')
-              return
-            }
-            const wordsRaw = (payload.words as Record<string, unknown>[] | undefined) ?? []
-            if (!Array.isArray(wordsRaw) || wordsRaw.length < 2) {
-              setJsonError('Add at least two words.')
-              return
-            }
-            const texts: string[] = []
-            for (let wi = 0; wi < wordsRaw.length; wi++) {
-              const wr = wordsRaw[wi]
-              if (!wr || typeof wr !== 'object' || Array.isArray(wr)) {
-                setJsonError(`Word ${wi + 1} is invalid.`)
-                return
-              }
-              const tw = String((wr as Record<string, unknown>).text ?? '').trim()
-              if (!tw) {
-                setJsonError(`Word ${wi + 1}: pick or enter a word.`)
-                return
-              }
-              texts.push(tw)
-            }
-            const seen = new Set<string>()
-            for (const tw of texts) {
-              const k = celebrateAfaanDedupeKey(tw)
-              if (seen.has(k)) {
-                setJsonError('All words on this screen must be different.')
-                return
-              }
-              seen.add(k)
-            }
-            const hw = harvestWordsFromLessonScreens(lessonScreens as unknown[])
-            for (let wi = 0; wi < texts.length; wi++) {
-              const ok = await isWordAllowedForDiscrimination(
-                texts[wi],
-                lessonSeries,
-                lessonContentSeries,
-                hw,
-              )
-              if (!ok) {
-                setJsonError(
-                  'Each word must appear in this lesson (any screen) or exist in the series word bank. Adjust titles/series or pick again.',
-                )
-                return
-              }
-            }
-            const resolvedWords: Record<string, unknown>[] = []
-            for (let wi = 0; wi < wordsRaw.length; wi++) {
-              const wr = wordsRaw[wi] as Record<string, unknown>
-              const tw = texts[wi]
-              const def = await resolveDiscriminationDefinition(tw, lessonSeries, lessonContentSeries, hw)
-              const entry: Record<string, unknown> = { text: tw, definition: def }
-              const wid = wr.word_id
-              if (typeof wid === 'string' && isUuidLike(wid) && !wid.startsWith(LESSON_PICK_ID_PREFIX)) {
-                entry.word_id = wid
-              }
-              resolvedWords.push(entry)
-            }
-            const nWords = resolvedWords.length
-            const scRaw = (payload.scenes as Record<string, unknown>[] | undefined) ?? []
-            if (!Array.isArray(scRaw) || scRaw.length === 0) {
-              setJsonError('Add at least one question.')
-              return
-            }
-            const outScenes: Record<string, unknown>[] = []
-            for (let si = 0; si < scRaw.length; si++) {
-              const s = scRaw[si]
-              if (!s || typeof s !== 'object' || Array.isArray(s)) {
-                setJsonError(`Question ${si + 1} is invalid.`)
-                return
-              }
-              const sr = s as Record<string, unknown>
-              const img = String(sr.image ?? '').trim()
-              const reqDesc = String(sr.imageRequestDescription ?? '').trim()
-              const expl = String(sr.explanation ?? '').trim()
-              if (!img && !reqDesc) {
-                setJsonError(`Question ${si + 1}: choose an available image or enter a new-image request.`)
-                return
-              }
-              if (!expl) {
-                setJsonError(`Question ${si + 1}: explanation required.`)
-                return
-              }
-              let cwi =
-                typeof sr.correctWordIndex === 'number' && Number.isFinite(sr.correctWordIndex)
-                  ? Math.floor(sr.correctWordIndex)
-                  : String(sr.correct ?? 'A').toUpperCase().startsWith('B')
-                    ? 1
-                    : 0
-              if (cwi < 0 || cwi >= nWords) cwi = 0
-              const sceneOut: Record<string, unknown> = {
-                image: img,
-                explanation: expl,
-                correctWordIndex: cwi,
-              }
-              if (reqDesc && !img) {
-                sceneOut.imageRequestDescription = reqDesc
-              }
-              outScenes.push(sceneOut)
-            }
-            payload.question = sharedQ
-            delete payload.title
-            delete payload.prompt
-            delete payload.wordA
-            delete payload.wordB
-            delete payload.word_a
-            delete payload.word_b
-            delete payload.definitionA
-            delete payload.definitionB
-            delete payload.wordA_id
-            delete payload.wordB_id
-            payload.words = resolvedWords
-            payload.scenes = outScenes
-            payload.streakTarget = nWords
-            saveStructured(payload)
-          })()
-        }}
-      />
     </View>
   )
 }
@@ -1398,6 +1442,7 @@ function WordBankPicker({
   onPick: (row: WordBankRow) => void
   placeholder?: string
 }) {
+  const ro = useLessonEditorReadOnly()
   const [q, setQ] = useState('')
   const [loading, setLoading] = useState(false)
   const [rows, setRows] = useState<WordBankRow[]>([])
@@ -1405,6 +1450,12 @@ function WordBankPicker({
   const lastReq = useRef(0)
 
   useEffect(() => {
+    if (ro) {
+      setRows([])
+      setErr('')
+      setLoading(false)
+      return
+    }
     const query = q.trim()
     if (query.length < 2) {
       setRows([])
@@ -1432,12 +1483,13 @@ function WordBankPicker({
       })()
     }, 250)
     return () => clearTimeout(t)
-  }, [q])
+  }, [q, ro])
 
   return (
     <View style={styles.wordPicker}>
       <Text style={styles.label}>{label}</Text>
       {value ? <Text style={styles.wordPicked}>{wordLabel(value)}</Text> : <Text style={styles.wordNone}>None</Text>}
+      {ro ? null : (
       <TextInput
         style={styles.input}
         value={q}
@@ -1447,9 +1499,10 @@ function WordBankPicker({
         autoCapitalize="none"
         autoCorrect={false}
       />
-      {loading ? <Text style={styles.hint}>Searching…</Text> : null}
-      {err ? <Text style={styles.jsonErr}>{err}</Text> : null}
-      {rows.length ? (
+      )}
+      {!ro && loading ? <Text style={styles.hint}>Searching…</Text> : null}
+      {!ro && err ? <Text style={styles.jsonErr}>{err}</Text> : null}
+      {!ro && rows.length ? (
         <View style={styles.wordResults}>
           {rows.map((r) => (
             <Pressable
@@ -1506,11 +1559,23 @@ function AudioExposureOromoField({
   /** Other Audio exposure words in this lesson (not yet in DB) — merged into matches like word-bank rows. */
   lessonHarvested?: HarvestedWord[]
 }) {
+  const ctxReadOnly = useLessonEditorReadOnly()
+  const bankReadOnly = readOnly || ctxReadOnly
   const [rows, setRows] = useState<WordBankRow[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
   const [suggestOpen, setSuggestOpen] = useState(false)
   const lastReq = useRef(0)
+  const blurHideSuggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearSuggestBlurTimer = useCallback(() => {
+    if (blurHideSuggestTimerRef.current) {
+      clearTimeout(blurHideSuggestTimerRef.current)
+      blurHideSuggestTimerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => () => clearSuggestBlurTimer(), [clearSuggestBlurTimer])
 
   useEffect(() => {
     if (!instanceKey || externalFocusKey === undefined) return
@@ -1520,7 +1585,7 @@ function AudioExposureOromoField({
   }, [externalFocusKey, instanceKey])
 
   useEffect(() => {
-    if (readOnly) {
+    if (bankReadOnly) {
       setRows([])
       setErr('')
       setSuggestOpen(false)
@@ -1550,7 +1615,7 @@ function AudioExposureOromoField({
       })()
     }, 250)
     return () => clearTimeout(t)
-  }, [value, readOnly, lessonHarvested])
+  }, [value, bankReadOnly, lessonHarvested])
 
   return (
     <View style={compact ? styles.fieldVideoReviewOromo : styles.field}>
@@ -1561,20 +1626,24 @@ function AudioExposureOromoField({
         style={[
           styles.input,
           compact && styles.inputVideoReviewCompact,
-          readOnly && styles.inputReadOnlyBank,
+          bankReadOnly && styles.inputReadOnlyBank,
         ]}
         value={value}
-        editable={!readOnly}
+        editable={!bankReadOnly}
         onChangeText={onChangeText}
         onFocus={() => {
           onEditorFocus?.()
-          if (!readOnly) setSuggestOpen(true)
+          if (!bankReadOnly) setSuggestOpen(true)
         }}
         onBlur={() => {
-          setTimeout(() => setSuggestOpen(false), 220)
+          clearSuggestBlurTimer()
+          blurHideSuggestTimerRef.current = setTimeout(() => {
+            blurHideSuggestTimerRef.current = null
+            setSuggestOpen(false)
+          }, 320)
         }}
         placeholder={
-          readOnly
+          bankReadOnly
             ? ''
             : compact
               ? hideLabel
@@ -1594,7 +1663,8 @@ function AudioExposureOromoField({
             <Pressable
               key={r.id}
               style={styles.wordResultRow}
-              onPressIn={() => {
+              onPress={() => {
+                clearSuggestBlurTimer()
                 onPickFromBank(r)
                 setSuggestOpen(false)
                 setRows([])
@@ -1640,7 +1710,9 @@ function modalContentDirtyForRole(
   jsonFallback: string,
   baseline: LessonScreen,
   baselineJsonText: string,
+  readOnly?: boolean,
 ): boolean {
+  if (readOnly) return false
   if (!allowJsonEditing) {
     return JSON.stringify(draft) !== JSON.stringify(baseline)
   }
@@ -1657,9 +1729,11 @@ export function LessonScreenEditModal({
   wordBankLanguage = VOICE_BANK_LANGUAGE,
   allowJsonEditing = true,
   allowVideoReviewMediaFields = true,
+  readOnly = false,
   onClose: onCloseFromParent,
   onApply,
 }: Props) {
+  const isReadOnly = Boolean(readOnly)
   const [draft, setDraft] = useState<LessonScreen | null>(null)
   const [jsonFallback, setJsonFallback] = useState('')
   const [jsonError, setJsonError] = useState('')
@@ -1675,6 +1749,17 @@ export function LessonScreenEditModal({
   visibleRef.current = visible
   const baselineScreenRef = useRef<LessonScreen | null>(null)
   const baselineJsonTextRef = useRef('')
+  /** Wired by each structured editor (or inline in switch); header Save invokes this. */
+  const primaryScreenSaveRef = useRef<(() => void) | null>(null)
+  const registerPrimaryScreenSave = useCallback((fn: () => void) => {
+    primaryScreenSaveRef.current = fn
+  }, [])
+
+  /**
+   * After choosing a word-bank row, RN can emit a stale `onChangeText` on the Afaan field (blur/keyboard timing).
+   * That handler used to spread the word then delete `translation`, reverting the pick.
+   */
+  const audioExposureOromoTypingIgnoreUntilRef = useRef<Map<number, number>>(new Map())
 
   const exposureWordsForAfaanPicker = useMemo(() => {
     const idx = lessonScreenIndex
@@ -1702,6 +1787,7 @@ export function LessonScreenEditModal({
 
   useEffect(() => {
     if (visible && screen) {
+      audioExposureOromoTypingIgnoreUntilRef.current.clear()
       let c = cloneScreen(screen)
       if (
         c.type === 'dialogue'
@@ -1749,6 +1835,8 @@ export function LessonScreenEditModal({
       setJsonError('')
       setVideoReviewActiveLineId(null)
       setVideoReviewVocabFocusKey('')
+    } else if (!visible) {
+      audioExposureOromoTypingIgnoreUntilRef.current.clear()
     }
   }, [visible, screen])
 
@@ -1813,6 +1901,10 @@ export function LessonScreenEditModal({
   }, [draft, videoReviewActiveLineId])
 
   const requestClose = useCallback(() => {
+    if (isReadOnly) {
+      onCloseFromParent()
+      return
+    }
     if (!visible || !screen) {
       onCloseFromParent()
       return
@@ -1826,7 +1918,16 @@ export function LessonScreenEditModal({
       onCloseFromParent()
       return
     }
-    if (!modalContentDirtyForRole(allowJsonEditing, draft, jsonFallback, b, baselineJsonTextRef.current)) {
+    if (
+      !modalContentDirtyForRole(
+        allowJsonEditing,
+        draft,
+        jsonFallback,
+        b,
+        baselineJsonTextRef.current,
+        isReadOnly,
+      )
+    ) {
       onCloseFromParent()
       return
     }
@@ -1838,7 +1939,7 @@ export function LessonScreenEditModal({
         { text: 'Discard', style: 'destructive', onPress: () => onCloseFromParent() },
       ],
     )
-  }, [visible, screen, draft, jsonFallback, allowJsonEditing, onCloseFromParent])
+  }, [visible, screen, draft, jsonFallback, allowJsonEditing, onCloseFromParent, isReadOnly])
 
   const [translationConflict, setTranslationConflict] = useState<TranslationConflictPayload | null>(null)
   const translationConflictResolveRef = useRef<((c: TranslationConflictChoice) => void) | null>(null)
@@ -1885,6 +1986,7 @@ export function LessonScreenEditModal({
   /** Must stay above any early return — Rules of Hooks. */
   const patchDraftContent = useCallback(
     (patch: Record<string, unknown> | ((cur: Record<string, unknown>) => Record<string, unknown>)) => {
+      if (isReadOnly) return
       setDraft((d) => {
         if (!d) return null
         const curContent = d.content as Record<string, unknown>
@@ -1892,7 +1994,7 @@ export function LessonScreenEditModal({
         return { ...d, content: next }
       })
     },
-    [],
+    [isReadOnly],
   )
 
   if (!visible || !screen || !draft) return null
@@ -1923,25 +2025,25 @@ export function LessonScreenEditModal({
     onCloseFromParent()
   }
 
-  const structuredForm = () => {
+  const structuredForm = (readOnlyMode: boolean) => {
     const c = draft.content
     const setContent = patchDraftContent
+    primaryScreenSaveRef.current = null
 
     switch (draft.type) {
-      case 'intro':
+      case 'intro': {
+        primaryScreenSaveRef.current = () => {
+          const d = draftRef.current
+          if (!d) return
+          const goal = String((d.content as Record<string, unknown>).goal ?? '')
+          saveStructured({ goal })
+        }
         return (
           <View style={styles.form}>
             <Field label="Goal" value={String(c.goal ?? '')} onChangeText={(t) => setContent((cur) => ({ ...cur, goal: t }))} />
-            <SaveRow
-              onPress={() => {
-                const d = draftRef.current
-                if (!d) return
-                const goal = String((d.content as Record<string, unknown>).goal ?? '')
-                saveStructured({ goal })
-              }}
-            />
           </View>
         )
+      }
       case 'concept': {
         const hasLegacySections = Array.isArray(c.sections)
         const rawBullets = Array.isArray(c.bullets) ? (c.bullets as string[]) : ['']
@@ -1987,6 +2089,25 @@ export function LessonScreenEditModal({
             targetWord: heading,
             bullets: converted.length ? converted.slice(0, 3) : [''],
           }))
+        }
+
+        primaryScreenSaveRef.current = () => {
+          const d = draftRef.current
+          if (!d) return
+          const co = d.content as Record<string, unknown>
+          const rb = Array.isArray(co.bullets) ? (co.bullets as string[]) : ['']
+          const cleaned = rb.slice(0, 3).map((x) => String(x ?? '').trim()).filter(Boolean)
+          const tw = String(co.targetWord ?? '').trim()
+          if (!tw) {
+            setJsonError('Concept needs a target word.')
+            return
+          }
+          if (cleaned.length < 1) {
+            setJsonError('Concept needs at least one non-empty bullet.')
+            return
+          }
+          setJsonError('')
+          saveStructured({ targetWord: tw, bullets: cleaned.slice(0, 3) })
         }
 
         return (
@@ -2073,22 +2194,6 @@ export function LessonScreenEditModal({
             <Pressable style={styles.addBtn} onPress={addBullet} disabled={bullets.length >= 3}>
               <Text style={[styles.addBtnText, bullets.length >= 3 && styles.bulletMiniDisabled]}>+ Add bullet</Text>
             </Pressable>
-            <SaveRow
-              onPress={() => {
-                const tw = String(c.targetWord ?? '').trim()
-                const cleaned = bullets.map((x) => String(x ?? '').trim()).filter(Boolean)
-                if (!tw) {
-                  setJsonError('Concept needs a target word.')
-                  return
-                }
-                if (cleaned.length < 1) {
-                  setJsonError('Concept needs at least one non-empty bullet.')
-                  return
-                }
-                setJsonError('')
-                saveStructured({ targetWord: tw, bullets: cleaned.slice(0, 3) })
-              }}
-            />
           </View>
         )
       }
@@ -2097,13 +2202,36 @@ export function LessonScreenEditModal({
           <DialogueTwoPersonEditor
             content={c}
             setContent={setContent}
-            onSave={() => saveStructured({ ...draft.content })}
+            hideFooterSave
+            readOnly={readOnlyMode}
+            onRegisterHeaderSave={registerPrimaryScreenSave}
+            onSave={() => {
+              const d = draftRef.current
+              if (!d) return
+              saveStructured({ ...(d.content as Record<string, unknown>) })
+            }}
           />
         )
       }
       case 'match': {
         let pairs = (c.pairs as Record<string, unknown>[] | undefined) ?? []
         if (!Array.isArray(pairs)) pairs = []
+        primaryScreenSaveRef.current = () => {
+          setJsonError('')
+          const d = draftRef.current
+          if (!d) return
+          const content = d.content as Record<string, unknown>
+          const pr = content.pairs
+          if (!Array.isArray(pr) || pr.length === 0) {
+            setJsonError(
+              allowJsonEditing
+                ? 'Match screen needs at least one pair. Add a pair first (or paste JSON and Apply JSON & close).'
+                : 'Match screen needs at least one pair. Add a pair first.',
+            )
+            return
+          }
+          saveStructured(content)
+        }
         return (
           <View style={styles.form}>
             {pairs.length === 0 ? (
@@ -2194,24 +2322,6 @@ export function LessonScreenEditModal({
             >
               <Text style={styles.addBtnText}>+ Add pair</Text>
             </Pressable>
-            <SaveRow
-              onPress={() => {
-                setJsonError('')
-                const d = draftRef.current
-                if (!d) return
-                const content = d.content as Record<string, unknown>
-                const pr = content.pairs
-                if (!Array.isArray(pr) || pr.length === 0) {
-                  setJsonError(
-                    allowJsonEditing
-                      ? 'Match screen needs at least one pair. Add a pair first (or paste JSON and Apply JSON & close).'
-                      : 'Match screen needs at least one pair. Add a pair first.',
-                  )
-                  return
-                }
-                saveStructured(content)
-              }}
-            />
           </View>
         )
       }
@@ -2250,6 +2360,11 @@ export function LessonScreenEditModal({
           .filter((x) => x.text.trim() !== '')
         const correctIdx = typeof q0.correctAnswer === 'number' ? q0.correctAnswer : 0
         const correctLabel = options[correctIdx]?.text?.trim() || (options.length ? `Option ${correctIdx + 1}` : '—')
+        primaryScreenSaveRef.current = () => {
+          const d = draftRef.current
+          if (!d) return
+          saveStructured(quizContentWithAudioOptionsFlag({ ...(d.content as Record<string, unknown>) }))
+        }
         return (
           <View style={styles.form}>
             <Field label="Question" value={String(q0.question ?? '')} multiline onChangeText={(t) => {
@@ -2344,11 +2459,6 @@ export function LessonScreenEditModal({
                 return { ...cur, questions: [qFirst, ...qs.slice(1)] }
               })
             }} />
-            <SaveRow
-              onPress={() =>
-                saveStructured(quizContentWithAudioOptionsFlag({ ...(draft.content as Record<string, unknown>) }))
-              }
-            />
 
             <Modal visible={quizCorrectOpen} transparent animationType="fade" onRequestClose={() => setQuizCorrectOpen(false)}>
               <Pressable style={styles.quizCorrectOverlay} onPress={() => setQuizCorrectOpen(false)}>
@@ -2387,6 +2497,11 @@ export function LessonScreenEditModal({
       case 'speakingPractice': {
         const phraseVal = String(c.word ?? c.prompt ?? '')
         const exposureLinked = Boolean(String(c.speakingDraftTokenId ?? '').trim())
+        primaryScreenSaveRef.current = () => {
+          const d = draftRef.current
+          if (!d) return
+          saveStructured({ ...(d.content as Record<string, unknown>) })
+        }
         return (
           <View style={styles.form}>
             <Text style={styles.hint}>
@@ -2486,19 +2601,51 @@ export function LessonScreenEditModal({
               value={String(c.tip ?? '')}
               onChangeText={(t) => setContent((cur) => ({ ...cur, tip: t }))}
             />
-            <SaveRow
-              onPress={() => {
-                const d = draftRef.current
-                if (!d) return
-                saveStructured({ ...(d.content as Record<string, unknown>) })
-              }}
-            />
           </View>
         )
       }
       case 'audioExposure': {
         let words = (c.words as Record<string, unknown>[] | undefined) ?? []
         if (!Array.isArray(words)) words = []
+        primaryScreenSaveRef.current = () => {
+          void (async () => {
+            if (audioExposureBankSaveBusyRef.current) return
+            audioExposureBankSaveBusyRef.current = true
+            try {
+              setJsonError('')
+              const current = draftRef.current
+              if (!current) return
+              const c2 = current.content as Record<string, unknown>
+              const ws = (c2.words as Record<string, unknown>[] | undefined) ?? []
+              if (!Array.isArray(ws) || ws.length < 1) {
+                setJsonError(
+                  allowJsonEditing
+                    ? 'Audio exposure needs at least one word. Add a word or use Apply JSON & close.'
+                    : 'Audio exposure needs at least one word. Add a word first.',
+                )
+                return
+              }
+              const contentSeries = String(c2.series ?? '').trim()
+              const runBankCompare = Boolean((lessonSeries ?? '').trim() || contentSeries)
+              const resolvedWords = runBankCompare
+                ? await resolveAudioExposureWordsAgainstBank(
+                    ws as Record<string, unknown>[],
+                    lessonSeries,
+                    contentSeries || null,
+                    promptTranslationConflict,
+                  )
+                : (ws as Record<string, unknown>[])
+              setTranslationConflict(null)
+              saveStructured({ ...c2, words: resolvedWords })
+            } catch (e) {
+              setTranslationConflict(null)
+              const msg = e instanceof Error ? e.message : String(e)
+              setJsonError(msg)
+            } finally {
+              audioExposureBankSaveBusyRef.current = false
+            }
+          })()
+        }
         return (
           <View style={styles.form}>
             {words.length === 0 ? (
@@ -2522,11 +2669,18 @@ export function LessonScreenEditModal({
                   lessonHarvested={exposureWordsForAfaanPicker}
                   value={String(w.word ?? '')}
                   onChangeText={(t) => {
+                    const ignoreUntil = audioExposureOromoTypingIgnoreUntilRef.current.get(i) ?? 0
+                    if (Date.now() < ignoreUntil) return
                     setContent((cur) => {
                       const ws = (cur.words as Record<string, unknown>[]) ?? []
                       const next = ws.map((x, j) => {
                         if (j !== i) return x
-                        const nx: Record<string, unknown> = { ...(x as Record<string, unknown>), word: t }
+                        const prev = x as Record<string, unknown>
+                        const wid = String(prev.word_id ?? '').trim()
+                        if (wid && isUuidLike(wid)) {
+                          return prev
+                        }
+                        const nx: Record<string, unknown> = { ...prev, word: t }
                         delete nx.oromo
                         delete nx.english
                         delete nx.translation
@@ -2536,6 +2690,7 @@ export function LessonScreenEditModal({
                     })
                   }}
                   onPickFromBank={(row) => {
+                    audioExposureOromoTypingIgnoreUntilRef.current.set(i, Date.now() + 500)
                     setContent((cur) => {
                       const ws = (cur.words as Record<string, unknown>[]) ?? []
                       const bankId = isRealWordBankRowId(row) ? row.id : null
@@ -2601,49 +2756,6 @@ export function LessonScreenEditModal({
             >
               <Text style={styles.addBtnText}>+ Add word</Text>
             </Pressable>
-            <SaveRow
-              onPress={() => {
-                void (async () => {
-                  if (audioExposureBankSaveBusyRef.current) return
-                  audioExposureBankSaveBusyRef.current = true
-                  try {
-                    setJsonError('')
-                    const current = draftRef.current
-                    if (!current) return
-                    const c2 = current.content as Record<string, unknown>
-                    const ws = (c2.words as Record<string, unknown>[] | undefined) ?? []
-                    if (!Array.isArray(ws) || ws.length < 1) {
-                      setJsonError(
-                        allowJsonEditing
-                          ? 'Audio exposure needs at least one word. Add a word or use Apply JSON & close.'
-                          : 'Audio exposure needs at least one word. Add a word first.',
-                      )
-                      return
-                    }
-                    // Match `words.series` to lesson_series id, slug, title, AND lesson JSON `content.series`
-                    // (e.g. "Mastering Greetings") so lookups work even when `lessons.series_id` is missing.
-                    const contentSeries = String(c2.series ?? '').trim()
-                    const runBankCompare = Boolean((lessonSeries ?? '').trim() || contentSeries)
-                    const resolvedWords = runBankCompare
-                      ? await resolveAudioExposureWordsAgainstBank(
-                          ws as Record<string, unknown>[],
-                          lessonSeries,
-                          contentSeries || null,
-                          promptTranslationConflict,
-                        )
-                      : (ws as Record<string, unknown>[])
-                    setTranslationConflict(null)
-                    saveStructured({ ...c2, words: resolvedWords })
-                  } catch (e) {
-                    setTranslationConflict(null)
-                    const msg = e instanceof Error ? e.message : String(e)
-                    setJsonError(msg)
-                  } finally {
-                    audioExposureBankSaveBusyRef.current = false
-                  }
-                })()
-              }}
-            />
           </View>
         )
       }
@@ -2659,6 +2771,20 @@ export function LessonScreenEditModal({
             const row0 = celebrateLearnedExtraEditorRows(cur as Record<string, unknown>, keys)
             return { ...cur, learned_extra: fn(row0) }
           })
+        }
+        primaryScreenSaveRef.current = () => {
+          const d = draftRef.current
+          if (!d) return
+          const base = { ...(d.content as Record<string, unknown>) }
+          delete base.learned_words
+          delete base.title
+          const exp = celebrateLearnedWordsFromScreens(lessonScreens)
+          const keys = new Set(exp.map(celebrateAfaanDedupeKey))
+          const extra = Array.isArray(base.learned_extra)
+            ? celebrateSanitizedLearnedExtra(base.learned_extra)
+            : celebrateLearnedExtraFromContent(base, keys)
+          const learned = mergeCelebrateLearnedFromExposureAndExtra(exp, extra)
+          saveStructured({ ...base, learned, learned_extra: extra })
         }
         return (
           <View style={styles.form}>
@@ -2716,22 +2842,6 @@ export function LessonScreenEditModal({
                 <Text style={styles.addBtnText}>+ Add word</Text>
               </Pressable>
             </View>
-            <SaveRow
-              onPress={() => {
-                const d = draftRef.current
-                if (!d) return
-                const base = { ...(d.content as Record<string, unknown>) }
-                delete base.learned_words
-                delete base.title
-                const exp = celebrateLearnedWordsFromScreens(lessonScreens)
-                const keys = new Set(exp.map(celebrateAfaanDedupeKey))
-                const extra = Array.isArray(base.learned_extra)
-                  ? celebrateSanitizedLearnedExtra(base.learned_extra)
-                  : celebrateLearnedExtraFromContent(base, keys)
-                const learned = mergeCelebrateLearnedFromExposureAndExtra(exp, extra)
-                saveStructured({ ...base, learned, learned_extra: extra })
-              }}
-            />
           </View>
         )
       }
@@ -2752,6 +2862,28 @@ export function LessonScreenEditModal({
             const e0 = { ...(ex[0] ?? { prompt: '', options: [], correctSuffix: '' }) }
             return { ...cur, exercises: [fn(e0), ...ex.slice(1)] }
           })
+        }
+
+        primaryScreenSaveRef.current = () => {
+          setJsonError('')
+          const d = draftRef.current
+          if (!d) return
+          const content = { ...(d.content as Record<string, unknown>) }
+          const ex = (content.exercises as Record<string, unknown>[] | undefined) ?? []
+          const e0pat = ex[0] as Record<string, unknown> | undefined
+          const opts = Array.isArray(e0pat?.options)
+            ? (e0pat.options as unknown[]).map(patternOptionString).filter(Boolean)
+            : []
+          if (opts.length < 2) {
+            setJsonError('Pattern practice needs at least 2 options.')
+            return
+          }
+          const cs = String(e0pat?.correctSuffix ?? '').trim()
+          if (!opts.includes(cs)) {
+            setJsonError('Correct answer must be one of the options.')
+            return
+          }
+          saveStructured(content)
         }
 
         return (
@@ -2813,29 +2945,6 @@ export function LessonScreenEditModal({
               multiline
               onChangeText={(t) => patchEx0((e0) => ({ ...e0, explanation: t }))}
             />
-            <SaveRow
-              onPress={() => {
-                setJsonError('')
-                const d = draftRef.current
-                if (!d) return
-                const content = { ...(d.content as Record<string, unknown>) }
-                const ex = (content.exercises as Record<string, unknown>[] | undefined) ?? []
-                const e0 = ex[0] as Record<string, unknown> | undefined    
-                const opts = Array.isArray(e0?.options)
-                  ? (e0.options as unknown[]).map(patternOptionString).filter(Boolean)
-                  : []
-                if (opts.length < 2) {
-                  setJsonError('Pattern practice needs at least 2 options.')
-                  return
-                }
-                const cs = String(e0?.correctSuffix ?? '').trim()
-                if (!opts.includes(cs)) {
-                  setJsonError('Correct answer must be one of the options.')
-                  return
-                }
-                saveStructured(content)
-              }}
-            />
 
             <Modal visible={patternCorrectOpen} transparent animationType="fade" onRequestClose={() => setPatternCorrectOpen(false)}>
               <Pressable style={styles.quizCorrectOverlay} onPress={() => setPatternCorrectOpen(false)}>
@@ -2881,10 +2990,17 @@ export function LessonScreenEditModal({
             saveStructured={saveStructured}
             draftRef={draftRef}
             setJsonError={setJsonError}
+            registerPrimarySave={registerPrimaryScreenSave}
+            readOnly={readOnlyMode}
           />
         )
       }
       case 'videoReview': {
+        primaryScreenSaveRef.current = () => {
+          const base = draftRef.current?.content as Record<string, unknown> | undefined
+          if (!base) return
+          saveStructured(normalizeVideoReviewContentForEdit({ ...base }))
+        }
         return (
           <View style={styles.form}>
             {!allowVideoReviewMediaFields ? (
@@ -2894,12 +3010,17 @@ export function LessonScreenEditModal({
                 <Text style={styles.hint}>
                   Pick the clip learners watch for this step; files live in the Videos-Dubbadhu bucket on Supabase.
                 </Text>
-                <VideoReviewDubbadhuVideoField videoUrl={String(c.videoUrl ?? '')} setContent={setContent} />
+                <VideoReviewDubbadhuVideoField
+                  videoUrl={String(c.videoUrl ?? '')}
+                  setContent={setContent}
+                  readOnly={readOnlyMode}
+                />
                 <VideoReviewFreezeFrameEditor
                   videoUrl={String(c.videoUrl ?? '')}
                   freezeAtSeconds={c.freezeAtSeconds}
                   setContent={setContent}
                   enabled
+                  readOnly={readOnlyMode}
                 />
               </>
             )}
@@ -3150,14 +3271,6 @@ export function LessonScreenEditModal({
                 </>
               )
             })()}
-
-            <SaveRow
-              onPress={() => {
-                const base = draftRef.current?.content as Record<string, unknown> | undefined
-                if (!base) return
-                saveStructured(normalizeVideoReviewContentForEdit({ ...base }))
-              }}
-            />
           </View>
         )
       }
@@ -3166,33 +3279,38 @@ export function LessonScreenEditModal({
     }
   }
 
-  const hasStructured = [
-    'intro',
-    'concept',
-    'dialogue',
-    'match',
-    'quiz',
-    'speakingPractice',
-    'audioExposure',
-    'CelebrateScreen',
-    'patternPractice',
-    'discriminationDrill',
-    'videoReview',
-  ].includes(draft.type)
+  const hasStructured = STRUCTURED_SCREEN_TYPES_FOR_HEADER_SAVE.has(draft.type)
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={requestClose}>
+      <LessonEditorReadOnlyContext.Provider value={isReadOnly}>
       <View style={styles.modalRoot}>
         <View style={styles.modalHeader}>
           <Pressable onPress={requestClose} hitSlop={12}>
-            <Text style={styles.modalCancel}>Cancel</Text>
+            <Text style={styles.modalCancel}>{isReadOnly ? 'Close' : 'Cancel'}</Text>
           </Pressable>
           <Text style={styles.modalTitle} numberOfLines={1}>
             {!allowVideoReviewMediaFields && draft.type === 'videoReview'
               ? 'Review'
               : screenTypeTitle(draft.type)}
           </Text>
-          <View style={{ width: 56 }} />
+          {isReadOnly ? (
+            <View style={{ width: 56 }} />
+          ) : (
+          <Pressable
+            onPress={() => {
+              if (STRUCTURED_SCREEN_TYPES_FOR_HEADER_SAVE.has(draft.type)) {
+                primaryScreenSaveRef.current?.()
+                return
+              }
+              if (allowJsonEditing) applyJsonFallback()
+            }}
+            hitSlop={8}
+            style={styles.modalHeaderSave}
+          >
+            <Text style={styles.modalHeaderSaveText}>Save</Text>
+          </Pressable>
+          )}
         </View>
         <ScrollView
           style={styles.modalScroll}
@@ -3204,7 +3322,9 @@ export function LessonScreenEditModal({
             <View style={styles.screenHeader}>
               <Text style={styles.screenHeaderTitle}>{screenTypeTitle(draft.type)}</Text>
               <Text style={styles.screenHeaderSubtitle}>
-                {allowJsonEditing
+                {isReadOnly
+                  ? 'Preview only — same fields as admins see; changes are not saved.'
+                  : allowJsonEditing
                   ? 'Adjust inputs below to modify/create screen.'
                   : 'Sample learner UI is shown above the form so you can match fields to what students see.'}
               </Text>
@@ -3212,8 +3332,9 @@ export function LessonScreenEditModal({
           )}
           {!allowJsonEditing ? <LessonScreenLearnerPreview screenType={draft.type} /> : null}
           {!allowJsonEditing && jsonError ? <Text style={styles.jsonErr}>{jsonError}</Text> : null}
+          <View pointerEvents={isReadOnly ? 'none' : 'auto'} collapsable={false}>
           {hasStructured ? (
-            structuredForm()
+            structuredForm(isReadOnly)
           ) : allowJsonEditing ? (
             <Text style={styles.hint}>No simple form for this type yet — edit JSON below.</Text>
           ) : (
@@ -3221,6 +3342,7 @@ export function LessonScreenEditModal({
               This screen type doesn’t have a visual editor yet. Ask an admin to change it.
             </Text>
           )}
+          </View>
           {allowJsonEditing ? (
             <>
               <Text style={styles.advancedLabel}>Screen content (JSON)</Text>
@@ -3257,6 +3379,7 @@ export function LessonScreenEditModal({
           />
         ) : null}
       </View>
+      </LessonEditorReadOnlyContext.Provider>
     </Modal>
   )
 }
@@ -3272,9 +3395,10 @@ function Field(props: {
   onFocus?: () => void
   editable?: boolean
 }) {
+  const ro = useLessonEditorReadOnly()
   const ml = !!props.multiline
   const compact = !!props.multilineCompact
-  const editable = props.editable !== false
+  const editable = props.editable !== false && !ro
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{props.label}</Text>
@@ -3307,14 +3431,6 @@ function Row(props: { label: string; children: ReactNode }) {
   )
 }
 
-function SaveRow({ onPress }: { onPress: () => void }) {
-  return (
-    <Pressable style={styles.saveStructured} onPress={onPress}>
-      <Text style={styles.saveStructuredTextSave}>Save screen</Text>
-    </Pressable>
-  )
-}
-
 const styles = StyleSheet.create({
   modalRoot: { flex: 1, backgroundColor: '#0a0a0a' },
   modalHeader: {
@@ -3327,6 +3443,8 @@ const styles = StyleSheet.create({
     borderBottomColor: '#27272a',
   },
   modalCancel: { color: '#a78bfa', fontSize: 16, fontWeight: '600' },
+  modalHeaderSave: { minWidth: 56, alignItems: 'flex-end', justifyContent: 'center', paddingVertical: 2 },
+  modalHeaderSaveText: { color: '#22c55e', fontSize: 16, fontWeight: '700' },
   modalTitle: { color: '#fff', fontSize: 15, fontWeight: '700', flex: 1, textAlign: 'center' },
   modalScroll: { flex: 1 },
   modalScrollContent: { flexGrow: 1, padding: 16, paddingBottom: 48 },

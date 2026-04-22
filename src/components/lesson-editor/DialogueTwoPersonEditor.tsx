@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { normalizeDialogueContent } from '../../lib/lessonEditor'
 
@@ -6,6 +6,12 @@ type Props = {
   content: Record<string, unknown>
   setContent: React.Dispatch<React.SetStateAction<Record<string, unknown>>>
   onSave: () => void
+  /** When true, omit the footer Save button (parent provides header Save). */
+  hideFooterSave?: boolean
+  /** Register the same validation + save handler the footer button would run. */
+  onRegisterHeaderSave?: (fn: () => void) => void
+  /** Preview-only: show conversation, no edits. */
+  readOnly?: boolean
 }
 
 type TurnRow = {
@@ -78,7 +84,14 @@ function validateDialogueForSave(content: Record<string, unknown>): string | nul
   return null
 }
 
-export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) {
+export function DialogueTwoPersonEditor({
+  content,
+  setContent,
+  onSave,
+  hideFooterSave = false,
+  onRegisterHeaderSave,
+  readOnly = false,
+}: Props) {
   const [draftLine, setDraftLine] = useState('')
   const [draftTranslation, setDraftTranslation] = useState('')
   const [draftSpeaker, setDraftSpeaker] = useState<1 | 2>(1)
@@ -298,7 +311,7 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
     })
   }
 
-  const handleSave = () => {
+  const handleSave = useCallback(() => {
     const err = validateDialogueForSave(content)
     if (err) {
       setSaveError(err)
@@ -306,13 +319,24 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
     }
     setSaveError('')
     onSave()
-  }
+  }, [content, onSave])
+
+  useLayoutEffect(() => {
+    if (!onRegisterHeaderSave) return
+    if (readOnly) {
+      onRegisterHeaderSave(() => {})
+      return () => onRegisterHeaderSave(() => {})
+    }
+    onRegisterHeaderSave(handleSave)
+    return () => onRegisterHeaderSave(() => {})
+  }, [onRegisterHeaderSave, handleSave, readOnly])
 
   return (
     <View style={styles.form}>
       <Text style={styles.hint}>
-        Person 1 speaks first in the app. Under “Next line”, pick who speaks, then enter line + translation (both
-        required). Learners see translations only after they tap Show on the device.
+        {readOnly
+          ? 'Learners see translations only after they tap Show on the device.'
+          : 'Person 1 speaks first in the app. Under “Next line”, pick who speaks, then enter line + translation (both required). Learners see translations only after they tap Show on the device.'}
       </Text>
       <Text style={styles.sectionTitle}>Names</Text>
       <Text style={styles.fieldLabel}>Person 1</Text>
@@ -322,6 +346,7 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
         onChangeText={(t) => setPerson(1, { name: t })}
         placeholder="Name (speaks first)"
         placeholderTextColor="#888"
+        editable={!readOnly}
       />
       <Text style={styles.fieldLabel}>Person 2</Text>
       <TextInput
@@ -330,6 +355,7 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
         onChangeText={(t) => setPerson(2, { name: t })}
         placeholder="Name"
         placeholderTextColor="#888"
+        editable={!readOnly}
       />
 
       <Text style={styles.sectionTitle}>Conversation</Text>
@@ -343,9 +369,11 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
                 <Text style={styles.turnSpeaker}>
                   {row.speaker === 1 ? 'Person 1' : 'Person 2'} · {row.name}
                 </Text>
-                <Pressable onPress={() => removeTurn(row.speaker, row.lineIndex)} style={styles.removeBtn}>
-                  <Text style={styles.removeBtnText}>Remove</Text>
-                </Pressable>
+                {readOnly ? null : (
+                  <Pressable onPress={() => removeTurn(row.speaker, row.lineIndex)} style={styles.removeBtn}>
+                    <Text style={styles.removeBtnText}>Remove</Text>
+                  </Pressable>
+                )}
               </View>
               <Text style={styles.fieldLabel}>Line</Text>
               <TextInput
@@ -355,6 +383,7 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
                 placeholder="Afaan Oromo"
                 placeholderTextColor="#888"
                 multiline
+                editable={!readOnly}
               />
               <Text style={styles.fieldLabel}>Translation</Text>
               <TextInput
@@ -364,59 +393,66 @@ export function DialogueTwoPersonEditor({ content, setContent, onSave }: Props) 
                 placeholder="English"
                 placeholderTextColor="#666"
                 multiline
+                editable={!readOnly}
               />
             </View>
           ))
         )}
       </View>
 
-      <Text style={styles.sectionTitle}>Next line</Text>
-      <Text style={styles.fieldLabel}>Speaker</Text>
-      <View style={styles.speakerPick}>
-        <Pressable
-          style={[styles.speakerChip, draftSpeaker === 1 && styles.speakerChipActive]}
-          onPress={() => setDraftSpeaker(1)}
-        >
-          <Text style={[styles.speakerChipText, draftSpeaker === 1 && styles.speakerChipTextActive]}>
-            Person 1 · {name1.trim() || '—'}
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.speakerChip, draftSpeaker === 2 && styles.speakerChipActive]}
-          onPress={() => setDraftSpeaker(2)}
-        >
-          <Text style={[styles.speakerChipText, draftSpeaker === 2 && styles.speakerChipTextActive]}>
-            Person 2 · {name2.trim() || '—'}
-          </Text>
-        </Pressable>
-      </View>
-      <Text style={styles.fieldLabel}>Line</Text>
-      <TextInput
-        style={styles.input}
-        value={draftLine}
-        onChangeText={setDraftLine}
-        placeholder="Afaan Oromo"
-        placeholderTextColor="#888"
-        multiline
-      />
-      <Text style={styles.fieldLabel}>Translation</Text>
-      <TextInput
-        style={styles.input}
-        value={draftTranslation}
-        onChangeText={setDraftTranslation}
-        placeholder="English"
-        placeholderTextColor="#888"
-        multiline
-      />
-      <Pressable style={styles.addBtn} onPress={addLine}>
-        <Text style={styles.addBtnText}>Add line</Text>
-      </Pressable>
+      {readOnly ? null : (
+        <>
+          <Text style={styles.sectionTitle}>Next line</Text>
+          <Text style={styles.fieldLabel}>Speaker</Text>
+          <View style={styles.speakerPick}>
+            <Pressable
+              style={[styles.speakerChip, draftSpeaker === 1 && styles.speakerChipActive]}
+              onPress={() => setDraftSpeaker(1)}
+            >
+              <Text style={[styles.speakerChipText, draftSpeaker === 1 && styles.speakerChipTextActive]}>
+                Person 1 · {name1.trim() || '—'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.speakerChip, draftSpeaker === 2 && styles.speakerChipActive]}
+              onPress={() => setDraftSpeaker(2)}
+            >
+              <Text style={[styles.speakerChipText, draftSpeaker === 2 && styles.speakerChipTextActive]}>
+                Person 2 · {name2.trim() || '—'}
+              </Text>
+            </Pressable>
+          </View>
+          <Text style={styles.fieldLabel}>Line</Text>
+          <TextInput
+            style={styles.input}
+            value={draftLine}
+            onChangeText={setDraftLine}
+            placeholder="Afaan Oromo"
+            placeholderTextColor="#888"
+            multiline
+          />
+          <Text style={styles.fieldLabel}>Translation</Text>
+          <TextInput
+            style={styles.input}
+            value={draftTranslation}
+            onChangeText={setDraftTranslation}
+            placeholder="English"
+            placeholderTextColor="#888"
+            multiline
+          />
+          <Pressable style={styles.addBtn} onPress={addLine}>
+            <Text style={styles.addBtnText}>Add line</Text>
+          </Pressable>
+        </>
+      )}
 
       {saveError ? <Text style={styles.errorText}>{saveError}</Text> : null}
 
-      <Pressable style={styles.saveBtn} onPress={handleSave}>
-        <Text style={styles.saveBtnText}>Save screen</Text>
-      </Pressable>
+      {!hideFooterSave ? (
+        <Pressable style={styles.saveBtn} onPress={handleSave}>
+          <Text style={styles.saveBtnText}>Save screen</Text>
+        </Pressable>
+      ) : null}
     </View>
   )
 }

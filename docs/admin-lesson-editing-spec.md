@@ -347,7 +347,7 @@ Break a phrase into word boxes (personalizes `original` by replacing `____` with
 **content**
 - **`heading`**: `string`
 - `original`: `string` (optional; can include `____`)
-- **`words`**: `{ oromo: string, english: string }[]` (>= 1)
+- **`words`**: `{ word: string, translation: string }[]` (>= 1) — target-language segment and gloss/explanation
 - `tip`: `string` (optional)
 
 ---

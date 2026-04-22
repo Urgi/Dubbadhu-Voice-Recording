@@ -156,3 +156,17 @@ export type VideoReviewContent = {
   [k: string]: unknown;
 };
 
+/** One row in `word-breakdown` — target-language token and gloss (not tied to a specific language name). */
+export type WordBreakdownWordRow = {
+  word: string;
+  translation: string;
+};
+
+export type WordBreakdownContent = {
+  heading: string;
+  original?: string;
+  tip?: string;
+  words: WordBreakdownWordRow[];
+  [k: string]: unknown;
+};
+

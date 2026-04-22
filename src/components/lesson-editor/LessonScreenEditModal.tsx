@@ -68,6 +68,7 @@ const STRUCTURED_SCREEN_TYPES_FOR_HEADER_SAVE = new Set([
   'CelebrateScreen',
   'patternPractice',
   'discriminationDrill',
+  'word-breakdown',
   'videoReview',
 ])
 
@@ -2993,6 +2994,135 @@ export function LessonScreenEditModal({
             registerPrimarySave={registerPrimaryScreenSave}
             readOnly={readOnlyMode}
           />
+        )
+      }
+      case 'word-breakdown': {
+        const rawWords = Array.isArray(c.words) ? (c.words as Record<string, unknown>[]) : []
+        const displayWords =
+          rawWords.length > 0 ? rawWords : [{ word: '', translation: '' }]
+
+        primaryScreenSaveRef.current = () => {
+          setJsonError('')
+          const d = draftRef.current
+          if (!d) return
+          const content = d.content as Record<string, unknown>
+          const heading = String(content.heading ?? '').trim()
+          if (!heading) {
+            setJsonError('Word breakdown needs a heading.')
+            return
+          }
+          const arr = Array.isArray(content.words) ? (content.words as Record<string, unknown>[]) : []
+          const cleaned = arr
+            .map((row) => ({
+              word: String(row.word ?? '').trim(),
+              translation: String(row.translation ?? '').trim(),
+            }))
+            .filter((row) => row.word && row.translation)
+          if (cleaned.length < 1) {
+            setJsonError('Add at least one row with both word and translation.')
+            return
+          }
+          const original = String(content.original ?? '').trim()
+          const tip = String(content.tip ?? '').trim()
+          setJsonError('')
+          saveStructured({
+            heading,
+            ...(original ? { original } : {}),
+            words: cleaned,
+            ...(tip ? { tip } : {}),
+          })
+        }
+
+        return (
+          <View style={styles.form}>
+            <Text style={styles.hint}>
+              Each row is one segment: the target-language surface form (word) and the gloss or explanation
+              (translation). Use ____ in Original if the learner name should appear there.
+            </Text>
+            <Field
+              label="Heading"
+              value={String(c.heading ?? '')}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, heading: t }))}
+            />
+            <Field
+              label="Original phrase (optional)"
+              value={String(c.original ?? '')}
+              multiline
+              multilineCompact
+              onChangeText={(t) => setContent((cur) => ({ ...cur, original: t }))}
+            />
+            <Text style={styles.label}>Word rows</Text>
+            {displayWords.map((row, i) => (
+              <View key={`wb-${i}`} style={styles.bulletRow}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.matchRightPreviewLabel}>Word</Text>
+                  <TextInput
+                    style={styles.bulletInput}
+                    value={String(row.word ?? '')}
+                    onChangeText={(t) => {
+                      setContent((cur) => {
+                        const ws = Array.isArray(cur.words) ? ([...(cur.words as Record<string, unknown>[])]) : []
+                        const base = ws.length > 0 ? ws : [{ word: '', translation: '' }]
+                        const next = base.map((x, j) => (j === i ? { ...x, word: t } : x))
+                        return { ...cur, words: next }
+                      })
+                    }}
+                    placeholder="Target language"
+                    placeholderTextColor="#52525b"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.matchRightPreviewLabel}>Translation</Text>
+                  <TextInput
+                    style={styles.bulletInput}
+                    value={String(row.translation ?? '')}
+                    onChangeText={(t) => {
+                      setContent((cur) => {
+                        const ws = Array.isArray(cur.words) ? ([...(cur.words as Record<string, unknown>[])]) : []
+                        const base = ws.length > 0 ? ws : [{ word: '', translation: '' }]
+                        const next = base.map((x, j) => (j === i ? { ...x, translation: t } : x))
+                        return { ...cur, words: next }
+                      })
+                    }}
+                    placeholder="Gloss or explanation"
+                    placeholderTextColor="#52525b"
+                  />
+                </View>
+                <Pressable
+                  style={styles.bulletMiniBtn}
+                  onPress={() => {
+                    setContent((cur) => {
+                      const ws = Array.isArray(cur.words) ? ([...(cur.words as Record<string, unknown>[])]) : []
+                      const base = ws.length > 0 ? ws : [{ word: '', translation: '' }]
+                      if (base.length <= 1) return { ...cur, words: [{ word: '', translation: '' }] }
+                      return { ...cur, words: base.filter((_, j) => j !== i) }
+                    })
+                  }}
+                >
+                  <Text style={styles.bulletMiniBtnTextDanger}>✕</Text>
+                </Pressable>
+              </View>
+            ))}
+            <Pressable
+              style={styles.addBtn}
+              onPress={() => {
+                setContent((cur) => {
+                  const ws = Array.isArray(cur.words) ? ([...(cur.words as Record<string, unknown>[])]) : []
+                  const base = ws.length > 0 ? ws : [{ word: '', translation: '' }]
+                  return { ...cur, words: [...base, { word: '', translation: '' }] }
+                })
+              }}
+            >
+              <Text style={styles.addBtnText}>+ Add word row</Text>
+            </Pressable>
+            <Field
+              label="Tip (optional)"
+              value={String(c.tip ?? '')}
+              multiline
+              multilineCompact
+              onChangeText={(t) => setContent((cur) => ({ ...cur, tip: t }))}
+            />
+          </View>
         )
       }
       case 'videoReview': {

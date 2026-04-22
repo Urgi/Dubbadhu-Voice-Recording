@@ -932,7 +932,7 @@ export function sanitizeScreenContentForPersistence(
       if (Array.isArray(wr)) {
         base.words = wr.map((w) =>
           w != null && typeof w === 'object' && !Array.isArray(w)
-            ? pickAllowedKeys(w as Record<string, unknown>, new Set(['oromo', 'english', 'meaning', 'note']))
+            ? pickAllowedKeys(w as Record<string, unknown>, new Set(['word', 'translation']))
             : w,
         )
       }
@@ -1115,6 +1115,23 @@ export function screenSummary(screen: LessonScreen): string {
       const tail = labels.length >= 2 ? `${labels.join(' vs ')} · ${n} question(s)` : n ? `${n} question(s)` : '—'
       if (q) return `${q.slice(0, 48)}${q.length > 48 ? '…' : ''} · ${tail}`
       return tail
+    }
+    case 'word-breakdown': {
+      const raw = (c as Record<string, unknown>).words
+      if (!Array.isArray(raw) || raw.length === 0) return '—'
+      const first = raw[0]
+      if (first != null && typeof first === 'object' && !Array.isArray(first)) {
+        const rec = first as Record<string, unknown>
+        const a = String(rec.word ?? '').trim()
+        const b = String(rec.translation ?? '').trim()
+        if (a) {
+          const head = b ? `${a} — ${b}` : a
+          const more = raw.length > 1 ? ` (+${raw.length - 1})` : ''
+          const s = `${head}${more}`
+          return s.length > 80 ? `${s.slice(0, 80)}…` : s
+        }
+      }
+      return `${raw.length} segment(s)`
     }
     default:
       return Object.keys(c).length ? `${Object.keys(c).length} field(s)` : 'Empty'

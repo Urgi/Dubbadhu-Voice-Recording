@@ -373,10 +373,10 @@
           "items": {
             "type": "object",
             "additionalProperties": true,
-            "required": ["oromo", "english"],
+            "required": ["word", "translation"],
             "properties": {
-              "oromo": { "type": "string" },
-              "english": { "type": "string" }
+              "word": { "type": "string" },
+              "translation": { "type": "string" }
             }
           }
         }

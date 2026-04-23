@@ -1050,17 +1050,19 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
           ) : null}
           {showAdminPipeline ? (
             <>
-              <Pressable
-                style={[
-                  styles.primaryOutlineBtn,
-                  (seriesStatusSaving || vaSyncing || !canAdminApproveCurriculum) && styles.btnDisabledOpacity,
-                ]}
-                onPress={() => void onApproveContent()}
-                disabled={seriesStatusSaving || vaSyncing || !canAdminApproveCurriculum}
-              >
-                <Text style={styles.primaryOutlineBtnText}>{adminApproveLabel}</Text>
-              </Pressable>
-              {wordBankReview || wordBankReviewError ? (
+              {canAdminApproveCurriculum ? (
+                <Pressable
+                  style={[
+                    styles.primaryOutlineBtn,
+                    (seriesStatusSaving || vaSyncing || !canAdminApproveCurriculum) && styles.btnDisabledOpacity,
+                  ]}
+                  onPress={() => void onApproveContent()}
+                  disabled={seriesStatusSaving || vaSyncing || !canAdminApproveCurriculum}
+                >
+                  <Text style={styles.primaryOutlineBtnText}>{adminApproveLabel}</Text>
+                </Pressable>
+              ) : null}
+              {seriesStatus !== 'approved' && (wordBankReview || wordBankReviewError) ? (
                 <View style={styles.wordBankReviewBlock}>
                   <Text style={styles.wordBankReviewTitle}>Voice bank (on Approve Series)</Text>
                   <Text style={styles.wordBankReviewHint}>
@@ -1098,7 +1100,6 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                       {wordBankReview.needsVaRecording.slice(0, 15).map((nw, idx) => (
                         <Text key={`${nw.word}-va-${idx}`} style={styles.wordBankReviewLine}>
                           • {nw.word}
-                          {nw.translation ? ` — ${nw.translation}` : ''}
                           {nw.sourceRefs ? (
                             <Text style={styles.wordBankReviewSource}> {nw.sourceRefs}</Text>
                           ) : null}
@@ -1126,7 +1127,6 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                       {wordBankReview.newWords.slice(0, 15).map((nw, idx) => (
                         <Text key={`${nw.word}-${idx}`} style={styles.wordBankReviewLine}>
                           • {nw.word}
-                          {nw.translation ? ` — ${nw.translation}` : ''}
                           {nw.sourceRefs ? (
                             <Text style={styles.wordBankReviewSource}> {nw.sourceRefs}</Text>
                           ) : null}
@@ -1180,42 +1180,88 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                   ) : null}
                 </View>
               ) : null}
-              {seriesStatus === 'approved' && !releaseMediaReady ? (
-                <View style={styles.releaseGateBlock}>
-                  <Text style={styles.releaseGateTitle}>Before marking audio complete</Text>
-                  {!listCoverUrl?.trim() ? (
-                    <Text style={styles.releaseGateLine}>• Add Speak tab cover (above).</Text>
-                  ) : null}
-                  {!introVideoUrl?.trim() ? (
-                    <Text style={styles.releaseGateLine}>• Set series intro video URL (above).</Text>
-                  ) : null}
-                  {videoReviewGaps.length > 0 ? (
-                    <>
-                      <Text style={styles.releaseGateLine}>
-                        • Set a clip URL on every Review screen ({videoReviewGaps.length} missing):
-                      </Text>
-                      {videoReviewGaps.slice(0, 10).map((g) => (
-                        <Text key={`${g.lessonId}-${g.screenIndex}`} style={styles.releaseGateSub}>
-                          — {g.lessonTitle} · screen #{g.screenIndex + 1} in lesson JSON
-                        </Text>
-                      ))}
-                      {videoReviewGaps.length > 10 ? (
-                        <Text style={styles.releaseGateSub}>… +{videoReviewGaps.length - 10} more</Text>
-                      ) : null}
-                    </>
-                  ) : null}
+              {seriesStatus === 'approved' ? (
+                <View style={styles.wordBankReviewBlock}>
+                  <Text style={styles.wordBankReviewTitle}>Series completion checklist</Text>
+
+                  <View style={styles.wordBankReviewSection}>
+                    <Text style={styles.seriesRemainingCount}>
+                      {(() => {
+                        const needVa = Boolean(wordBankReview && (wordBankReview.needsVaRecording?.length ?? 0) > 0)
+                        const needCover = !Boolean(listCoverUrl?.trim())
+                        const needIntro = !Boolean(introVideoUrl?.trim())
+                        const needReviewClips = videoReviewGaps.length > 0
+                        const remaining = [needVa, needCover, needIntro, needReviewClips].filter(Boolean).length
+                        return `Number of Items Remaining — ${remaining}`
+                      })()}
+                    </Text>
+                    <Text style={styles.wordBankReviewLine}>
+                      {wordBankReview && (wordBankReview.needsVaRecording?.length ?? 0) > 0
+                        ? `☐ Need VA recording — ${wordBankReview.needsVaRecording.length}`
+                        : '✓ Need VA recording — 0'}
+                    </Text>
+                    {wordBankReview && (wordBankReview.needsVaRecording?.length ?? 0) > 0 ? (
+                      <>
+                        {wordBankReview.needsVaRecording.slice(0, 10).map((nw, idx) => (
+                          <Text key={`${nw.word}-check-${idx}`} style={styles.wordBankReviewLine}>
+                            {'  '}— {nw.word}
+                            {nw.sourceRefs ? (
+                              <Text style={styles.wordBankReviewSource}> {nw.sourceRefs}</Text>
+                            ) : null}
+                          </Text>
+                        ))}
+                        {wordBankReview.needsVaRecording.length > 10 ? (
+                          <Pressable
+                            onPress={() => setWordBankListModal('needsVaRecording')}
+                            hitSlop={8}
+                            style={({ pressed }) => [pressed && styles.wordBankReviewMorePressed]}
+                          >
+                            <Text style={styles.wordBankReviewMore}>
+                              … +{wordBankReview.needsVaRecording.length - 10} more
+                            </Text>
+                          </Pressable>
+                        ) : null}
+                      </>
+                    ) : null}
+
+                    <Text style={styles.wordBankReviewLine}>
+                      {listCoverUrl?.trim() ? '✓ Speak tab cover set.' : '☐ Add Speak tab cover (above).'}
+                    </Text>
+                    <Text style={styles.wordBankReviewLine}>
+                      {introVideoUrl?.trim()
+                        ? '✓ Series intro video URL set.'
+                        : '☐ Set series intro video URL (above).'}
+                    </Text>
+                    <Text style={styles.wordBankReviewLine}>
+                      {videoReviewGaps.length > 0
+                        ? `☐ Set a clip URL on every Review screen (${videoReviewGaps.length} missing):`
+                        : '✓ All Review screens have clip URLs.'}
+                    </Text>
+                    {videoReviewGaps.length > 0 ? (
+                      <>
+                        {videoReviewGaps.slice(0, 10).map((g) => (
+                          <Text key={`${g.lessonId}-${g.screenIndex}`} style={styles.wordBankReviewLine}>
+                            {'  '}— {g.lessonTitle} · screen #{g.screenIndex + 1} in lesson JSON
+                          </Text>
+                        ))}
+                        {videoReviewGaps.length > 10 ? (
+                          <Text style={styles.wordBankReviewMore}>… +{videoReviewGaps.length - 10} more</Text>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </View>
                 </View>
               ) : null}
               {seriesStatus === 'approved' ? (
                 <Pressable
                   style={[
-                    styles.markAudioCompleteBtn,
+                    styles.primaryOutlineBtn,
                     (seriesStatusSaving || !markAudioCompleteBaseEnabled) && styles.btnDisabledOpacity,
                   ]}
                   onPress={() => void onMarkAudioComplete()}
                   disabled={seriesStatusSaving || !markAudioCompleteBaseEnabled}
                 >
-                  <Text style={styles.markAudioCompleteBtnText}>Mark audio complete</Text>
+                  <Text style={styles.primaryOutlineBtnText}>Mark series complete</Text>
                 </Pressable>
               ) : null}
               {seriesStatus === 'testing' ? (
@@ -1510,7 +1556,6 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
               ? wordBankReview.newWords.map((nw, idx) => (
                   <Text key={`${nw.word}-${idx}`} style={styles.wordBankReviewLine}>
                     • {nw.word}
-                    {nw.translation ? ` — ${nw.translation}` : ''}
                     {nw.sourceRefs ? (
                       <Text style={styles.wordBankReviewSource}> {nw.sourceRefs}</Text>
                     ) : null}
@@ -1528,7 +1573,6 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
               ? wordBankReview.needsVaRecording.map((nw, idx) => (
                   <Text key={`${nw.word}-va-modal-${idx}`} style={styles.wordBankReviewLine}>
                     • {nw.word}
-                    {nw.translation ? ` — ${nw.translation}` : ''}
                     {nw.sourceRefs ? (
                       <Text style={styles.wordBankReviewSource}> {nw.sourceRefs}</Text>
                     ) : null}
@@ -1635,6 +1679,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(52, 199, 89, 0.55)',
     alignItems: 'center',
+    backgroundColor: 'rgba(52, 199, 89, 0.12)',
   },
   primaryOutlineBtnText: { color: '#34c759', fontSize: 15, fontWeight: '700' },
   testingPublishHint: {
@@ -1656,6 +1701,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     marginBottom: 6,
+  },
+  seriesRemainingCount: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 8,
   },
   wordBankReviewHint: { color: '#8e8e93', fontSize: 12, lineHeight: 17, marginBottom: 10 },
   wordBankReviewError: { color: '#fca5a5', fontSize: 13, lineHeight: 19, marginBottom: 10 },

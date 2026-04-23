@@ -30,6 +30,10 @@ function isWordRowUuid(s: unknown): boolean {
   return typeof s === 'string' && UUID_RE_FOR_WORD_ROW.test(s.trim().toLowerCase())
 }
 
+function isVaAudioCaptured(st: RecordingStatus): boolean {
+  return st === 'recorded' || st === 'approved'
+}
+
 function compareSourceTagKeys(a: string, b: string): number {
   const pa = /^L(\d+)S(\d+)$/.exec(a)
   const pb = /^L(\d+)S(\d+)$/.exec(b)
@@ -68,6 +72,12 @@ function lessonDisplayNumber(row: LessonRowForHarvest, sortedIndex: number): num
 /**
  * Raw hits from Audio exposure + Speaking practice (one entry per token per screen).
  * `lessonNumber` should be the curriculum lesson number shown to admins (DB `lesson_number`, or sort rank).
+ *
+ * **Audio exposure:** counts every non-empty Afaan line (`word` / legacy `oromo` / `text`), not only rows already
+ * linked to `public.words` with a UUID `word_id`. Draft lines (no bank id yet) still queue for insert on Approve Series.
+ *
+ * **Speaking practice:** counts the practice phrase when `word` / `prompt` is set, with or without `word_id`
+ * (e.g. linked to exposure via `speakingDraftTokenId` before a bank row exists).
  */
 export function collectVoiceBankHitsFromScreens(
   screens: unknown[],
@@ -92,20 +102,20 @@ export function collectVoiceBankHitsFromScreens(
         for (const item of words) {
           if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
           const rec = item as Record<string, unknown>
-          if (!isWordRowUuid(rec.word_id)) continue
-          const afaan = String(rec.word ?? '').trim()
+          const afaan = String(rec.word ?? rec.oromo ?? rec.text ?? '').trim()
           if (!afaan) continue
-          const english = String(rec.translation ?? '').trim() || null
+          const english = String(rec.translation ?? rec.english ?? '').trim() || null
           out.push({ word: afaan, translation: english, lessonNumber, screenIndex })
         }
       }
     }
 
     if (type === 'speakingPractice') {
-      if (!isWordRowUuid(cr.word_id)) continue
-      const word = String(cr.word ?? '').trim()
+      const word = String(cr.word ?? cr.prompt ?? '').trim()
       if (!word) continue
-      out.push({ word, translation: null, lessonNumber, screenIndex })
+      const gloss =
+        String(cr.phraseEnglish ?? cr.translation ?? cr.english ?? '').trim() || null
+      out.push({ word, translation: gloss, lessonNumber, screenIndex })
     }
   }
 
@@ -259,8 +269,9 @@ function pushHarvestUnique(
 }
 
 /**
- * Tokens that sync to `words` / VA on **Approve Series**: only **audioExposure** (`content.words[]`)
- * and **speakingPractice** (`word` + required `word_id` UUID). Excludes quiz, dialogue, match, celebrate, etc.
+ * Tokens that sync to `words` / VA on **Approve Series**: only **audioExposure** (`content.words[]` — any row with
+ * Afaan text, including drafts without `word_id`) and **speakingPractice** (`word` / `prompt`). Excludes quiz,
+ * dialogue, match, celebrate, etc.
  */
 export function harvestWordsForVoiceBank(content: unknown): HarvestedWord[] {
   const screens = extractLessonScreensForHarvest(content)
@@ -297,10 +308,9 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
         for (const item of words) {
           if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
           const rec = item as Record<string, unknown>
-          if (!isWordRowUuid(rec.word_id)) continue
-          const afaan = String(rec.word ?? '').trim()
+          const afaan = String(rec.word ?? rec.oromo ?? rec.text ?? '').trim()
           if (!afaan) continue
-          const english = String(rec.translation ?? '').trim() || null
+          const english = String(rec.translation ?? rec.english ?? '').trim() || null
           pushHarvestUnique(out, seen, afaan, english)
         }
       }
@@ -341,7 +351,7 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
             if (typeof o === 'string') pushHarvestUnique(out, seen, o.trim(), null)
             else if (o != null && typeof o === 'object' && !Array.isArray(o)) {
               const or = o as Record<string, unknown>
-              const ot = String(or.oromo ?? or.text ?? '').trim()
+              const ot = String(or.oromo ?? or.text ?? or.word ?? '').trim()
               const oe = or.english
               if (ot) pushHarvestUnique(out, seen, ot, typeof oe === 'string' ? oe.trim() || null : null)
             }
@@ -351,8 +361,7 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
     }
 
     if (type === 'speakingPractice') {
-      if (!isWordRowUuid(cr.word_id)) continue
-      const word = String(cr.word ?? '').trim()
+      const word = String(cr.word ?? cr.prompt ?? '').trim()
       if (!word) continue
       const gloss =
         String(cr.phraseEnglish ?? cr.translation ?? cr.english ?? '').trim() || null
@@ -596,6 +605,8 @@ export async function fetchWordBankRowForSeries(
 
 export type SeriesWordBankReviewSummary = {
   newWords: { word: string; translation: string | null; sourceRefs?: string }[]
+  /** Lesson vocabulary already in `words` for this series, but `status` is not recorded/approved yet. */
+  needsVaRecording: { word: string; translation: string | null; sourceRefs?: string }[]
   pendingTranslationChanges: {
     word: string
     lessonTranslation: string
@@ -635,6 +646,7 @@ export async function buildSeriesWordBankReviewSummary(seriesId: string): Promis
   const blockedLower = new Set(blockedOtherSeries.map((b) => b.word.toLowerCase()))
 
   const pendingTranslationChanges: SeriesWordBankReviewSummary['pendingTranslationChanges'] = []
+  const needsVaRecording: SeriesWordBankReviewSummary['needsVaRecording'] = []
 
   const inSeriesHarvested = harvested.filter(
     (h) => !toInsertLower.has(h.word.toLowerCase()) && !blockedLower.has(h.word.toLowerCase()),
@@ -643,13 +655,19 @@ export async function buildSeriesWordBankReviewSummary(seriesId: string): Promis
   if (inSeriesHarvested.length > 0) {
     const { data: seriesRows, error: wErr } = await supabase
       .from('words')
-      .select('id,word,translation,series')
+      .select('id,word,translation,series,status')
       .in('series', seriesInFilter)
       .in('language', langVals)
 
     if (wErr) return { error: wErr.message }
 
-    type SumRow = { id: string; translation: string | null; english: string | null; seriesLabel: string }
+    type SumRow = {
+      id: string
+      translation: string | null
+      english: string | null
+      seriesLabel: string
+      status: RecordingStatus
+    }
     const byLower = new Map<string, SumRow>()
     for (const r of (seriesRows as {
       id?: string
@@ -657,6 +675,7 @@ export async function buildSeriesWordBankReviewSummary(seriesId: string): Promis
       series?: string | null
       translation?: string | null
       english?: string | null
+      status?: unknown
     }[] | null) ?? []) {
       const w = String(r.word ?? '').trim().toLowerCase()
       if (!w || typeof r.id !== 'string') continue
@@ -666,6 +685,7 @@ export async function buildSeriesWordBankReviewSummary(seriesId: string): Promis
         translation: r.translation ?? null,
         english: r.english ?? null,
         seriesLabel,
+        status: normalizeRecordingStatus(r.status),
       }
       const prev = byLower.get(w)
       if (!prev) {
@@ -675,6 +695,17 @@ export async function buildSeriesWordBankReviewSummary(seriesId: string): Promis
       const curCanonical = seriesLabel === wordsSeriesLabel
       const prevCanonical = prev.seriesLabel === wordsSeriesLabel
       if (curCanonical && !prevCanonical) byLower.set(w, candidate)
+    }
+
+    for (const h of inSeriesHarvested) {
+      const row = byLower.get(h.word.toLowerCase())
+      if (row && !isVaAudioCaptured(row.status)) {
+        needsVaRecording.push({
+          word: h.word,
+          translation: h.translation,
+          sourceRefs: h.sourceRefs,
+        })
+      }
     }
 
     for (const h of inSeriesHarvested) {
@@ -695,16 +726,13 @@ export async function buildSeriesWordBankReviewSummary(seriesId: string): Promis
   return {
     summary: {
       newWords,
+      needsVaRecording,
       pendingTranslationChanges,
       blockedOtherSeries,
       harvestedCount: harvested.length,
       lessonRowCount,
     },
   }
-}
-
-function isVaAudioCaptured(st: RecordingStatus): boolean {
-  return st === 'recorded' || st === 'approved'
 }
 
 export type SeriesWordsVaProgress = {

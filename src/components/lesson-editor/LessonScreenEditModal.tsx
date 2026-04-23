@@ -40,6 +40,7 @@ import {
   newDraftTokenId,
   normalizeVideoReviewContentForEdit,
   normalizeWordDiscriminationContentForEdit,
+  normalizeQuizOptionRowForEditor,
 } from '../../lib/lessonEditor'
 import { generateAndUploadWordDiscriminationImage } from '../../lib/geminiWordDiscriminationImage'
 import { getExpoPublicGeminiKey } from '../../lib/expoPublicEnv'
@@ -215,16 +216,9 @@ function quizOptionsDraftFromQ0(q0: Record<string, unknown>): QuizOptionDraft[] 
   const optionsRaw = Array.isArray(q0.options) ? (q0.options as unknown[]) : []
   return optionsRaw
     .map((o) => {
-      if (typeof o === 'string') return { text: o, english: '' }
+      if (typeof o === 'string') return { text: String(o).trim(), english: '' }
       if (o && typeof o === 'object' && !Array.isArray(o)) {
-        const ro = o as Record<string, unknown>
-        const ar = ro.audioRef
-        return {
-          text: typeof ro.text === 'string' ? ro.text : String(ro.text ?? ''),
-          english: typeof ro.english === 'string' ? ro.english : '',
-          word_id: typeof ro.word_id === 'string' ? ro.word_id : undefined,
-          audioRef: typeof ar === 'string' && ar.trim() ? ar.trim() : undefined,
-        }
+        return normalizeQuizOptionRowForEditor(o as Record<string, unknown>)
       }
       return { text: String(o ?? ''), english: '' }
     })
@@ -234,15 +228,30 @@ function quizOptionsDraftFromQ0(q0: Record<string, unknown>): QuizOptionDraft[] 
 function quizContentWithAudioOptionsFlag(content: Record<string, unknown>): Record<string, unknown> {
   const qs = content.questions
   if (!Array.isArray(qs) || qs.length === 0) return { ...content, audioOptions: false }
-  const q0 = qs[0] as Record<string, unknown> | undefined
-  const opts = q0?.options
-  if (!Array.isArray(opts)) return { ...content, audioOptions: false }
-  const hasAudio = opts.some((item) => {
-    if (item == null || typeof item !== 'object' || Array.isArray(item)) return false
-    const ar = (item as Record<string, unknown>).audioRef
-    return typeof ar === 'string' && ar.trim().length > 0
+  const hasAudio = qs.some((q) => {
+    if (q == null || typeof q !== 'object' || Array.isArray(q)) return false
+    const opts = (q as Record<string, unknown>).options
+    if (!Array.isArray(opts)) return false
+    return opts.some((item) => {
+      if (item == null || typeof item !== 'object' || Array.isArray(item)) return false
+      const ar = (item as Record<string, unknown>).audioRef
+      return typeof ar === 'string' && ar.trim().length > 0
+    })
   })
   return { ...content, audioOptions: hasAudio }
+}
+
+function patchQuizQuestionInContent(
+  cur: Record<string, unknown>,
+  qIndex: number,
+  patcher: (q: Record<string, unknown>) => Record<string, unknown>,
+): Record<string, unknown> {
+  const qs = ensureQuizQuestionsArray(cur)
+  if (qIndex < 0 || qIndex >= qs.length) return cur
+  const row = { ...(qs[qIndex] as Record<string, unknown>) }
+  const updated = patcher(row)
+  const nextQs = qs.map((x, i) => (i === qIndex ? updated : x))
+  return quizContentWithAudioOptionsFlag({ ...cur, questions: nextQs })
 }
 
 function glossFromWordRow(row: { translation?: string | null }): string {
@@ -1738,7 +1747,10 @@ export function LessonScreenEditModal({
   const [draft, setDraft] = useState<LessonScreen | null>(null)
   const [jsonFallback, setJsonFallback] = useState('')
   const [jsonError, setJsonError] = useState('')
-  const [quizCorrectOpen, setQuizCorrectOpen] = useState(false)
+  /** Which quiz question index is showing the “correct answer” picker (`null` = closed). */
+  const [quizCorrectModalQ, setQuizCorrectModalQ] = useState<number | null>(null)
+  /** Accordion: only one quiz question body expanded at a time. */
+  const [quizExpandedQuestionIdx, setQuizExpandedQuestionIdx] = useState(0)
   const [patternCorrectOpen, setPatternCorrectOpen] = useState(false)
   /** Video review: one expanded line at a time; lines with vocab are minimized unless this is their `id` (`null` = none). */
   const [videoReviewActiveLineId, setVideoReviewActiveLineId] = useState<string | null>(null)
@@ -1785,6 +1797,26 @@ export function LessonScreenEditModal({
     }
     return listAudioExposureLinkOptionsFromScreens(screens)
   }, [lessonScreens, lessonScreenIndex, draft, screen])
+
+  const [wordBankSeriesLabels, setWordBankSeriesLabels] = useState<string[]>([])
+  useEffect(() => {
+    let cancel = false
+    void (async () => {
+      const labels = await buildWordBankLookupLabels(lessonSeries, lessonContentSeries)
+      if (!cancel) setWordBankSeriesLabels(labels)
+    })()
+    return () => {
+      cancel = true
+    }
+  }, [lessonSeries, lessonContentSeries])
+
+  useEffect(() => {
+    if (!visible || !draft || draft.type !== 'quiz') return
+    const raw = (draft.content as Record<string, unknown>).questions
+    const n = Array.isArray(raw) && raw.length > 0 ? raw.length : 1
+    setQuizExpandedQuestionIdx((i) => Math.max(0, Math.min(i, n - 1)))
+    setQuizCorrectModalQ((open) => (open != null && open >= n ? null : open))
+  }, [visible, draft, draft?.type, draft?.content])
 
   useEffect(() => {
     if (visible && screen) {
@@ -2341,26 +2373,15 @@ export function LessonScreenEditModal({
             questions = [{ question: '', options: ['', ''], correctAnswer: 0 }]
           }
         }
-        const q0 = questions[0] ?? { question: '', options: ['', ''], correctAnswer: 0 }
-        const optionsRaw = Array.isArray(q0.options) ? (q0.options as unknown[]) : []
-        const options: QuizOptionDraft[] = optionsRaw
-          .map((o) => {
-            if (typeof o === 'string') return { text: o, english: '' }
-            if (o && typeof o === 'object' && !Array.isArray(o)) {
-              const ro = o as Record<string, unknown>
-              const ar = ro.audioRef
-              return {
-                text: typeof ro.text === 'string' ? ro.text : String(ro.text ?? ''),
-                english: typeof ro.english === 'string' ? ro.english : '',
-                word_id: typeof ro.word_id === 'string' ? ro.word_id : undefined,
-                audioRef: typeof ar === 'string' && ar.trim() ? ar.trim() : undefined,
-              }
-            }
-            return { text: String(o ?? ''), english: '' }
-          })
-          .filter((x) => x.text.trim() !== '')
-        const correctIdx = typeof q0.correctAnswer === 'number' ? q0.correctAnswer : 0
-        const correctLabel = options[correctIdx]?.text?.trim() || (options.length ? `Option ${correctIdx + 1}` : '—')
+        const quizExpandIdx = Math.max(0, Math.min(quizExpandedQuestionIdx, questions.length - 1))
+        const qForCorrectModal =
+          quizCorrectModalQ != null && quizCorrectModalQ >= 0 && quizCorrectModalQ < questions.length
+            ? (questions[quizCorrectModalQ] as Record<string, unknown>)
+            : null
+        const optionsForCorrectModal = qForCorrectModal ? quizOptionsDraftFromQ0(qForCorrectModal) : []
+        const correctIdxForModal =
+          qForCorrectModal && typeof qForCorrectModal.correctAnswer === 'number' ? qForCorrectModal.correctAnswer : 0
+
         primaryScreenSaveRef.current = () => {
           const d = draftRef.current
           if (!d) return
@@ -2368,124 +2389,214 @@ export function LessonScreenEditModal({
         }
         return (
           <View style={styles.form}>
-            <Field label="Question" value={String(q0.question ?? '')} multiline onChangeText={(t) => {
-              setContent((cur) => {
-                const qs = ensureQuizQuestionsArray(cur)
-                const qFirst = { ...(qs[0] ?? { question: '', options: ['', ''], correctAnswer: 0 }), question: t }
-                return { ...cur, questions: [qFirst, ...qs.slice(1)] }
-              })
-            }} />
-            <Text style={styles.label}>Options (pick from word bank)</Text>
-            <Text style={styles.hint}>Search Oromo; English shows for context. No custom options.</Text>
-            {options.map((opt, i) => (
-              <View key={`${opt.word_id ?? opt.text}-${i}`} style={styles.quizOptionCard}>
-                <View style={styles.quizOptionTextCol}>
-                  <Text style={styles.quizOptionTop}>{opt.text}</Text>
-                  {opt.english?.trim() ? <Text style={styles.quizOptionSub}>{opt.english.trim()}</Text> : null}
-                  {opt.audioRef?.trim() ? (
-                    <Text style={styles.quizOptionAudioHint}>Audio from word bank</Text>
+            <Text style={styles.hint}>
+              One card per learner step. Tap the header to expand or collapse. Add another question when the current
+              one is ready.
+            </Text>
+            {questions.map((qRaw, qIdx) => {
+              const q = (qRaw as Record<string, unknown>) ?? {}
+              const expanded = qIdx === quizExpandIdx
+              const options = quizOptionsDraftFromQ0(q)
+              const correctIdx = typeof q.correctAnswer === 'number' ? q.correctAnswer : 0
+              const correctLabel =
+                options[correctIdx]?.text?.trim() || (options.length ? `Option ${correctIdx + 1}` : '—')
+              const qPreview = String(q.question ?? '').trim()
+              const summaryLine =
+                (qPreview.length > 72 ? `${qPreview.slice(0, 72)}…` : qPreview) || '(no question text yet)'
+              return (
+                <View key={`quiz-q-${qIdx}`} style={styles.quizQuestionShell}>
+                  <View style={styles.quizQuestionHeader}>
+                    <Pressable
+                      style={styles.quizQuestionHeaderTap}
+                      onPress={() => {
+                        setQuizExpandedQuestionIdx(qIdx)
+                        setQuizCorrectModalQ(null)
+                      }}
+                    >
+                      <View style={styles.quizQuestionHeaderMeta}>
+                        <View style={styles.quizQuestionTitleRow}>
+                          <Text style={styles.quizQuestionLabel}>Question {qIdx + 1}</Text>
+                          <Text style={styles.quizQuestionChevron}>{expanded ? '▾' : '▸'}</Text>
+                        </View>
+                        {!expanded ? (
+                          <Text style={styles.quizQuestionSummary} numberOfLines={2}>
+                            {summaryLine} · {options.length} option{options.length === 1 ? '' : 's'}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </Pressable>
+                    {questions.length > 1 ? (
+                      <Pressable
+                        style={styles.quizQuestionRemoveHeader}
+                        onPress={() => {
+                          setContent((cur) => {
+                            const qs = ensureQuizQuestionsArray(cur)
+                            if (qs.length <= 1) return cur
+                            const next = qs.filter((_, j) => j !== qIdx)
+                            return quizContentWithAudioOptionsFlag({ ...cur, questions: next })
+                          })
+                          setQuizCorrectModalQ(null)
+                          setQuizExpandedQuestionIdx((prev) => {
+                            if (qIdx < prev) return Math.max(0, prev - 1)
+                            if (qIdx === prev) return Math.max(0, prev - 1)
+                            return prev
+                          })
+                        }}
+                      >
+                        <Text style={styles.quizQuestionRemoveHeaderText}>Remove</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                  {expanded ? (
+                    <View style={styles.quizQuestionBody}>
+                      <Field
+                        label="Question"
+                        value={String(q.question ?? '')}
+                        multiline
+                        onChangeText={(t) => {
+                          setContent((cur) => patchQuizQuestionInContent(cur, qIdx, (row) => ({ ...row, question: t })))
+                        }}
+                      />
+                      <Text style={styles.label}>Options (pick from word bank)</Text>
+                      <Text style={styles.hint}>
+                        Search the series word bank plus phrases from Audio exposure in this lesson (2+ letters). English
+                        shows for context. No free-typed options — pick a row.
+                      </Text>
+                      {options.map((opt, i) => (
+                        <View key={`${opt.word_id ?? opt.text}-${i}`} style={styles.quizOptionCard}>
+                          <View style={styles.quizOptionTextCol}>
+                            <Text style={styles.quizOptionTop}>{opt.text}</Text>
+                            {opt.english?.trim() ? <Text style={styles.quizOptionSub}>{opt.english.trim()}</Text> : null}
+                            {opt.audioRef?.trim() ? (
+                              <Text style={styles.quizOptionAudioHint}>Audio from word bank</Text>
+                            ) : null}
+                          </View>
+                          <Pressable
+                            style={styles.quizOptionRemoveBtn}
+                            onPress={() => {
+                              setContent((cur) =>
+                                patchQuizQuestionInContent(cur, qIdx, (qFirst) => {
+                                  const opts = quizOptionsDraftFromQ0(qFirst)
+                                  const cIdx = typeof qFirst.correctAnswer === 'number' ? qFirst.correctAnswer : 0
+                                  const nextOpts = opts.filter((_, j) => j !== i).map((x) => ({ ...x }))
+                                  const serial = nextOpts.map(serializeQuizOption)
+                                  const nextCorrect = Math.max(0, Math.min(cIdx, Math.max(0, serial.length - 1)))
+                                  return {
+                                    ...qFirst,
+                                    options: serial.length
+                                      ? serial
+                                      : [{ text: '', english: '' }, { text: '', english: '' }],
+                                    correctAnswer: nextCorrect,
+                                  }
+                                }),
+                              )
+                            }}
+                          >
+                            <Text style={styles.quizOptionRemoveText}>Remove</Text>
+                          </Pressable>
+                        </View>
+                      ))}
+                      <LessonAndSeriesWordPicker
+                        label="Add option (Oromo)"
+                        seriesLabels={wordBankSeriesLabels}
+                        lessonHarvested={exposureWordsForAfaanPicker}
+                        hint={
+                          !wordBankSeriesLabels.length
+                            ? 'Series labels not loaded yet — lesson Audio exposure phrases still appear when they match your search.'
+                            : undefined
+                        }
+                        onPick={(row) => {
+                          setContent((cur) =>
+                            patchQuizQuestionInContent(cur, qIdx, (qFirst) => {
+                              const opts = quizOptionsDraftFromQ0(qFirst)
+                              const cIdx = typeof qFirst.correctAnswer === 'number' ? qFirst.correctAnswer : 0
+                              const bankId = isRealWordBankRowId(row) ? row.id : null
+                              const ar = bankId ? audioRefFromWordRow(row) : undefined
+                              const nextOpts: QuizOptionDraft[] = [
+                                ...opts,
+                                {
+                                  text: rowAfaanTextForBankPick(row),
+                                  english: rowTranslationText(row),
+                                  ...(bankId ? { word_id: bankId } : {}),
+                                  ...(ar ? { audioRef: ar } : {}),
+                                },
+                              ]
+                              const serial = nextOpts.map(serializeQuizOption)
+                              const nextCorrect = Math.max(0, Math.min(cIdx, serial.length - 1))
+                              return { ...qFirst, options: serial, correctAnswer: nextCorrect }
+                            }),
+                          )
+                        }}
+                      />
+                      <Pressable
+                        style={styles.quizCorrectBtn}
+                        onPress={() => setQuizCorrectModalQ(qIdx)}
+                        disabled={options.length < 2}
+                      >
+                        <Text style={styles.quizCorrectBtnLabel}>Correct answer</Text>
+                        <Text style={styles.quizCorrectBtnValue}>{correctLabel}</Text>
+                      </Pressable>
+                      <Field
+                        label="Explanation (optional)"
+                        value={String(q.explanation ?? '')}
+                        multiline
+                        onChangeText={(t) => {
+                          setContent((cur) => patchQuizQuestionInContent(cur, qIdx, (row) => ({ ...row, explanation: t })))
+                        }}
+                      />
+                    </View>
                   ) : null}
                 </View>
-                <Pressable
-                  style={styles.quizOptionRemoveBtn}
-                  onPress={() => {
-                    setContent((cur) => {
-                      const qs = ensureQuizQuestionsArray(cur)
-                      const qFirst = { ...(qs[0] ?? { question: '', options: ['', ''], correctAnswer: 0 }) }
-                      const opts = quizOptionsDraftFromQ0(qFirst)
-                      const cIdx = typeof qFirst.correctAnswer === 'number' ? qFirst.correctAnswer : 0
-                      const nextOpts = opts.filter((_, j) => j !== i).map((x) => ({ ...x }))
-                      const serial = nextOpts.map(serializeQuizOption)
-                      const nextCorrect = Math.max(0, Math.min(cIdx, Math.max(0, serial.length - 1)))
-                      const hasAudio = nextOpts.some((x) => Boolean(x.audioRef?.trim()))
-                      const nextQs = [
-                        {
-                          ...qFirst,
-                          options: serial.length ? serial : [{ text: '', english: '' }, { text: '', english: '' }],
-                          correctAnswer: nextCorrect,
-                        },
-                        ...qs.slice(1),
-                      ]
-                      return { ...cur, questions: nextQs, audioOptions: hasAudio }
-                    })
-                  }}
-                >
-                  <Text style={styles.quizOptionRemoveText}>Remove</Text>
-                </Pressable>
-              </View>
-            ))}
-            <WordBankPicker
-              label="Add option (Oromo)"
-              value={null}
-              onPick={(row) => {
+              )
+            })}
+            <Pressable
+              style={styles.addBtn}
+              onPress={() => {
                 setContent((cur) => {
                   const qs = ensureQuizQuestionsArray(cur)
-                  const qFirst = { ...(qs[0] ?? { question: '', options: ['', ''], correctAnswer: 0 }) }
-                  const opts = quizOptionsDraftFromQ0(qFirst)
-                  const cIdx = typeof qFirst.correctAnswer === 'number' ? qFirst.correctAnswer : 0
-                  const ar = audioRefFromWordRow(row)
-                  const nextOpts: QuizOptionDraft[] = [
-                    ...opts,
-                    {
-                      text: rowAfaanTextForBankPick(row),
-                      english: rowTranslationText(row),
-                      word_id: row.id,
-                      ...(ar ? { audioRef: ar } : {}),
-                    },
-                  ]
-                  const serial = nextOpts.map(serializeQuizOption)
-                  const nextCorrect = Math.max(0, Math.min(cIdx, serial.length - 1))
-                  const hasAudio = nextOpts.some((x) => Boolean(x.audioRef?.trim()))
-                  return {
-                    ...cur,
-                    questions: [{ ...qFirst, options: serial, correctAnswer: nextCorrect }, ...qs.slice(1)],
-                    audioOptions: hasAudio,
-                  }
+                  const nextQs = [...qs, { question: '', options: ['', ''], correctAnswer: 0 }]
+                  return quizContentWithAudioOptionsFlag({ ...cur, questions: nextQs })
                 })
+                setQuizCorrectModalQ(null)
+                setQuizExpandedQuestionIdx(questions.length)
               }}
-              placeholder="Search Oromo word…"
-            />
-            <Pressable
-              style={styles.quizCorrectBtn}
-              onPress={() => setQuizCorrectOpen(true)}
-              disabled={options.length < 2}
             >
-              <Text style={styles.quizCorrectBtnLabel}>Correct answer</Text>
-              <Text style={styles.quizCorrectBtnValue}>{correctLabel}</Text>
+              <Text style={styles.addBtnText}>+ Add question</Text>
             </Pressable>
-            <Field label="Explanation (optional)" value={String(q0.explanation ?? '')} multiline onChangeText={(t) => {
-              setContent((cur) => {
-                const qs = ensureQuizQuestionsArray(cur)
-                const qFirst = { ...(qs[0] ?? {}), explanation: t }
-                return { ...cur, questions: [qFirst, ...qs.slice(1)] }
-              })
-            }} />
 
-            <Modal visible={quizCorrectOpen} transparent animationType="fade" onRequestClose={() => setQuizCorrectOpen(false)}>
-              <Pressable style={styles.quizCorrectOverlay} onPress={() => setQuizCorrectOpen(false)}>
+            <Modal
+              visible={quizCorrectModalQ != null && qForCorrectModal != null}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setQuizCorrectModalQ(null)}
+            >
+              <Pressable style={styles.quizCorrectOverlay} onPress={() => setQuizCorrectModalQ(null)}>
                 <Pressable style={styles.quizCorrectSheet} onPress={() => {}}>
                   <Text style={styles.personTitle}>Select correct answer</Text>
-                  {options.length < 2 ? (
+                  {quizCorrectModalQ != null ? (
+                    <Text style={styles.hint}>Question {quizCorrectModalQ + 1}</Text>
+                  ) : null}
+                  {optionsForCorrectModal.length < 2 ? (
                     <Text style={styles.hint}>Add at least 2 options first.</Text>
                   ) : (
-                    options.map((opt, idx) => (
+                    optionsForCorrectModal.map((opt, idx) => (
                       <Pressable
                         key={`${opt.word_id ?? opt.text}-${idx}`}
                         style={styles.quizCorrectChoice}
                         onPress={() => {
-                          setContent((cur) => {
-                            const qs = ensureQuizQuestionsArray(cur)
-                            const qFirst = { ...(qs[0] ?? {}), correctAnswer: idx }
-                            return { ...cur, questions: [qFirst, ...qs.slice(1)] }
-                          })
-                          setQuizCorrectOpen(false)
+                          const qi = quizCorrectModalQ
+                          if (qi == null) return
+                          setContent((cur) => patchQuizQuestionInContent(cur, qi, (row) => ({ ...row, correctAnswer: idx })))
+                          setQuizCorrectModalQ(null)
                         }}
                       >
                         <Text style={styles.quizCorrectChoiceText}>
-                          {idx === correctIdx ? '✓ ' : ''}
+                          {idx === correctIdxForModal ? '✓ ' : ''}
                           {opt.text}
                         </Text>
-                        {opt.english?.trim() ? <Text style={styles.quizCorrectChoiceSub}>{opt.english.trim()}</Text> : null}
+                        {opt.english?.trim() ? (
+                          <Text style={styles.quizCorrectChoiceSub}>{opt.english.trim()}</Text>
+                        ) : null}
                       </Pressable>
                     ))
                   )}
@@ -3006,9 +3117,9 @@ export function LessonScreenEditModal({
           const d = draftRef.current
           if (!d) return
           const content = d.content as Record<string, unknown>
-          const heading = String(content.heading ?? '').trim()
-          if (!heading) {
-            setJsonError('Word breakdown needs a heading.')
+          const original = String(content.original ?? '').trim()
+          if (!original) {
+            setJsonError('Word breakdown needs the full phrase (original).')
             return
           }
           const arr = Array.isArray(content.words) ? (content.words as Record<string, unknown>[]) : []
@@ -3022,12 +3133,10 @@ export function LessonScreenEditModal({
             setJsonError('Add at least one row with both word and translation.')
             return
           }
-          const original = String(content.original ?? '').trim()
           const tip = String(content.tip ?? '').trim()
           setJsonError('')
           saveStructured({
-            heading,
-            ...(original ? { original } : {}),
+            original,
             words: cleaned,
             ...(tip ? { tip } : {}),
           })
@@ -3036,20 +3145,21 @@ export function LessonScreenEditModal({
         return (
           <View style={styles.form}>
             <Text style={styles.hint}>
-              Each row is one segment: the target-language surface form (word) and the gloss or explanation
-              (translation). Use ____ in Original if the learner name should appear there.
+              Set the full phrase learners see at the top, then each segment (word) and gloss (translation). Use ____
+              in the phrase if the learner's name should appear there.
             </Text>
             <Field
-              label="Heading"
-              value={String(c.heading ?? '')}
-              onChangeText={(t) => setContent((cur) => ({ ...cur, heading: t }))}
-            />
-            <Field
-              label="Original phrase (optional)"
+              label="Original phrase"
               value={String(c.original ?? '')}
               multiline
               multilineCompact
-              onChangeText={(t) => setContent((cur) => ({ ...cur, original: t }))}
+              onChangeText={(t) =>
+                setContent((cur) => {
+                  const next = { ...cur, original: t }
+                  delete (next as Record<string, unknown>).heading
+                  return next
+                })
+              }
             />
             <Text style={styles.label}>Word rows</Text>
             {displayWords.map((row, i) => (
@@ -3787,6 +3897,32 @@ const styles = StyleSheet.create({
   },
   learnedText: { color: '#e4e4e7', fontSize: 14 },
   learnedReadOnlySub: { color: '#a1a1aa', fontSize: 13, marginTop: 4 },
+  quizQuestionShell: {
+    marginBottom: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#27272a',
+    backgroundColor: '#0c0c0d',
+    overflow: 'hidden',
+  },
+  quizQuestionHeader: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    backgroundColor: '#18181b',
+  },
+  quizQuestionHeaderTap: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  quizQuestionHeaderMeta: { flex: 1, minWidth: 0 },
+  quizQuestionTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  quizQuestionChevron: { color: '#eab308', fontSize: 16, fontWeight: '900', width: 22, textAlign: 'center' },
+  quizQuestionLabel: { color: '#eab308', fontSize: 13, fontWeight: '800' },
+  quizQuestionSummary: { color: '#a1a1aa', fontSize: 12, marginTop: 4 },
+  quizQuestionRemoveHeader: { justifyContent: 'center', paddingHorizontal: 12, borderLeftWidth: 1, borderLeftColor: '#27272a' },
+  quizQuestionRemoveHeaderText: { color: '#f87171', fontSize: 13, fontWeight: '800' },
+  quizQuestionBody: { paddingHorizontal: 12, paddingBottom: 14, paddingTop: 4 },
   quizOptionCard: {
     backgroundColor: '#18181b',
     borderRadius: 12,

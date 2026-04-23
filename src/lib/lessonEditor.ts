@@ -668,14 +668,37 @@ function speakingPracticeEnglishLine(c: Record<string, unknown>): string {
   return ''
 }
 
-const QUIZ_OPTION_KEYS = new Set(['text', 'english', 'audioRef'])
+const QUIZ_OPTION_KEYS = new Set(['text', 'english', 'audioRef', 'word_id'])
+
+/** Map quiz option JSON (admin `text`/`english`, learner-style `word`/`translation`, or legacy `oromo`) for editor + sanitize. */
+export function normalizeQuizOptionRowForEditor(rec: Record<string, unknown>): {
+  text: string
+  english: string
+  word_id?: string
+  audioRef?: string
+} {
+  const text = String(rec.text ?? rec.word ?? rec.oromo ?? '').trim()
+  const english = String(rec.english ?? rec.translation ?? rec.definition ?? '').trim()
+  const ar = rec.audioRef
+  const wid = rec.word_id
+  return {
+    text,
+    english,
+    word_id: typeof wid === 'string' && wid.trim() ? wid.trim() : undefined,
+    audioRef: typeof ar === 'string' && ar.trim() ? ar.trim() : undefined,
+  }
+}
 
 function sanitizeQuizOptionsArray(opts: unknown): unknown {
   if (!Array.isArray(opts)) return opts
   return opts.map((o) => {
     if (typeof o === 'string') return o
     if (o != null && typeof o === 'object' && !Array.isArray(o)) {
-      return pickAllowedKeys(o as Record<string, unknown>, QUIZ_OPTION_KEYS)
+      const d = normalizeQuizOptionRowForEditor(o as Record<string, unknown>)
+      const out: Record<string, unknown> = { text: d.text, english: d.english }
+      if (d.word_id) out.word_id = d.word_id
+      if (d.audioRef) out.audioRef = d.audioRef
+      return pickAllowedKeys(out, QUIZ_OPTION_KEYS)
     }
     return o
   })
@@ -927,7 +950,8 @@ export function sanitizeScreenContentForPersistence(
     case 'communityBoard':
       return pickAllowedKeys(content, new Set(['prompt', 'topic']))
     case 'word-breakdown': {
-      const base = pickAllowedKeys(content, new Set(['heading', 'original', 'words', 'tip']))
+      const base = pickAllowedKeys(content, new Set(['original', 'words', 'tip']))
+      delete (base as Record<string, unknown>).heading
       const wr = base.words
       if (Array.isArray(wr)) {
         base.words = wr.map((w) =>
@@ -936,12 +960,13 @@ export function sanitizeScreenContentForPersistence(
             : w,
         )
       }
-      for (const k of ['heading', 'tip'] as const) {
+      for (const k of ['tip'] as const) {
         const v = base[k]
         if (v == null || !String(v).trim()) delete base[k]
       }
-      const orig = base.original
-      if (orig == null || !String(orig).trim()) delete base.original
+      const orig = String(base.original ?? '').trim()
+      if (orig) base.original = orig
+      else delete base.original
       return base
     }
     case 'videoReview': {
@@ -1117,21 +1142,9 @@ export function screenSummary(screen: LessonScreen): string {
       return tail
     }
     case 'word-breakdown': {
-      const raw = (c as Record<string, unknown>).words
-      if (!Array.isArray(raw) || raw.length === 0) return '—'
-      const first = raw[0]
-      if (first != null && typeof first === 'object' && !Array.isArray(first)) {
-        const rec = first as Record<string, unknown>
-        const a = String(rec.word ?? '').trim()
-        const b = String(rec.translation ?? '').trim()
-        if (a) {
-          const head = b ? `${a} — ${b}` : a
-          const more = raw.length > 1 ? ` (+${raw.length - 1})` : ''
-          const s = `${head}${more}`
-          return s.length > 80 ? `${s.slice(0, 80)}…` : s
-        }
-      }
-      return `${raw.length} segment(s)`
+      const orig = String((c as Record<string, unknown>).original ?? '').trim()
+      if (!orig) return '—'
+      return orig.length > 100 ? `${orig.slice(0, 100)}…` : orig
     }
     default:
       return Object.keys(c).length ? `${Object.keys(c).length} field(s)` : 'Empty'
@@ -1170,6 +1183,11 @@ export function screenSubtitleLines(screen: LessonScreen, _ctx?: ScreenSubtitleC
     }
     case 'dialogue':
       return [dialogueNameSummaryFromContent(c as Record<string, unknown>)]
+    case 'word-breakdown': {
+      const orig = String((c as Record<string, unknown>).original ?? '').trim()
+      if (!orig) return ['—']
+      return [orig.length > 200 ? `${orig.slice(0, 200)}…` : orig]
+    }
     default:
       return [screenSummary(screen)]
   }

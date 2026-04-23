@@ -342,11 +342,10 @@ Exercise builder.
   - `explanation`: `string` (optional)
 
 ### `word-breakdown`
-Break a phrase into word boxes (personalizes `original` by replacing `____` with the user name).
+Break a phrase into word boxes (personalizes `original` by replacing `____` with the user name). No separate title field — the phrase is the headline.
 
 **content**
-- **`heading`**: `string`
-- `original`: `string` (optional; can include `____`)
+- **`original`**: `string` (required; can include `____` for the learner name)
 - **`words`**: `{ word: string, translation: string }[]` (>= 1) — target-language segment and gloss/explanation
 - `tip`: `string` (optional)
 

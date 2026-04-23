@@ -362,9 +362,8 @@
     "wordBreakdownContent": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["heading", "words"],
+      "required": ["original", "words"],
       "properties": {
-        "heading": { "type": "string" },
         "original": { "type": "string" },
         "tip": { "type": "string" },
         "words": {

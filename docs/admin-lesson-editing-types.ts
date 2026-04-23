@@ -163,8 +163,7 @@ export type WordBreakdownWordRow = {
 };
 
 export type WordBreakdownContent = {
-  heading: string;
-  original?: string;
+  original: string;
   tip?: string;
   words: WordBreakdownWordRow[];
   [k: string]: unknown;

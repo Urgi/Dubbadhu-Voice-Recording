@@ -164,7 +164,9 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   const [introVideoSaving, setIntroVideoSaving] = useState(false)
   const [videoReviewGaps, setVideoReviewGaps] = useState<VideoReviewGap[]>([])
   const [lessonReorderSaving, setLessonReorderSaving] = useState(false)
-  const [wordBankListModal, setWordBankListModal] = useState<null | 'newWords' | 'definitionChanges'>(null)
+  const [wordBankListModal, setWordBankListModal] = useState<
+    null | 'newWords' | 'definitionChanges' | 'needsVaRecording'
+  >(null)
   const lessonReorderInFlight = useRef(false)
   const lessonSwipeRefs = useRef<Record<string, Swipeable | null>>({})
 
@@ -1069,6 +1071,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                   ) : null}
                   {wordBankReview &&
                   wordBankReview.newWords.length === 0 &&
+                  (wordBankReview.needsVaRecording?.length ?? 0) === 0 &&
                   wordBankReview.pendingTranslationChanges.length === 0 &&
                   wordBankReview.blockedOtherSeries.length === 0 &&
                   !wordBankReviewError ? (
@@ -1077,9 +1080,41 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                       <Text style={styles.wordBankReviewLine}>
                         Scanned {wordBankReview.lessonRowCount} lesson row(s) in this series; found{' '}
                         {wordBankReview.harvestedCount} unique token(s) from Audio exposure and Speaking practice
-                        only (those need VA audio). Nothing new to insert, no translation diffs, and no cross-series
-                        blocks. Put vocabulary on those screens with Afaan (oromo/text) and gloss on exposures.
+                        only. Nothing new to insert, no rows still waiting on VA recording, no translation diffs, and no
+                        cross-series blocks. Put vocabulary on those screens with Afaan (word / legacy oromo/text) and
+                        gloss (translation) on exposures.
                       </Text>
+                    </View>
+                  ) : null}
+                  {wordBankReview && (wordBankReview.needsVaRecording?.length ?? 0) > 0 ? (
+                    <View style={styles.wordBankReviewSection}>
+                      <Text style={styles.wordBankReviewLabel}>
+                        Need VA recording — {wordBankReview.needsVaRecording.length}
+                      </Text>
+                      <Text style={styles.wordBankReviewLegend}>
+                        In the words table for this series but not recorded/approved yet (matches “no audio yet” in
+                        lesson editor).
+                      </Text>
+                      {wordBankReview.needsVaRecording.slice(0, 15).map((nw, idx) => (
+                        <Text key={`${nw.word}-va-${idx}`} style={styles.wordBankReviewLine}>
+                          • {nw.word}
+                          {nw.translation ? ` — ${nw.translation}` : ''}
+                          {nw.sourceRefs ? (
+                            <Text style={styles.wordBankReviewSource}> {nw.sourceRefs}</Text>
+                          ) : null}
+                        </Text>
+                      ))}
+                      {wordBankReview.needsVaRecording.length > 15 ? (
+                        <Pressable
+                          onPress={() => setWordBankListModal('needsVaRecording')}
+                          hitSlop={8}
+                          style={({ pressed }) => [pressed && styles.wordBankReviewMorePressed]}
+                        >
+                          <Text style={styles.wordBankReviewMore}>
+                            … +{wordBankReview.needsVaRecording.length - 15} more
+                          </Text>
+                        </Pressable>
+                      ) : null}
                     </View>
                   ) : null}
                   {wordBankReview && wordBankReview.newWords.length > 0 ? (
@@ -1460,7 +1495,9 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                 ? `New words (${wordBankReview.newWords.length})`
                 : wordBankListModal === 'definitionChanges' && wordBankReview
                   ? `Definition changes (${wordBankReview.pendingTranslationChanges.length})`
-                  : 'Voice bank'}
+                  : wordBankListModal === 'needsVaRecording' && wordBankReview
+                    ? `Need VA recording (${wordBankReview.needsVaRecording.length})`
+                    : 'Voice bank'}
             </Text>
             <View style={styles.modalHeaderSpacer} />
           </View>
@@ -1484,6 +1521,17 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
               ? wordBankReview.pendingTranslationChanges.map((ch) => (
                   <Text key={ch.word} style={styles.wordBankReviewLine}>
                     • {ch.word}: lesson “{ch.lessonTranslation}” vs DB “{ch.databaseTranslation}”
+                  </Text>
+                ))
+              : null}
+            {wordBankListModal === 'needsVaRecording' && wordBankReview
+              ? wordBankReview.needsVaRecording.map((nw, idx) => (
+                  <Text key={`${nw.word}-va-modal-${idx}`} style={styles.wordBankReviewLine}>
+                    • {nw.word}
+                    {nw.translation ? ` — ${nw.translation}` : ''}
+                    {nw.sourceRefs ? (
+                      <Text style={styles.wordBankReviewSource}> {nw.sourceRefs}</Text>
+                    ) : null}
                   </Text>
                 ))
               : null}

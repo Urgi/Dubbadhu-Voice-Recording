@@ -1,8 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { getExpoPublicGeminiKey } from './expoPublicEnv'
 
-/** Try stable models first; 2.0 may be unavailable on some API keys / regions. */
-const MODELS = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b'] as const
+/** Try stable models first; older model IDs may be retired for some API keys. */
+const MODELS = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'] as const
 
 export type GeminiAnalyticsOk = { ok: true; text: string; sourceLabel: string }
 export type GeminiAnalyticsErr = { ok: false; error: string }

@@ -13,6 +13,7 @@ import {
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -42,7 +43,11 @@ import {
   normalizeWordDiscriminationContentForEdit,
   normalizeQuizOptionRowForEditor,
 } from '../../lib/lessonEditor'
-import { generateAndUploadWordDiscriminationImage } from '../../lib/geminiWordDiscriminationImage'
+import {
+  generateWordDiscriminationImageDraft,
+  uploadWordDiscriminationImageDraft,
+  type WordDiscriminationImageDraft,
+} from '../../lib/geminiWordDiscriminationImage'
 import { getExpoPublicGeminiKey } from '../../lib/expoPublicEnv'
 import supabase from '../../lib/supabase'
 import type { HarvestedWord } from '../../lib/seedWordsFromLessons'
@@ -816,6 +821,7 @@ function WordDiscriminationSceneImageField({
   const [listLoading, setListLoading] = useState(false)
   const [rawListCount, setRawListCount] = useState(0)
   const [geminiBusy, setGeminiBusy] = useState(false)
+  const [geminiDraft, setGeminiDraft] = useState<WordDiscriminationImageDraft | null>(null)
 
   const applyScenePatch = useCallback(
     (patch: Record<string, unknown>) => {
@@ -884,6 +890,7 @@ function WordDiscriminationSceneImageField({
   useEffect(() => {
     if (requestOpen) {
       setRequestDraft(String(imageRequestDescription ?? '').trim())
+      setGeminiDraft(null)
     }
   }, [requestOpen, imageRequestDescription])
 
@@ -1006,7 +1013,7 @@ function WordDiscriminationSceneImageField({
             {geminiBusy ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
                 <ActivityIndicator color="#d4af37" />
-                <Text style={styles.hint}>Generating and uploading…</Text>
+                <Text style={styles.hint}>{geminiDraft ? 'Uploading…' : 'Generating…'}</Text>
               </View>
             ) : null}
             {!getExpoPublicGeminiKey().trim() ? (
@@ -1025,19 +1032,70 @@ function WordDiscriminationSceneImageField({
                 if (!t || geminiBusy) return
                 void (async () => {
                   setGeminiBusy(true)
-                  const out = await generateAndUploadWordDiscriminationImage(t)
+                  const out = await generateWordDiscriminationImageDraft(t)
                   setGeminiBusy(false)
                   if ('error' in out) {
                     Alert.alert('Could not generate image', out.error)
                     return
                   }
-                  applyScenePatch({ image: out.publicUrl, imageRequestDescription: '' })
-                  setRequestOpen(false)
+                  setGeminiDraft(out)
                 })()
               }}
             >
-              <Text style={styles.addBtnText}>Generate with Gemini & use image</Text>
+              <Text style={styles.addBtnText}>
+                {geminiDraft ? 'Regenerate draft image' : 'Generate draft image with Gemini'}
+              </Text>
             </Pressable>
+
+            {geminiDraft ? (
+              <View style={{ marginTop: 10 }}>
+                <Text style={[styles.hint, { marginBottom: 8 }]}>Preview (not uploaded yet)</Text>
+                <View
+                  style={{
+                    borderRadius: 12,
+                    overflow: 'hidden',
+                    borderWidth: 1,
+                    borderColor: 'rgba(212,175,55,0.25)',
+                    backgroundColor: '#0b1220',
+                  }}
+                >
+                  <Image
+                    source={{ uri: geminiDraft.dataUrl }}
+                    style={{ width: '100%', height: 180 }}
+                    resizeMode="cover"
+                  />
+                </View>
+
+                <Pressable
+                  style={[styles.addBtn, { marginTop: 10, opacity: geminiBusy ? 0.45 : 1 }]}
+                  disabled={geminiBusy}
+                  onPress={() => {
+                    if (geminiBusy || !geminiDraft) return
+                    void (async () => {
+                      setGeminiBusy(true)
+                      const up = await uploadWordDiscriminationImageDraft(geminiDraft)
+                      setGeminiBusy(false)
+                      if ('error' in up) {
+                        Alert.alert('Could not upload image', up.error)
+                        return
+                      }
+                      applyScenePatch({ image: up.publicUrl, imageRequestDescription: '' })
+                      setRequestOpen(false)
+                    })()
+                  }}
+                >
+                  <Text style={styles.addBtnText}>Use this image (upload)</Text>
+                </Pressable>
+
+                <Pressable
+                  style={[styles.removeBtn, { marginTop: 6 }]}
+                  disabled={geminiBusy}
+                  onPress={() => setGeminiDraft(null)}
+                >
+                  <Text style={styles.removeBtnText}>Discard draft</Text>
+                </Pressable>
+              </View>
+            ) : null}
             <Pressable
               style={[styles.addBtn, { marginTop: 8, opacity: geminiBusy ? 0.45 : 1 }]}
               disabled={geminiBusy}

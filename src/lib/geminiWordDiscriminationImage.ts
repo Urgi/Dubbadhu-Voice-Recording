@@ -94,13 +94,19 @@ async function requestGeminiImage(apiKey: string, prompt: string): Promise<
   return image
 }
 
+export type WordDiscriminationImageDraft = {
+  mimeType: string
+  base64: string
+  dataUrl: string
+}
+
 /**
- * Generate a quiz image with Gemini and upload it to public `word-comparison-images` storage.
- * Requires `EXPO_PUBLIC_GEMINI_API_KEY` and Supabase storage INSERT policy for this bucket (see sql/).
+ * Generate an image draft with Gemini, but do NOT upload it yet.
+ * This lets the user preview and decide whether to use it (and only then upload/insert).
  */
-export async function generateAndUploadWordDiscriminationImage(
+export async function generateWordDiscriminationImageDraft(
   userDescription: string,
-): Promise<{ publicUrl: string } | { error: string }> {
+): Promise<WordDiscriminationImageDraft | { error: string }> {
   const apiKey = getExpoPublicGeminiKey().trim()
   if (!apiKey) {
     return { error: 'Missing EXPO_PUBLIC_GEMINI_API_KEY. Add it to .env and restart Metro.' }
@@ -110,17 +116,36 @@ export async function generateAndUploadWordDiscriminationImage(
   const gen = await requestGeminiImage(apiKey, prompt)
   if ('error' in gen) return gen
 
+  const mimeType = gen.mimeType.trim()
+  const base64 = gen.data.trim()
+  if (!mimeType.startsWith('image/') || !base64) {
+    return { error: 'Gemini returned an invalid image payload.' }
+  }
+
+  // React Native <Image> can preview base64 via a data URL.
+  const dataUrl = `data:${mimeType};base64,${base64}`
+  return { mimeType, base64, dataUrl }
+}
+
+/**
+ * Upload a previously generated draft image to public `word-comparison-images` storage.
+ * This is the "insert" step (storage.objects) and should only happen after user confirmation.
+ */
+export async function uploadWordDiscriminationImageDraft(
+  draft: Pick<WordDiscriminationImageDraft, 'mimeType' | 'base64'>,
+): Promise<{ publicUrl: string } | { error: string }> {
   let bytes: Uint8Array
   try {
-    bytes = base64ToUint8Array(gen.data)
+    bytes = base64ToUint8Array(draft.base64)
   } catch {
-    return { error: 'Could not decode image data from Gemini.' }
+    return { error: 'Could not decode image data for upload.' }
   }
   if (bytes.length === 0) {
     return { error: 'Decoded image was empty.' }
   }
 
-  const ext = gen.mimeType.includes('jpeg') || gen.mimeType.includes('jpg') ? 'jpg' : 'png'
+  const mime = draft.mimeType.trim().toLowerCase()
+  const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'png'
   const contentType = ext === 'jpg' ? 'image/jpeg' : 'image/png'
   const path = `ai-generated/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`
 
@@ -143,4 +168,16 @@ export async function generateAndUploadWordDiscriminationImage(
     return { error: 'Upload succeeded but public URL was missing.' }
   }
   return { publicUrl }
+}
+
+/**
+ * Generate a quiz image with Gemini and upload it to public `word-comparison-images` storage.
+ * Requires `EXPO_PUBLIC_GEMINI_API_KEY` and Supabase storage INSERT policy for this bucket (see sql/).
+ */
+export async function generateAndUploadWordDiscriminationImage(
+  userDescription: string,
+): Promise<{ publicUrl: string } | { error: string }> {
+  const draft = await generateWordDiscriminationImageDraft(userDescription)
+  if ('error' in draft) return draft
+  return await uploadWordDiscriminationImageDraft(draft)
 }

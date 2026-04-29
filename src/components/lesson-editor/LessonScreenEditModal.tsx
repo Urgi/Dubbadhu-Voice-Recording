@@ -35,6 +35,8 @@ import {
   celebrateSanitizedLearnedExtra,
   mergeCelebrateLearnedFromExposureAndExtra,
   finalizeScreenContentPayload,
+  findAudioExposureWordsMissingWordId,
+  formatAudioExposureWordIdGapsForAdmin,
   listAudioExposureLinkOptionsFromScreens,
   normalizeAudioExposureContentForEdit,
   normalizeDialogueContent,
@@ -2101,6 +2103,15 @@ export function LessonScreenEditModal({
       const d = draftRef.current
       if (!d) return
       const content = finalizeScreenContentPayload(d.type, parsed)
+      if (d.type === 'audioExposure') {
+        const gaps = findAudioExposureWordsMissingWordId([
+          { type: 'audioExposure', content } as LessonScreen,
+        ])
+        if (gaps.length > 0) {
+          setJsonError(formatAudioExposureWordIdGapsForAdmin(gaps))
+          return
+        }
+      }
       onApply({ type: d.type, content })
       onCloseFromParent()
     } catch {
@@ -2111,6 +2122,15 @@ export function LessonScreenEditModal({
   const saveStructured = (content: Record<string, unknown>) => {
     const d = draftRef.current
     if (!d) return
+    if (d.type === 'audioExposure') {
+      const gaps = findAudioExposureWordsMissingWordId([
+        { type: 'audioExposure', content } as LessonScreen,
+      ])
+      if (gaps.length > 0) {
+        setJsonError(formatAudioExposureWordIdGapsForAdmin(gaps))
+        return
+      }
+    }
     const payload = finalizeScreenContentPayload(d.type, content)
     onApply({ type: d.type, content: payload })
     onCloseFromParent()
@@ -2805,6 +2825,13 @@ export function LessonScreenEditModal({
                     promptTranslationConflict,
                   )
                 : (ws as Record<string, unknown>[])
+              const gaps = findAudioExposureWordsMissingWordId([
+                { type: 'audioExposure', content: { ...c2, words: resolvedWords } } as LessonScreen,
+              ])
+              if (gaps.length > 0) {
+                setJsonError(formatAudioExposureWordIdGapsForAdmin(gaps))
+                return
+              }
               setTranslationConflict(null)
               saveStructured({ ...c2, words: resolvedWords })
             } catch (e) {

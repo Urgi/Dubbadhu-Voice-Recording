@@ -580,6 +580,54 @@ export function sanitizeAudioExposureWordTokenForPersistence(
   return out
 }
 
+/** Admin / save gate: learner requires a bank `word_id` on every audioExposure token. */
+export type AudioExposureWordIdGap = {
+  /** 0-based index in `lesson.screens` */
+  screenIndex: number
+  /** 0-based index in `content.words` */
+  wordIndex: number
+  /** Short label for error copy */
+  label: string
+}
+
+/**
+ * Returns exposure `words[]` rows that do not have a UUID `word_id` (not linked to `public.words`).
+ * Pass the same `screens` shape you would save (after celebrate sync if you use it).
+ */
+export function findAudioExposureWordsMissingWordId(screens: LessonScreen[]): AudioExposureWordIdGap[] {
+  const out: AudioExposureWordIdGap[] = []
+  screens.forEach((s, si) => {
+    if (s.type !== 'audioExposure') return
+    const words = (s.content as Record<string, unknown>).words
+    if (!Array.isArray(words)) return
+    words.forEach((w, wi) => {
+      if (w == null || typeof w !== 'object' || Array.isArray(w)) return
+      const rec = w as Record<string, unknown>
+      const wid = String(rec.word_id ?? '').trim().toLowerCase()
+      if (UUID_RE_FOR_WORD_ROW.test(wid)) return
+      const label =
+        String(rec.word ?? (rec as { oromo?: string }).oromo ?? '')
+          .trim()
+          .slice(0, 48) || `row ${wi + 1}`
+      out.push({ screenIndex: si, wordIndex: wi, label })
+    })
+  })
+  return out
+}
+
+/** Human-readable checklist for alerts (newline-separated bullet lines after the header). */
+export function formatAudioExposureWordIdGapsForAdmin(gaps: AudioExposureWordIdGap[]): string {
+  if (gaps.length === 0) return ''
+  const lines = gaps
+    .slice(0, 14)
+    .map(
+      (g) =>
+        `• Screen ${g.screenIndex + 1} (Listen & Learn), word ${g.wordIndex + 1}: “${g.label}” — link to word bank`,
+    )
+  const more = gaps.length > 14 ? `\n… +${gaps.length - 14} more` : ''
+  return `${lines.join('\n')}${more}`
+}
+
 /** Client-generated id so speaking practice can reference an exposure row in the same draft JSON. */
 export function newDraftTokenId(): string {
   return `draft_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`

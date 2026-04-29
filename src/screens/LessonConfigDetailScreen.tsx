@@ -29,6 +29,8 @@ import {
   buildAddScreenOptionsForCurriculumEditor,
   defaultScreen,
   findAudioExposureWordRecordByDraftTokenId,
+  findAudioExposureWordsMissingWordId,
+  formatAudioExposureWordIdGapsForAdmin,
   parseLessonContent,
   looksLikeWordsRowUuid,
   sanitizeLessonScreensForSave,
@@ -209,12 +211,17 @@ async function hydrateAudioRefsFromWordBank(content: Record<string, unknown>, se
     delete wr.audioRef
     delete wr.fastAudioRef
     delete wr.slowAudioRef
+    delete wr.waveformEnvelope
+    delete wr.fastWaveformEnvelope
+    delete wr.slowWaveformEnvelope
+    delete wr.waveformNormal
+    delete wr.waveformSlow
     if (fast) wr.fastAudioRef = fast
     if (slow) wr.slowAudioRef = slow
     const fe = normalizeEnvelopeArray(row.fast_waveform_envelope)
     const se = normalizeEnvelopeArray(row.slow_waveform_envelope)
-    if (fe?.length) wr.waveformEnvelope = fe
-    if (se?.length) wr.slowWaveformEnvelope = se
+    if (fe?.length) wr.waveformNormal = fe
+    if (se?.length) wr.waveformSlow = se
   }
 
   const typedScreens = screens as unknown as LessonScreen[]
@@ -535,7 +542,14 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
         if (!d) {
           throw new Error('Invalid lesson content: need non-empty screens array with valid screen types.')
         }
-        const screensSynced = sanitizeLessonScreensForSave(syncCelebrateScreensWithAudioExposure(d.screens))
+        const syncedJson = syncCelebrateScreensWithAudioExposure(d.screens)
+        const gapsJson = findAudioExposureWordsMissingWordId(syncedJson)
+        if (gapsJson.length > 0) {
+          throw new Error(
+            `Link every Audio exposure row to the word bank (word_id required).\n\n${formatAudioExposureWordIdGapsForAdmin(gapsJson)}`,
+          )
+        }
+        const screensSynced = sanitizeLessonScreensForSave(syncedJson)
         content = stripUndefined({ ...d, id: row.id, screens: screensSynced }) as Record<string, unknown>
         content.series = wordsBankSeriesLabelFromSeriesId(row.series_id ?? '')
         stripNextNavFromLessonContent(content)
@@ -554,12 +568,19 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
             throw new Error(`Invalid screen: ${s.type}`)
           }
         }
+        const syncedDraft = syncCelebrateScreensWithAudioExposure(draft.screens)
+        const gapsDraft = findAudioExposureWordsMissingWordId(syncedDraft)
+        if (gapsDraft.length > 0) {
+          throw new Error(
+            `Link every Audio exposure row to the word bank (word_id required).\n\n${formatAudioExposureWordIdGapsForAdmin(gapsDraft)}`,
+          )
+        }
         const merged = stripUndefined({
           ...draft,
           id: row.id,
           title: draft.title.trim() || row.title || row.id,
           series: wordsBankSeriesLabelFromSeriesId(row.series_id ?? ''),
-          screens: sanitizeLessonScreensForSave(syncCelebrateScreensWithAudioExposure(draft.screens)),
+          screens: sanitizeLessonScreensForSave(syncedDraft),
         }) as Record<string, unknown>
         stripNextNavFromLessonContent(merged)
         stripNextNavFromAllScreens(merged)

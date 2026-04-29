@@ -25,7 +25,12 @@ import {
   AdminSectionHeader,
   AdminSeriesScriptCard,
 } from '../components/lesson-config/AdminLessonConfigChrome'
-import { defaultScreen } from '../lib/lessonEditor'
+import {
+  defaultScreen,
+  findAudioExposureWordsMissingWordId,
+  formatAudioExposureWordIdGapsForAdmin,
+  parseLessonContent,
+} from '../lib/lessonEditor'
 import { useAuth } from '../context/AuthContext'
 import {
   isLessonStructureFrozen,
@@ -35,6 +40,7 @@ import {
   seriesStatusLabel,
   type LessonSeriesStatus,
 } from '../lib/lessonSeriesStatus'
+import { backfillLessonWordIdsForSeries } from '../lib/backfillLessonWordIdsForSeries'
 import {
   buildSeriesWordBankReviewSummary,
   fetchSeriesWordsVaProgress,
@@ -263,17 +269,31 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     [isAdmin, lessonSeriesRowExists, seriesStatus, vaProgress, releaseMediaReady],
   )
 
-  /** Admin may confirm completion even if some bank rows still lack audio (recommended workflow). */
-  const markAudioCompleteBaseEnabled = useMemo(
-    () =>
-      isAdmin &&
-      lessonSeriesRowExists &&
-      seriesStatus === 'approved' &&
-      vaProgress != null &&
-      vaProgress.totalLessonWords > 0 &&
-      releaseMediaReady,
-    [isAdmin, lessonSeriesRowExists, seriesStatus, vaProgress, releaseMediaReady],
-  )
+  /** Human-readable blockers when `canMarkAudioComplete` is false (for alert copy). */
+  const markCompleteGaps = useCallback((): string[] => {
+    const gaps: string[] = []
+    if (!listCoverUrl?.trim()) gaps.push('Add a Speak tab cover for this series.')
+    if (!introVideoUrl?.trim()) gaps.push('Set the series intro video URL.')
+    if (videoReviewGaps.length > 0) {
+      gaps.push(`Set a clip URL on every Review screen (${videoReviewGaps.length} missing).`)
+    }
+    if (!vaProgress) {
+      gaps.push('Voice queue status is not available yet. Refresh and try again.')
+      return gaps
+    }
+    if (vaProgress.totalLessonWords === 0) {
+      gaps.push('No vocabulary tokens found in lessons for this series.')
+    }
+    if (!vaProgress.allLessonWordsInVoiceBank) {
+      gaps.push('Some lesson tokens are not yet in the voice-bank series for this curriculum.')
+    }
+    if (vaProgress.needRecording > 0) {
+      gaps.push(
+        `${vaProgress.needRecording} word(s) still need recording or approval in the voice queue.`,
+      )
+    }
+    return gaps
+  }, [listCoverUrl, introVideoUrl, videoReviewGaps, vaProgress])
 
   const seriesStatusExplainer = useMemo(() => {
     if (!lessonSeriesRowExists) {
@@ -418,6 +438,22 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
         }
       }
       setVaProgress(nextVa)
+
+      // After curriculum is approved, `words` rows exist; backfill `word_id` into lesson JSON for legacy
+      // series (complete / testing / published) as well as approved — idempotent.
+      const shouldBackfillLessonWordIds =
+        resolvedStatus === 'approved' ||
+        resolvedStatus === 'complete' ||
+        resolvedStatus === 'testing' ||
+        resolvedStatus === 'published'
+      if (isAdmin && hasLessonSeriesRow && shouldBackfillLessonWordIds) {
+        const bf = await backfillLessonWordIdsForSeries(seriesId)
+        if (bf.error) {
+          setError((e) =>
+            e ? `${e}\nLesson word_id link: ${bf.error}` : `Lesson word_id link: ${bf.error}`,
+          )
+        }
+      }
 
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -645,11 +681,15 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   )
 
   const onMarkAudioComplete = useCallback(async () => {
-    if (!markAudioCompleteBaseEnabled) {
+    if (!isAdmin || !lessonSeriesRowExists || seriesStatus !== 'approved') {
       Alert.alert(
-        'Not ready',
-        'Approve the series, ensure release media (cover, intro video, review URLs) is set, and that lesson words are harvested into the voice queue before marking audio complete.',
+        'Not available',
+        'Mark series complete is only available after the series is approved.',
       )
+      return
+    }
+    if (loading) {
+      Alert.alert('Loading', 'Wait for this screen to finish loading, then try again.')
       return
     }
     if (canMarkAudioComplete) {
@@ -657,31 +697,22 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       if (ok) void load()
       return
     }
-    const gaps: string[] = []
-    if (vaProgress && !vaProgress.allLessonWordsInVoiceBank) {
-      gaps.push('Some lesson tokens are not yet represented in the voice-bank series.')
-    }
-    if (vaProgress && vaProgress.needRecording > 0) {
-      gaps.push(
-        `${vaProgress.needRecording} word${vaProgress.needRecording === 1 ? '' : 's'} still need recording or approval in the voice queue.`,
-      )
-    }
-    Alert.alert(
-      'Mark audio complete anyway?',
-      `${gaps.join(' ')}\n\nYou can still mark complete if you accept shipping without full reference audio. Continue?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Mark complete anyway',
-          style: 'destructive',
-          onPress: async () => {
-            const ok = await persistSeriesStatus('complete')
-            if (ok) void load()
-          },
-        },
-      ],
-    )
-  }, [canMarkAudioComplete, markAudioCompleteBaseEnabled, persistSeriesStatus, load, vaProgress])
+    const gaps = markCompleteGaps()
+    const body =
+      gaps.length > 0
+        ? `Finish these first:\n\n• ${gaps.join('\n• ')}`
+        : 'Finish the series completion checklist above, then try again.'
+    Alert.alert('Cannot mark complete yet', body)
+  }, [
+    isAdmin,
+    lessonSeriesRowExists,
+    seriesStatus,
+    loading,
+    canMarkAudioComplete,
+    markCompleteGaps,
+    persistSeriesStatus,
+    load,
+  ])
 
   const onPublishToLearnerCatalog = useCallback(() => {
     Alert.alert(
@@ -704,6 +735,39 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   const onApproveContent = useCallback(async () => {
     if (!lessonSeriesRowExists || !canAdminApproveCurriculum) return
     setVaSyncing(true)
+    try {
+      const { data: lessonRows, error: lesErr } = await supabase
+        .from('lessons')
+        .select('id,title,content')
+        .eq('series_id', seriesId)
+      if (lesErr) {
+        setVaSyncing(false)
+        Alert.alert('Could not validate lessons', withLessonSeriesRlsHint(lesErr.message))
+        return
+      }
+      const blocks: string[] = []
+      for (const lr of lessonRows ?? []) {
+        const pd = parseLessonContent(lr.content, lr.id)
+        if (!pd?.screens?.length) continue
+        const gaps = findAudioExposureWordsMissingWordId(pd.screens)
+        if (!gaps.length) continue
+        blocks.push(`${lr.title || lr.id}\n${formatAudioExposureWordIdGapsForAdmin(gaps)}`)
+      }
+      if (blocks.length > 0) {
+        setVaSyncing(false)
+        Alert.alert(
+          'Cannot approve series yet',
+          `Every Audio exposure row needs a word_id (word bank link).\n\n${blocks.join('\n\n')}`,
+        )
+        return
+      }
+    } catch (e) {
+      setVaSyncing(false)
+      const msg = e instanceof Error ? e.message : String(e)
+      Alert.alert('Validation failed', msg)
+      return
+    }
+
     const okApproved = await persistSeriesStatus('approved', { quiet: true })
     if (!okApproved) {
       setVaSyncing(false)
@@ -734,6 +798,13 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       if (seed.blockedOtherSeries.length > 20) {
         lines.push(`… +${seed.blockedOtherSeries.length - 20} more`)
       }
+    }
+    lines.push(
+      '',
+      `Lesson JSON rows patched with word_id (matched to voice bank): ${seed.lessonsWordIdsPatched ?? 0}.`,
+    )
+    if (seed.backfillError) {
+      lines.push('', `Warning — lesson JSON word_id backfill: ${seed.backfillError}`)
     }
     Alert.alert('Approved', lines.join('\n'))
     await load()
@@ -1256,10 +1327,10 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                 <Pressable
                   style={[
                     styles.primaryOutlineBtn,
-                    (seriesStatusSaving || !markAudioCompleteBaseEnabled) && styles.btnDisabledOpacity,
+                    (seriesStatusSaving || loading) && styles.btnDisabledOpacity,
                   ]}
                   onPress={() => void onMarkAudioComplete()}
-                  disabled={seriesStatusSaving || !markAudioCompleteBaseEnabled}
+                  disabled={seriesStatusSaving || loading}
                 >
                   <Text style={styles.primaryOutlineBtnText}>Mark series complete</Text>
                 </Pressable>

@@ -1,4 +1,5 @@
 import type { RecordingStatus } from '../types'
+import { backfillLessonWordIdsForSeries } from './backfillLessonWordIdsForSeries'
 import supabase from './supabase'
 import { normalizeRecordingStatus } from './wordStatus'
 import {
@@ -430,6 +431,10 @@ export type SeedWordsResult = {
   /** Same word+language already lives under another `words.series` — not inserted here. */
   blockedOtherSeries: BlockedOtherSeries[]
   error?: string
+  /** Lesson rows whose JSON was patched to add `word_id` on tokens matched to `public.words`. */
+  lessonsWordIdsPatched?: number
+  /** Lesson JSON backfill failed (words sync still applied). */
+  backfillError?: string
 }
 
 type SeriesWordSyncPlan = {
@@ -992,11 +997,14 @@ export async function seedWordsFromSeriesLessons(params: { seriesId: string }): 
     }
   }
 
+  const bf = await backfillLessonWordIdsForSeries(seriesId)
   return {
     inserted,
     translationsUpdated,
     skippedExisting,
     totalHarvested: harvested.length,
     blockedOtherSeries,
+    lessonsWordIdsPatched: bf.lessonsUpdated,
+    ...(bf.error ? { backfillError: bf.error } : {}),
   }
 }

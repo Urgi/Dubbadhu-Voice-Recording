@@ -24,6 +24,8 @@ export type RootStackParamList = {
   Login: undefined
   ProfessorHome: undefined
   AdminHome: undefined
+  /** In-app Gemini chat with bundled Dubbadhu ecosystem context (both apps). */
+  LubbuDubbadhu: undefined
   AdminAnalytics: undefined
   LessonConfig: undefined
   LessonConfigSeries: { seriesId: string }

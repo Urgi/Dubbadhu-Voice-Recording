@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -32,20 +34,32 @@ type VocabRow = {
   english: string
   part_of_speech: string | null
   illustration_url: string | null
+  illustration_generation_requested_at: string | null
   category: string | null
   serverReview: ReviewRow | null
 }
 
-type FilterKey = 'all' | 'has_image' | 'no_image' | 'unreviewed' | 'good' | 'bad'
+type FilterKey =
+  | 'all'
+  | 'has_image'
+  | 'no_image'
+  | 'unreviewed'
+  | 'good'
+  | 'bad'
+  | 'requested'
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'has_image', label: 'Has image' },
   { key: 'no_image', label: 'No image' },
+  { key: 'requested', label: 'Requested' },
   { key: 'unreviewed', label: 'Unreviewed' },
   { key: 'good', label: 'Good' },
   { key: 'bad', label: 'Bad' },
 ]
+
+const BATCH_QUEUE_CLI =
+  'node scripts/generate_vocab_illustrations_for_vocabulary.cjs --batch-admin-queue --limit 200'
 
 export default function AdminVocabIllustrationReviewScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true)
@@ -57,6 +71,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   const [draftStatus, setDraftStatus] = useState<Record<number, 'good' | 'bad'>>({})
   const [draftNotes, setDraftNotes] = useState<Record<number, string>>({})
   const [savingId, setSavingId] = useState<number | null>(null)
+  const [vocabActionId, setVocabActionId] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     setError('')
@@ -64,7 +79,9 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     const [vRes, rRes] = await Promise.all([
       supabase
         .from('vocabulary')
-        .select('id, oromo, english, part_of_speech, illustration_url, category')
+        .select(
+          'id, oromo, english, part_of_speech, illustration_url, illustration_generation_requested_at, category',
+        )
         .order('id', { ascending: true }),
       supabase.from('vocabulary_illustration_reviews').select('vocabulary_id, status, notes, updated_at'),
     ])
@@ -88,6 +105,9 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       english: String(v.english ?? ''),
       part_of_speech: v.part_of_speech ? String(v.part_of_speech) : null,
       illustration_url: v.illustration_url ? String(v.illustration_url).trim() : null,
+      illustration_generation_requested_at: v.illustration_generation_requested_at
+        ? String(v.illustration_generation_requested_at)
+        : null,
       category: v.category ? String(v.category) : null,
       serverReview: reviewMap.get(v.id) ?? null,
     }))
@@ -124,6 +144,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       }
       const hasImg = Boolean(r.illustration_url)
       const rev = r.serverReview
+      const queued =
+        Boolean(r.illustration_generation_requested_at) && !hasImg
       switch (filter) {
         case 'all':
           return true
@@ -131,6 +153,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
           return hasImg
         case 'no_image':
           return !hasImg
+        case 'requested':
+          return queued
         case 'unreviewed':
           return rev == null
         case 'good':
@@ -211,10 +235,97 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     })
   }
 
+  const removePicture = async (r: VocabRow) => {
+    setVocabActionId(r.id)
+    setError('')
+    const { error: e } = await supabase.rpc('clear_vocab_illustration', { p_vocabulary_id: r.id })
+    setVocabActionId(null)
+    if (e) {
+      setError(e.message)
+      return
+    }
+    setRows((prev) =>
+      prev.map((row) => (row.id === r.id ? { ...row, illustration_url: null } : row)),
+    )
+  }
+
+  const confirmRemovePicture = (r: VocabRow) => {
+    Alert.alert(
+      'Remove picture?',
+      `Clears the stored image for “${r.oromo}” (${r.english}). Your review is kept.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: () => void removePicture(r) },
+      ],
+    )
+  }
+
+  const requestImage = async (r: VocabRow) => {
+    setVocabActionId(r.id)
+    setError('')
+    const { error: e } = await supabase.rpc('request_vocab_illustration', { p_vocabulary_id: r.id })
+    setVocabActionId(null)
+    if (e) {
+      setError(e.message)
+      return
+    }
+    setRows((prev) =>
+      prev.map((row) =>
+        row.id === r.id
+          ? { ...row, illustration_generation_requested_at: new Date().toISOString() }
+          : row,
+      ),
+    )
+  }
+
+  const clearImageRequest = async (r: VocabRow) => {
+    setVocabActionId(r.id)
+    setError('')
+    const { error: e } = await supabase.rpc('clear_vocab_illustration_request', {
+      p_vocabulary_id: r.id,
+    })
+    setVocabActionId(null)
+    if (e) {
+      setError(e.message)
+      return
+    }
+    setRows((prev) =>
+      prev.map((row) =>
+        row.id === r.id ? { ...row, illustration_generation_requested_at: null } : row,
+      ),
+    )
+  }
+
+  const showBatchQueueInstructions = () => {
+    const body =
+      'Generates images on your computer using OpenAI and your Dubbadhu .env (service role + API key).\n\n' +
+      'From the Dubbadhu folder run:\n\n' +
+      BATCH_QUEUE_CLI +
+      '\n\n' +
+      'Order: (1) every Bad review that has a comment, then (2) words with Request image and no picture yet.'
+
+    Alert.alert('Run illustration batch', body, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Share command',
+        onPress: () =>
+          void Share.share({
+            message: `cd Dubbadhu\n${BATCH_QUEUE_CLI}`,
+            title: 'Vocab illustration batch',
+          }),
+      },
+      { text: 'OK' },
+    ])
+  }
+
   const renderItem = ({ item: r }: { item: VocabRow }) => {
     const st = getDraftStatus(r)
     const notes = getDraftNotes(r)
     const busy = savingId === r.id
+    const imgBusy = vocabActionId === r.id
+    const hasImg = Boolean(r.illustration_url)
+    const queued =
+      Boolean(r.illustration_generation_requested_at) && !hasImg
     return (
       <View style={styles.card}>
         <View style={styles.cardTop}>
@@ -238,7 +349,41 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
                 Saved {new Date(r.serverReview.updated_at).toLocaleString()}
               </Text>
             ) : null}
+            {queued ? (
+              <Text style={styles.queuedBadge}>Requested · waiting for batch generation</Text>
+            ) : null}
           </View>
+        </View>
+
+        <View style={styles.imageActions}>
+          {hasImg ? (
+            <Pressable
+              style={[styles.secondaryBtn, styles.secondaryDanger, imgBusy && styles.btnDisabled]}
+              onPress={() => confirmRemovePicture(r)}
+              disabled={imgBusy}
+            >
+              <Text style={styles.secondaryBtnTextDanger}>Remove picture</Text>
+            </Pressable>
+          ) : null}
+          {!hasImg && !queued ? (
+            <Pressable
+              style={[styles.secondaryBtn, styles.secondaryAccent, imgBusy && styles.btnDisabled]}
+              onPress={() => void requestImage(r)}
+              disabled={imgBusy}
+            >
+              <Text style={styles.secondaryBtnText}>Request image</Text>
+            </Pressable>
+          ) : null}
+          {!hasImg && queued ? (
+            <Pressable
+              style={[styles.secondaryBtn, imgBusy && styles.btnDisabled]}
+              onPress={() => void clearImageRequest(r)}
+              disabled={imgBusy}
+            >
+              <Text style={styles.secondaryMuted}>Clear request</Text>
+            </Pressable>
+          ) : null}
+          {imgBusy ? <ActivityIndicator size="small" color={ADMIN_ACCENT_GOLD} style={styles.inlineSpinner} /> : null}
         </View>
 
         <View style={styles.ratingRow}>
@@ -297,6 +442,12 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
       <View style={styles.toolbar}>
+        <Pressable style={styles.batchBanner} onPress={showBatchQueueInstructions}>
+          <Text style={styles.batchBannerTitle}>Process illustration queue</Text>
+          <Text style={styles.batchBannerSub}>
+            Bad + notes, then requested words · runs via script on your Mac
+          </Text>
+        </Pressable>
         <TextInput
           style={styles.search}
           placeholder="Search Oromo, English, id…"
@@ -351,6 +502,26 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#2c2c2e',
+  },
+  batchBanner: {
+    backgroundColor: '#2d2640',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: ADMIN_ACCENT_GOLD,
+  },
+  batchBannerTitle: {
+    color: ADMIN_ACCENT_GOLD,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  batchBannerSub: {
+    color: '#a1a1aa',
+    fontSize: 12,
+    marginTop: 6,
+    lineHeight: 17,
   },
   search: {
     backgroundColor: '#1c1c1e',
@@ -450,6 +621,56 @@ const styles = StyleSheet.create({
     color: '#6ee7b7',
     fontSize: 12,
     marginTop: 6,
+  },
+  queuedBadge: {
+    color: '#fbbf24',
+    fontSize: 12,
+    marginTop: 6,
+    fontWeight: '600',
+  },
+  imageActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+  },
+  secondaryBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: '#2c2c2e',
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+  },
+  secondaryDanger: {
+    borderColor: '#7f1d1d',
+    backgroundColor: '#1f1515',
+  },
+  secondaryAccent: {
+    borderColor: ADMIN_ACCENT_GOLD,
+    backgroundColor: '#1a1520',
+  },
+  secondaryBtnText: {
+    color: ADMIN_ACCENT_GOLD,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  secondaryBtnTextDanger: {
+    color: '#fca5a5',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  secondaryMuted: {
+    color: '#a1a1aa',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  btnDisabled: {
+    opacity: 0.5,
+  },
+  inlineSpinner: {
+    marginLeft: 4,
   },
   ratingRow: {
     flexDirection: 'row',

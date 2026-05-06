@@ -37,6 +37,8 @@ export type RootStackParamList = {
   AdminSeriesList: undefined
   AdminSeriesDetail: { seriesName: string; language: string }
   AdminAudioReview: undefined
+  /** QA vocabulary quiz illustrations (good/bad + notes for regeneration). */
+  AdminVocabIllustrationReview: undefined
   AdminSeriesAudioReview: { seriesName: string; language: string }
   VoiceActorDashboard: undefined
   Recording: {

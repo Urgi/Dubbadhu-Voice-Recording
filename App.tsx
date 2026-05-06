@@ -12,6 +12,7 @@ import AdminSeriesListScreen from './src/screens/AdminSeriesListScreen'
 import AdminSeriesDetailScreen from './src/screens/AdminSeriesDetailScreen'
 import AdminAudioReviewScreen from './src/screens/AdminAudioReviewScreen'
 import AdminSeriesAudioReviewScreen from './src/screens/AdminSeriesAudioReviewScreen'
+import AdminVocabIllustrationReviewScreen from './src/screens/AdminVocabIllustrationReviewScreen'
 import LessonConfigScreen from './src/screens/LessonConfigScreen'
 import LessonConfigSeriesScreen from './src/screens/LessonConfigSeriesScreen'
 import LessonConfigDetailScreen from './src/screens/LessonConfigDetailScreen'
@@ -65,6 +66,11 @@ function AppStack() {
         <Stack.Screen name="AdminSeriesList" component={AdminSeriesListScreen} options={{ title: 'Voice Recording' }} />
         <Stack.Screen name="AdminSeriesDetail" component={AdminSeriesDetailScreen} />
         <Stack.Screen name="AdminAudioReview" component={AdminAudioReviewScreen} />
+        <Stack.Screen
+          name="AdminVocabIllustrationReview"
+          component={AdminVocabIllustrationReviewScreen}
+          options={{ title: 'Vocab illustrations' }}
+        />
         <Stack.Screen name="AdminSeriesAudioReview" component={AdminSeriesAudioReviewScreen} />
         <Stack.Screen
           name="VoiceActorDashboard"

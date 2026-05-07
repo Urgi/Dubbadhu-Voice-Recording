@@ -261,6 +261,7 @@ export function defaultScreen(type: ScreenType): LessonScreen {
             {
               image: '',
               imageRequestDescription: '',
+              imageContext: '',
               correctWordIndex: 0,
               explanation: '',
             },
@@ -435,7 +436,7 @@ export function normalizeWordDiscriminationContentForEdit(content: Record<string
 
   const scenes: Record<string, unknown>[] = rawScenes.map((s) => {
     if (s == null || typeof s !== 'object' || Array.isArray(s)) {
-      return { image: '', imageRequestDescription: '', correctWordIndex: 0, explanation: '' }
+      return { image: '', imageRequestDescription: '', imageContext: '', correctWordIndex: 0, explanation: '' }
     }
     const sc = s as Record<string, unknown>
     let correctWordIndex = 0
@@ -450,13 +451,14 @@ export function normalizeWordDiscriminationContentForEdit(content: Record<string
     return {
       image: String(sc.image ?? sc.imageUrl ?? '').trim(),
       imageRequestDescription: String(sc.imageRequestDescription ?? '').trim(),
+      imageContext: String(sc.imageContext ?? '').trim(),
       correctWordIndex,
       explanation: String(sc.explanation ?? '').trim(),
     }
   })
 
   if (scenes.length === 0) {
-    scenes.push({ image: '', imageRequestDescription: '', correctWordIndex: 0, explanation: '' })
+    scenes.push({ image: '', imageRequestDescription: '', imageContext: '', correctWordIndex: 0, explanation: '' })
   }
 
   const next: Record<string, unknown> = {
@@ -937,6 +939,7 @@ export function sanitizeScreenContentForPersistence(
         'image',
         'imageUrl',
         'imageRequestDescription',
+        'imageContext',
         'correctWordIndex',
         'correct',
         'explanation',
@@ -954,11 +957,13 @@ export function sanitizeScreenContentForPersistence(
       }
       const sc = base.scenes
       if (Array.isArray(sc)) {
-        base.scenes = sc.map((s) =>
-          s != null && typeof s === 'object' && !Array.isArray(s)
-            ? pickAllowedKeys(s as Record<string, unknown>, sk)
-            : s,
-        )
+        base.scenes = sc.map((s) => {
+          if (s == null || typeof s !== 'object' || Array.isArray(s)) return s
+          const row = pickAllowedKeys(s as Record<string, unknown>, sk)
+          const ctx = row.imageContext
+          if (ctx == null || !String(ctx).trim()) delete row.imageContext
+          return row
+        })
       }
       const wordRows = Array.isArray(base.words) ? base.words : []
       const wordCount = wordRows.filter((w) => w != null && typeof w === 'object' && !Array.isArray(w)).length

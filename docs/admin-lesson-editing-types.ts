@@ -117,6 +117,8 @@ export type WordDiscriminationScene = {
   image: string;
   /** When no `image` yet: description for a pending asset; shown in the learner app. */
   imageRequestDescription?: string;
+  /** When `image` is set: optional 1–2 sentence team note (not shown in learner app). */
+  imageContext?: string;
   correctWordIndex: number;
   explanation: string;
   /** @deprecated use top-level `question` on quiz content */

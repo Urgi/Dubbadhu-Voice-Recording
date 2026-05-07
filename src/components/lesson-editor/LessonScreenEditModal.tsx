@@ -807,14 +807,21 @@ function WordDiscriminationSceneImageField({
   sceneIndex,
   image,
   imageRequestDescription,
+  imageContext,
   setContent,
 }: {
   sceneIndex: number
   image: string
   imageRequestDescription: string
+  /** Optional 1–2 sentences: why this bucket image fits (team notes; not shown in learner UI). */
+  imageContext: string
   setContent: (patch: Record<string, unknown> | ((cur: Record<string, unknown>) => Record<string, unknown>)) => void
 }) {
   const [browseOpen, setBrowseOpen] = useState(false)
+  const [browseStep, setBrowseStep] = useState<'list' | 'preview'>('list')
+  const [browsePreviewName, setBrowsePreviewName] = useState('')
+  const [browsePreviewUrl, setBrowsePreviewUrl] = useState('')
+  const [browseContextDraft, setBrowseContextDraft] = useState('')
   const [requestOpen, setRequestOpen] = useState(false)
   const [requestDraft, setRequestDraft] = useState('')
   const [bucketFiles, setBucketFiles] = useState<string[]>([])
@@ -885,6 +892,10 @@ function WordDiscriminationSceneImageField({
   useEffect(() => {
     if (browseOpen) {
       setFilterQ('')
+      setBrowseStep('list')
+      setBrowsePreviewName('')
+      setBrowsePreviewUrl('')
+      setBrowseContextDraft('')
       void loadBucket()
     }
   }, [browseOpen, loadBucket])
@@ -904,6 +915,7 @@ function WordDiscriminationSceneImageField({
 
   const img = String(image ?? '').trim()
   const req = String(imageRequestDescription ?? '').trim()
+  const ctx = String(imageContext ?? '').trim()
   let statusLine = 'No image selected'
   if (img) {
     try {
@@ -926,63 +938,161 @@ function WordDiscriminationSceneImageField({
       <Pressable style={[styles.quizCorrectBtn, { marginTop: 8 }]} onPress={() => setRequestOpen(true)}>
         <Text style={styles.quizCorrectBtnLabel}>Request new image</Text>
         <Text style={[styles.quizCorrectBtnValue, { fontSize: 12, fontWeight: '600' }]}>
-          Describe what your team should add
+          Short note for your team (1–2 sentences)
         </Text>
       </Pressable>
       {img || req ? (
         <Pressable
           style={styles.removeBtn}
           onPress={() =>
-            applyScenePatch({ image: '', imageRequestDescription: '' })
+            applyScenePatch({ image: '', imageRequestDescription: '', imageContext: '' })
           }
         >
           <Text style={styles.removeBtnText}>Clear image</Text>
         </Pressable>
       ) : null}
 
+      {img ? (
+        <View style={{ marginTop: 12 }}>
+          <Text style={styles.label}>Image context (optional)</Text>
+          <Text style={styles.hint}>
+            1–2 sentences for your team: why this picture fits this question (stored with the lesson; not shown to
+            learners).
+          </Text>
+          <TextInput
+            style={[styles.input, { minHeight: 72, textAlignVertical: 'top' }]}
+            value={ctx}
+            onChangeText={(t) => applyScenePatch({ imageContext: t })}
+            placeholder="e.g. Shows the contrast we need between greeting vs. farewell…"
+            placeholderTextColor="#52525b"
+            multiline
+          />
+        </View>
+      ) : null}
+
       <Modal visible={browseOpen} transparent animationType="fade" onRequestClose={() => setBrowseOpen(false)}>
         <Pressable style={styles.quizCorrectOverlay} onPress={() => setBrowseOpen(false)}>
-          <Pressable style={[styles.quizCorrectSheet, { maxHeight: 520 }]} onPress={() => {}}>
-            <Text style={styles.personTitle}>Available images</Text>
-            <TextInput
-              style={styles.input}
-              value={filterQ}
-              onChangeText={setFilterQ}
-              placeholder="Filter by file name…"
-              placeholderTextColor="#52525b"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            {listLoading ? <Text style={styles.hint}>Loading…</Text> : null}
-            {listErr ? <Text style={styles.jsonErr}>{listErr}</Text> : null}
-            {!listLoading && !listErr && bucketFiles.length === 0 && rawListCount === 0 ? (
-              <Text style={styles.hint}>
-                Storage returned no files (RLS often hides objects from list). In Supabase → SQL, add a SELECT policy
-                on storage.objects for this app’s image bucket (see sql/storage_word_comparison_images_anon_list.sql).
-                Confirm EXPO_PUBLIC_SUPABASE_URL matches this project.
-              </Text>
-            ) : null}
-            {!listLoading && !listErr && bucketFiles.length > 0 && filteredFiles.length === 0 ? (
-              <Text style={styles.hint}>No file name matches your filter.</Text>
-            ) : null}
-            <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
-              {filteredFiles.map((name) => (
-                <Pressable
-                  key={name}
-                  style={styles.quizCorrectChoice}
-                  onPress={() => {
+          <Pressable style={[styles.quizCorrectSheet, { maxHeight: 560 }]} onPress={() => {}}>
+            {browseStep === 'list' ? (
+              <>
+                <Text style={styles.personTitle}>Search images</Text>
+                <Text style={styles.hint}>
+                  Filter by file name, tap a row to preview, then add optional context and confirm.
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  value={filterQ}
+                  onChangeText={setFilterQ}
+                  placeholder="Search / filter by file name…"
+                  placeholderTextColor="#52525b"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {listLoading ? <Text style={styles.hint}>Loading…</Text> : null}
+                {listErr ? <Text style={styles.jsonErr}>{listErr}</Text> : null}
+                {!listLoading && !listErr && bucketFiles.length === 0 && rawListCount === 0 ? (
+                  <Text style={styles.hint}>
+                    Storage returned no files (RLS often hides objects from list). In Supabase → SQL, add a SELECT policy
+                    on storage.objects for this app’s image bucket (see sql/storage_word_comparison_images_anon_list.sql).
+                    Confirm EXPO_PUBLIC_SUPABASE_URL matches this project.
+                  </Text>
+                ) : null}
+                {!listLoading && !listErr && bucketFiles.length > 0 && filteredFiles.length === 0 ? (
+                  <Text style={styles.hint}>No file name matches your search.</Text>
+                ) : null}
+                <ScrollView style={{ maxHeight: 320 }} keyboardShouldPersistTaps="handled">
+                  {filteredFiles.map((name) => {
                     const { data } = supabase.storage.from(WORD_DISCRIMINATION_IMAGES_BUCKET).getPublicUrl(name)
-                    const url = data.publicUrl
-                    if (url) {
-                      applyScenePatch({ image: url, imageRequestDescription: '' })
-                    }
+                    const thumbUrl = data.publicUrl
+                    return (
+                      <Pressable
+                        key={name}
+                        style={[styles.quizCorrectChoice, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}
+                        onPress={() => {
+                          if (!thumbUrl) return
+                          setBrowsePreviewName(name)
+                          setBrowsePreviewUrl(thumbUrl)
+                          setBrowseContextDraft(img === thumbUrl ? ctx : '')
+                          setBrowseStep('preview')
+                        }}
+                      >
+                        {thumbUrl ? (
+                          <Image
+                            source={{ uri: thumbUrl }}
+                            style={{ width: 52, height: 52, borderRadius: 8, backgroundColor: '#0b1220' }}
+                            resizeMode="cover"
+                          />
+                        ) : null}
+                        <Text style={[styles.quizCorrectChoiceText, { flex: 1 }]} numberOfLines={2}>
+                          {name}
+                        </Text>
+                      </Pressable>
+                    )
+                  })}
+                </ScrollView>
+              </>
+            ) : (
+              <>
+                <Text style={styles.personTitle}>Use this image?</Text>
+                <Text style={styles.hint} numberOfLines={2}>
+                  {browsePreviewName}
+                </Text>
+                {browsePreviewUrl ? (
+                  <View
+                    style={{
+                      marginTop: 8,
+                      borderRadius: 12,
+                      overflow: 'hidden',
+                      borderWidth: 1,
+                      borderColor: 'rgba(212,175,55,0.25)',
+                      backgroundColor: '#0b1220',
+                    }}
+                  >
+                    <Image
+                      source={{ uri: browsePreviewUrl }}
+                      style={{ width: '100%', height: 200 }}
+                      resizeMode="cover"
+                    />
+                  </View>
+                ) : null}
+                <Text style={[styles.label, { marginTop: 12 }]}>Context (optional)</Text>
+                <Text style={styles.hint}>1–2 sentences — why this image fits this comparison.</Text>
+                <TextInput
+                  style={[styles.input, { minHeight: 88, textAlignVertical: 'top' }]}
+                  value={browseContextDraft}
+                  onChangeText={setBrowseContextDraft}
+                  placeholder="Optional note for your team…"
+                  placeholderTextColor="#52525b"
+                  multiline
+                />
+                <Pressable
+                  style={[styles.addBtn, { marginTop: 10 }]}
+                  onPress={() => {
+                    if (!browsePreviewUrl) return
+                    const c = browseContextDraft.trim()
+                    applyScenePatch({
+                      image: browsePreviewUrl,
+                      imageRequestDescription: '',
+                      imageContext: c,
+                    })
                     setBrowseOpen(false)
                   }}
                 >
-                  <Text style={styles.quizCorrectChoiceText}>{name}</Text>
+                  <Text style={styles.addBtnText}>Use this image</Text>
                 </Pressable>
-              ))}
-            </ScrollView>
+                <Pressable
+                  style={[styles.removeBtn, { marginTop: 8 }]}
+                  onPress={() => {
+                    setBrowseStep('list')
+                    setBrowsePreviewName('')
+                    setBrowsePreviewUrl('')
+                    setBrowseContextDraft('')
+                  }}
+                >
+                  <Text style={styles.removeBtnText}>Back to search</Text>
+                </Pressable>
+              </>
+            )}
           </Pressable>
         </Pressable>
       </Modal>
@@ -999,15 +1109,14 @@ function WordDiscriminationSceneImageField({
           <Pressable style={styles.quizCorrectSheet} onPress={() => {}}>
             <Text style={styles.personTitle}>Request new image</Text>
             <Text style={styles.hint}>
-              Describe the image for your team to add in Storage. Learners see this text until an image is set. You can
-              also generate a draft image with Gemini (same API key as document word extraction) and upload it to this
-              bucket.
+              1–2 sentences for your team: what to add in Storage. Learners see this text until an image is set. You can
+              also generate a draft with Gemini (same API key as document word extraction) and upload it to this bucket.
             </Text>
             <TextInput
               style={[styles.input, { minHeight: 88, textAlignVertical: 'top' }]}
               value={requestDraft}
               onChangeText={setRequestDraft}
-              placeholder="e.g. Older woman smiling, outdoor setting…"
+              placeholder="Short description — e.g. Two people at a market stall, clear facial expressions…"
               placeholderTextColor="#52525b"
               multiline
               editable={!geminiBusy}
@@ -1081,7 +1190,7 @@ function WordDiscriminationSceneImageField({
                         Alert.alert('Could not upload image', up.error)
                         return
                       }
-                      applyScenePatch({ image: up.publicUrl, imageRequestDescription: '' })
+                      applyScenePatch({ image: up.publicUrl, imageRequestDescription: '', imageContext: '' })
                       setRequestOpen(false)
                     })()
                   }}
@@ -1104,7 +1213,7 @@ function WordDiscriminationSceneImageField({
               onPress={() => {
                 const t = requestDraft.trim()
                 if (!t) return
-                applyScenePatch({ image: '', imageRequestDescription: t })
+                applyScenePatch({ image: '', imageRequestDescription: t, imageContext: '' })
                 setRequestOpen(false)
               }}
             >
@@ -1243,6 +1352,7 @@ function WordDiscriminationQuizEditor({
         const sr = s as Record<string, unknown>
         const img = String(sr.image ?? '').trim()
         const reqDesc = String(sr.imageRequestDescription ?? '').trim()
+        const imgCtx = String(sr.imageContext ?? '').trim()
         const expl = String(sr.explanation ?? '').trim()
         if (!img && !reqDesc) {
           setJsonError(`Question ${si + 1}: choose an available image or enter a new-image request.`)
@@ -1266,6 +1376,9 @@ function WordDiscriminationQuizEditor({
         }
         if (reqDesc && !img) {
           sceneOut.imageRequestDescription = reqDesc
+        }
+        if (img && imgCtx) {
+          sceneOut.imageContext = imgCtx
         }
         outScenes.push(sceneOut)
       }
@@ -1307,7 +1420,7 @@ function WordDiscriminationQuizEditor({
 
   let scenes = (content.scenes as Record<string, unknown>[] | undefined) ?? []
   if (!Array.isArray(scenes) || scenes.length === 0) {
-    scenes = [{ image: '', imageRequestDescription: '', correctWordIndex: 0, explanation: '' }]
+    scenes = [{ image: '', imageRequestDescription: '', imageContext: '', correctWordIndex: 0, explanation: '' }]
   }
 
   const wordPickerLabels = words.map((w, idx) => {
@@ -1427,7 +1540,8 @@ function WordDiscriminationQuizEditor({
 
       <Text style={styles.label}>Questions</Text>
       <Text style={styles.hint}>
-        Each question: pick the word first, then choose an available image or request a new one with a description.
+        Each question: pick the correct word, then search the image library (with optional team context) or request a
+        new image.
       </Text>
       {scenes.map((sc, i) => {
         const cwi =
@@ -1455,6 +1569,7 @@ function WordDiscriminationQuizEditor({
               sceneIndex={i}
               image={String(sc.image ?? '')}
               imageRequestDescription={String(sc.imageRequestDescription ?? '')}
+              imageContext={String(sc.imageContext ?? '')}
               setContent={setContent}
             />
             <Field
@@ -1490,7 +1605,10 @@ function WordDiscriminationQuizEditor({
             const arr = [...((cur.scenes as Record<string, unknown>[]) ?? [])]
             return {
               ...cur,
-              scenes: [...arr, { image: '', imageRequestDescription: '', correctWordIndex: 0, explanation: '' }],
+              scenes: [
+                ...arr,
+                { image: '', imageRequestDescription: '', imageContext: '', correctWordIndex: 0, explanation: '' },
+              ],
             }
           })
         }

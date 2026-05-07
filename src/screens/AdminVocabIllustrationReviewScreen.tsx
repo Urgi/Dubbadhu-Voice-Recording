@@ -16,6 +16,7 @@ import {
 } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
+import { getExpoPublicVocabBatchSecret } from '../lib/expoPublicEnv'
 import supabase from '../lib/supabase'
 import type { RootStackParamList } from '../types'
 
@@ -60,6 +61,7 @@ const FILTERS: { key: FilterKey; label: string }[] = [
 
 const BATCH_QUEUE_CLI =
   'node scripts/generate_vocab_illustrations_for_vocabulary.cjs --batch-admin-queue --limit 200'
+const SERVER_BATCH_LIMIT = 5
 
 export default function AdminVocabIllustrationReviewScreen({ navigation }: Props) {
   const [loading, setLoading] = useState(true)
@@ -72,6 +74,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   const [draftNotes, setDraftNotes] = useState<Record<number, string>>({})
   const [savingId, setSavingId] = useState<number | null>(null)
   const [vocabActionId, setVocabActionId] = useState<number | null>(null)
+  const [batchRunning, setBatchRunning] = useState(false)
 
   const load = useCallback(async () => {
     setError('')
@@ -296,26 +299,119 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     )
   }
 
-  const showBatchQueueInstructions = () => {
-    const body =
-      'Generates images on your computer using OpenAI and your Dubbadhu .env (service role + API key).\n\n' +
-      'From the Dubbadhu folder run:\n\n' +
-      BATCH_QUEUE_CLI +
-      '\n\n' +
-      'Order: (1) every Bad review that has a comment, then (2) words with Request image and no picture yet.'
+  const showLocalCliFallback = () => {
+    Alert.alert(
+      'Run from Mac (optional)',
+      `Same queue order. From the Dubbadhu folder:\n\n${BATCH_QUEUE_CLI}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Share command',
+          onPress: () =>
+            void Share.share({
+              message: `cd Dubbadhu\n${BATCH_QUEUE_CLI}`,
+              title: 'Vocab illustration batch',
+            }),
+        },
+        { text: 'OK' },
+      ],
+    )
+  }
 
-    Alert.alert('Run illustration batch', body, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Share command',
-        onPress: () =>
-          void Share.share({
-            message: `cd Dubbadhu\n${BATCH_QUEUE_CLI}`,
-            title: 'Vocab illustration batch',
-          }),
-      },
-      { text: 'OK' },
-    ])
+  const runServerBatch = async () => {
+    const secret = getExpoPublicVocabBatchSecret().trim()
+    if (!secret) {
+      Alert.alert(
+        'Missing batch secret',
+        'Add EXPO_PUBLIC_VOCAB_BATCH_SECRET to Dubbadhu-Voice-Recording .env (same value as Supabase secret VOCAB_BATCH_SECRET). Deploy the vocab-illustration-batch Edge Function and set OPENAI_API_KEY + VOCAB_BATCH_SECRET in the dashboard.',
+        [{ text: 'OK' }, { text: 'CLI fallback', onPress: showLocalCliFallback }],
+      )
+      return
+    }
+
+    setBatchRunning(true)
+    setError('')
+    const { data, error: fnErr } = await supabase.functions.invoke('vocab-illustration-batch', {
+      body: { limit: SERVER_BATCH_LIMIT, dry_run: false },
+      headers: { 'x-vocab-batch-secret': secret },
+    })
+    setBatchRunning(false)
+
+    if (fnErr) {
+      setError(fnErr.message)
+      Alert.alert('Batch failed', fnErr.message, [
+        { text: 'OK' },
+        { text: 'CLI fallback', onPress: showLocalCliFallback },
+      ])
+      return
+    }
+
+    const payload = data as {
+      ok?: boolean
+      error?: string
+      message?: string
+      totalQueue?: number
+      batchSize?: number
+      remainingAfterBatch?: number
+      hasMore?: boolean
+      processed?: Array<{ id: number; english: string; oromo: string; kind: string; ok: boolean; detail?: string }>
+    }
+
+    if (payload?.error && !payload.processed) {
+      Alert.alert('Batch error', payload.error, [{ text: 'OK' }])
+      return
+    }
+
+    if (payload?.ok === false && payload?.error) {
+      Alert.alert('Batch stopped', payload.error, [{ text: 'OK' }])
+      void load()
+      return
+    }
+
+    const okCount = payload.processed?.filter((p) => p.ok).length ?? 0
+    const failLines =
+      payload.processed
+        ?.filter((p) => !p.ok)
+        .map((p) => `${p.oromo}: ${p.detail || 'failed'}`)
+        .slice(0, 6)
+        .join('\n') || ''
+
+    const summary = [
+      payload.message ||
+        `Processed ${okCount} of ${payload.batchSize ?? 0} in this batch.`,
+      typeof payload.totalQueue === 'number' ? `Queue size: ${payload.totalQueue}` : '',
+      typeof payload.remainingAfterBatch === 'number'
+        ? `Still queued after this run: ${payload.remainingAfterBatch}`
+        : '',
+      payload.hasMore ? 'Tap “Process queue” again to continue.' : '',
+      failLines ? `Issues:\n${failLines}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+
+    const buttons: {
+      text: string
+      style?: 'cancel' | 'default' | 'destructive'
+      onPress?: () => void
+    }[] = [{ text: 'OK' }]
+    if (payload.hasMore) {
+      buttons.push({ text: 'Run again', onPress: () => void runServerBatch() })
+    }
+    buttons.push({ text: 'CLI fallback', onPress: showLocalCliFallback })
+
+    Alert.alert('Illustration batch', summary, buttons)
+    void load()
+  }
+
+  const confirmRunServerBatch = () => {
+    Alert.alert(
+      'Process illustration queue?',
+      `Generates up to ${SERVER_BATCH_LIMIT} images on the server (bad + comment first, then “Request image” rows). OpenAI billing applies. Tap again if more remain in the queue.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Run', onPress: () => void runServerBatch() },
+      ],
+    )
   }
 
   const renderItem = ({ item: r }: { item: VocabRow }) => {
@@ -442,11 +538,23 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
       <View style={styles.toolbar}>
-        <Pressable style={styles.batchBanner} onPress={showBatchQueueInstructions}>
-          <Text style={styles.batchBannerTitle}>Process illustration queue</Text>
-          <Text style={styles.batchBannerSub}>
-            Bad + notes, then requested words · runs via script on your Mac
-          </Text>
+        <Pressable
+          style={[styles.batchBanner, batchRunning && styles.batchBannerDisabled]}
+          onPress={confirmRunServerBatch}
+          disabled={batchRunning}
+        >
+          <View style={styles.batchBannerRow}>
+            {batchRunning ? (
+              <ActivityIndicator color={ADMIN_ACCENT_GOLD} style={styles.batchSpinner} />
+            ) : null}
+            <View style={styles.batchBannerTextCol}>
+              <Text style={styles.batchBannerTitle}>Process illustration queue</Text>
+              <Text style={styles.batchBannerSub}>
+                Server batch (up to {SERVER_BATCH_LIMIT} per tap) · bad + notes, then requested · tap again if queue
+                remains
+              </Text>
+            </View>
+          </View>
         </Pressable>
         <TextInput
           style={styles.search}
@@ -511,6 +619,21 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: ADMIN_ACCENT_GOLD,
+  },
+  batchBannerDisabled: {
+    opacity: 0.75,
+  },
+  batchBannerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  batchBannerTextCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  batchSpinner: {
+    marginRight: 4,
   },
   batchBannerTitle: {
     color: ADMIN_ACCENT_GOLD,

@@ -40,3 +40,12 @@ export function getExpoPublicGeminiKey(): string {
 export function isSupabaseConfigured(): boolean {
   return Boolean(getExpoPublicSupabaseUrl() && getExpoPublicSupabaseAnonKey())
 }
+
+/** Shared with Edge Function secret VOCAB_BATCH_SECRET (internal admin app only). */
+export function getExpoPublicVocabBatchSecret(): string {
+  return (
+    process.env.EXPO_PUBLIC_VOCAB_BATCH_SECRET ||
+    fromExtra(Constants.expoConfig?.extra as Extra, 'EXPO_PUBLIC_VOCAB_BATCH_SECRET') ||
+    ''
+  )
+}

@@ -150,9 +150,9 @@ export default function AdminHomeScreen({ navigation }: Props) {
         style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
         onPress={() => navigation.navigate('AdminVocabIllustrationReview')}
       >
-        <Text style={styles.tileTitle}>Vocab illustrations QA</Text>
-        <Text style={styles.recordedLine}>Review quiz images · mark good/bad + notes</Text>
-        <Text style={styles.tileHint}>Use feedback when regenerating illustrations</Text>
+        <Text style={styles.tileTitle}>Vocab Center</Text>
+        <Text style={styles.recordedLine}>Edit words + translations · generate/select pictures</Text>
+        <Text style={styles.tileHint}>Admin can toggle PictureFriendly (gates image generation)</Text>
       </Pressable>
 
       <Pressable

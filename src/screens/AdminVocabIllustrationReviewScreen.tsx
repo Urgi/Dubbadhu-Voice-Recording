@@ -5,118 +5,116 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
-  Share,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
+import { useAuth } from '../context/AuthContext'
 import { getExpoPublicVocabBatchSecret } from '../lib/expoPublicEnv'
 import supabase from '../lib/supabase'
 import type { RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminVocabIllustrationReview'>
 
-type ReviewRow = {
-  vocabulary_id: number
-  status: 'good' | 'bad'
-  notes: string
-  updated_at: string
-}
-
-type VocabRow = {
-  id: number
-  oromo: string
-  english: string
-  part_of_speech: string | null
-  illustration_url: string | null
-  illustration_generation_requested_at: string | null
+type WordRow = {
+  id: string
+  word: string
+  translation: string | null
   category: string | null
-  serverReview: ReviewRow | null
+  part_of_speech: string | null
+  definition: string | null
+  example: string | null
+  illustration_url: string | null
+  picture_friendly: boolean | null
 }
 
-type FilterKey =
-  | 'all'
-  | 'has_image'
-  | 'no_image'
-  | 'unreviewed'
-  | 'good'
-  | 'bad'
-  | 'requested'
+type FilterKey = 'all' | 'has_image' | 'no_image' | 'picture_friendly' | 'not_picture_friendly'
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'has_image', label: 'Has image' },
   { key: 'no_image', label: 'No image' },
-  { key: 'requested', label: 'Requested' },
-  { key: 'unreviewed', label: 'Unreviewed' },
-  { key: 'good', label: 'Good' },
-  { key: 'bad', label: 'Bad' },
+  { key: 'picture_friendly', label: 'PictureFriendly' },
+  { key: 'not_picture_friendly', label: 'Not picture-friendly' },
 ]
 
-const BATCH_QUEUE_CLI =
-  'node scripts/generate_vocab_illustrations_for_vocabulary.cjs --batch-admin-queue --limit 200'
-const SERVER_BATCH_LIMIT = 5
-
 export default function AdminVocabIllustrationReviewScreen({ navigation }: Props) {
+  const { role } = useAuth()
+  const isAdmin = role === 'admin'
+  const canGenerate = role === 'admin' || role === 'voice'
+
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [rows, setRows] = useState<VocabRow[]>([])
+  const [rows, setRows] = useState<WordRow[]>([])
   const [filter, setFilter] = useState<FilterKey>('has_image')
   const [query, setQuery] = useState('')
-  /** Draft edits before Save — keyed by vocabulary id */
-  const [draftStatus, setDraftStatus] = useState<Record<number, 'good' | 'bad'>>({})
-  const [draftNotes, setDraftNotes] = useState<Record<number, string>>({})
-  const [savingId, setSavingId] = useState<number | null>(null)
-  const [vocabActionId, setVocabActionId] = useState<number | null>(null)
-  const [batchRunning, setBatchRunning] = useState(false)
+  const [actionId, setActionId] = useState<string | null>(null)
+
+  const [editOpen, setEditOpen] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editWord, setEditWord] = useState('')
+  const [editTranslation, setEditTranslation] = useState('')
+  const [editCategory, setEditCategory] = useState('')
+  const [editPos, setEditPos] = useState('')
+  const [editDefinition, setEditDefinition] = useState('')
+  const [editExample, setEditExample] = useState('')
+  const [editIllustrationUrl, setEditIllustrationUrl] = useState('')
+  const [editPictureFriendly, setEditPictureFriendly] = useState(true)
+  const [editBusy, setEditBusy] = useState(false)
+
+  const openEdit = (r: WordRow) => {
+    setEditId(r.id)
+    setEditWord(String(r.word ?? '').trim())
+    setEditTranslation(String(r.translation ?? '').trim())
+    setEditCategory(String(r.category ?? '').trim())
+    setEditPos(String(r.part_of_speech ?? '').trim())
+    setEditDefinition(String(r.definition ?? '').trim())
+    setEditExample(String(r.example ?? '').trim())
+    setEditIllustrationUrl(String(r.illustration_url ?? '').trim())
+    setEditPictureFriendly(r.picture_friendly !== false)
+    setEditOpen(true)
+  }
 
   const load = useCallback(async () => {
     setError('')
     setLoading(true)
-    const [vRes, rRes] = await Promise.all([
-      supabase
-        .from('vocabulary')
-        .select(
-          'id, oromo, english, part_of_speech, illustration_url, illustration_generation_requested_at, category',
-        )
-        .order('id', { ascending: true }),
-      supabase.from('vocabulary_illustration_reviews').select('vocabulary_id, status, notes, updated_at'),
-    ])
-    if (vRes.error) {
-      setError(vRes.error.message)
+    const { data, error: e } = await supabase
+      .from('words')
+      .select('id, word, translation, category, part_of_speech, definition, example, illustration_url, picture_friendly')
+      .order('word', { ascending: true })
+      .limit(5000)
+    if (e) {
+      setError(e.message)
+      setRows([])
       setLoading(false)
       return
     }
-    if (rRes.error) {
-      setError(rRes.error.message)
-      setLoading(false)
-      return
-    }
-    const reviewMap = new Map<number, ReviewRow>()
-    for (const r of rRes.data ?? []) {
-      reviewMap.set(r.vocabulary_id, r as ReviewRow)
-    }
-    const merged: VocabRow[] = (vRes.data ?? []).map((v) => ({
-      id: v.id,
-      oromo: String(v.oromo ?? ''),
-      english: String(v.english ?? ''),
-      part_of_speech: v.part_of_speech ? String(v.part_of_speech) : null,
-      illustration_url: v.illustration_url ? String(v.illustration_url).trim() : null,
-      illustration_generation_requested_at: v.illustration_generation_requested_at
-        ? String(v.illustration_generation_requested_at)
-        : null,
-      category: v.category ? String(v.category) : null,
-      serverReview: reviewMap.get(v.id) ?? null,
-    }))
-    setRows(merged)
-    setDraftStatus({})
-    setDraftNotes({})
+    const out: WordRow[] = (data ?? [])
+      .map((r) => ({
+        id: String((r as { id?: unknown }).id ?? ''),
+        word: String((r as { word?: unknown }).word ?? ''),
+        translation: (r as { translation?: unknown }).translation ? String((r as { translation?: unknown }).translation) : null,
+        category: (r as { category?: unknown }).category ? String((r as { category?: unknown }).category) : null,
+        part_of_speech: (r as { part_of_speech?: unknown }).part_of_speech
+          ? String((r as { part_of_speech?: unknown }).part_of_speech)
+          : null,
+        definition: (r as { definition?: unknown }).definition ? String((r as { definition?: unknown }).definition) : null,
+        example: (r as { example?: unknown }).example ? String((r as { example?: unknown }).example) : null,
+        illustration_url: (r as { illustration_url?: unknown }).illustration_url
+          ? String((r as { illustration_url?: unknown }).illustration_url).trim()
+          : null,
+        picture_friendly: ((r as { picture_friendly?: unknown }).picture_friendly as boolean | null | undefined) ?? null,
+      }))
+      .filter((r) => r.id && r.word)
+    setRows(out)
     setLoading(false)
   }, [])
 
@@ -126,7 +124,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
 
   useEffect(() => {
     navigation.setOptions({
-      title: 'Vocab illustrations',
+      title: 'Vocab Center',
       headerRight: () => (
         <Pressable onPress={() => void load()} style={styles.headerBtn} hitSlop={10}>
           <Text style={styles.headerBtnText}>Refresh</Text>
@@ -139,289 +137,108 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     const q = query.trim().toLowerCase()
     return rows.filter((r) => {
       if (q) {
-        const hit =
-          r.oromo.toLowerCase().includes(q) ||
-          r.english.toLowerCase().includes(q) ||
-          String(r.id).includes(q)
-        if (!hit) return false
+        const id = String(r.id).toLowerCase()
+        const w = String(r.word).toLowerCase()
+        const t = String(r.translation ?? '').toLowerCase()
+        const cat = String(r.category ?? '').toLowerCase()
+        if (!id.includes(q) && !w.includes(q) && !t.includes(q) && !cat.includes(q)) return false
       }
-      const hasImg = Boolean(r.illustration_url)
-      const rev = r.serverReview
-      const queued =
-        Boolean(r.illustration_generation_requested_at) && !hasImg
+      const hasImg = Boolean(r.illustration_url && r.illustration_url.trim())
+      const friendly = r.picture_friendly !== false
       switch (filter) {
-        case 'all':
-          return true
         case 'has_image':
           return hasImg
         case 'no_image':
           return !hasImg
-        case 'requested':
-          return queued
-        case 'unreviewed':
-          return rev == null
-        case 'good':
-          return rev?.status === 'good'
-        case 'bad':
-          return rev?.status === 'bad'
+        case 'picture_friendly':
+          return friendly
+        case 'not_picture_friendly':
+          return !friendly
         default:
           return true
       }
     })
   }, [rows, filter, query])
 
-  const getDraftStatus = (r: VocabRow): 'good' | 'bad' | null => {
-    if (draftStatus[r.id] !== undefined) return draftStatus[r.id]!
-    return r.serverReview?.status ?? null
-  }
-
-  const getDraftNotes = (r: VocabRow): string => {
-    if (draftNotes[r.id] !== undefined) return draftNotes[r.id]!
-    return r.serverReview?.notes ?? ''
-  }
-
-  const setStatusDraft = (id: number, status: 'good' | 'bad') => {
-    setDraftStatus((prev) => ({ ...prev, [id]: status }))
-  }
-
-  const setNotesDraft = (id: number, notes: string) => {
-    setDraftNotes((prev) => ({ ...prev, [id]: notes }))
-  }
-
-  const saveRow = async (r: VocabRow) => {
-    const status = getDraftStatus(r)
-    if (!status) {
-      setError('Choose Good or Bad before saving.')
+  const saveEdit = async () => {
+    const id = editId
+    if (!id) return
+    const nextWord = editWord.trim()
+    const nextTranslation = editTranslation.trim()
+    if (!nextWord || !nextTranslation) {
+      Alert.alert('Missing fields', 'Both Afaan Oromo (word) and English (translation) are required.')
       return
     }
-    setSavingId(r.id)
+    setEditBusy(true)
     setError('')
-    const notes = getDraftNotes(r).trim()
-    const { error: upErr } = await supabase.from('vocabulary_illustration_reviews').upsert(
-      {
-        vocabulary_id: r.id,
-        status,
-        notes,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'vocabulary_id' },
-    )
-    setSavingId(null)
-    if (upErr) {
-      setError(upErr.message)
-      return
+    const payload: Record<string, unknown> = {
+      word: nextWord,
+      translation: nextTranslation,
+      category: editCategory.trim() || null,
+      part_of_speech: editPos.trim() || null,
+      definition: editDefinition.trim() || null,
+      example: editExample.trim() || null,
+      illustration_url: editIllustrationUrl.trim() || null,
     }
-    setRows((prev) =>
-      prev.map((row) =>
-        row.id === r.id
-          ? {
-              ...row,
-              serverReview: {
-                vocabulary_id: r.id,
-                status,
-                notes,
-                updated_at: new Date().toISOString(),
-              },
-            }
-          : row,
-      ),
-    )
-    setDraftStatus((prev) => {
-      const n = { ...prev }
-      delete n[r.id]
-      return n
-    })
-    setDraftNotes((prev) => {
-      const n = { ...prev }
-      delete n[r.id]
-      return n
-    })
-  }
+    if (isAdmin) payload.picture_friendly = Boolean(editPictureFriendly)
 
-  const removePicture = async (r: VocabRow) => {
-    setVocabActionId(r.id)
-    setError('')
-    const { error: e } = await supabase.rpc('clear_vocab_illustration', { p_vocabulary_id: r.id })
-    setVocabActionId(null)
+    const { data, error: e } = await supabase
+      .from('words')
+      .update(payload)
+      .eq('id', id)
+      .select('id, word, translation, category, part_of_speech, definition, example, illustration_url, picture_friendly')
+      .single()
+    setEditBusy(false)
     if (e) {
       setError(e.message)
       return
     }
-    setRows((prev) =>
-      prev.map((row) => (row.id === r.id ? { ...row, illustration_url: null } : row)),
-    )
+    const row = data as unknown as WordRow
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...row } : r)))
+    setEditOpen(false)
   }
 
-  const confirmRemovePicture = (r: VocabRow) => {
-    Alert.alert(
-      'Remove picture?',
-      `Clears the stored image for “${r.oromo}” (${r.english}). Your review is kept.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Remove', style: 'destructive', onPress: () => void removePicture(r) },
-      ],
-    )
-  }
-
-  const requestImage = async (r: VocabRow) => {
-    setVocabActionId(r.id)
-    setError('')
-    const { error: e } = await supabase.rpc('request_vocab_illustration', { p_vocabulary_id: r.id })
-    setVocabActionId(null)
-    if (e) {
-      setError(e.message)
+  const generateImageNow = async (r: WordRow) => {
+    if (!canGenerate) return
+    const friendly = r.picture_friendly !== false
+    if (!friendly && role === 'voice') {
+      Alert.alert('Not picture-friendly', 'Admin marked this word as not picture-friendly. You can still edit text.')
       return
     }
-    setRows((prev) =>
-      prev.map((row) =>
-        row.id === r.id
-          ? { ...row, illustration_generation_requested_at: new Date().toISOString() }
-          : row,
-      ),
-    )
-  }
-
-  const clearImageRequest = async (r: VocabRow) => {
-    setVocabActionId(r.id)
-    setError('')
-    const { error: e } = await supabase.rpc('clear_vocab_illustration_request', {
-      p_vocabulary_id: r.id,
-    })
-    setVocabActionId(null)
-    if (e) {
-      setError(e.message)
-      return
-    }
-    setRows((prev) =>
-      prev.map((row) =>
-        row.id === r.id ? { ...row, illustration_generation_requested_at: null } : row,
-      ),
-    )
-  }
-
-  const showLocalCliFallback = () => {
-    Alert.alert(
-      'Run from Mac (optional)',
-      `Same queue order. From the Dubbadhu folder:\n\n${BATCH_QUEUE_CLI}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Share command',
-          onPress: () =>
-            void Share.share({
-              message: `cd Dubbadhu\n${BATCH_QUEUE_CLI}`,
-              title: 'Vocab illustration batch',
-            }),
-        },
-        { text: 'OK' },
-      ],
-    )
-  }
-
-  const runServerBatch = async () => {
     const secret = getExpoPublicVocabBatchSecret().trim()
     if (!secret) {
-      Alert.alert(
-        'Missing batch secret',
-        'Add EXPO_PUBLIC_VOCAB_BATCH_SECRET to Dubbadhu-Voice-Recording .env (same value as Supabase secret VOCAB_BATCH_SECRET). Deploy the vocab-illustration-batch Edge Function and set OPENAI_API_KEY + VOCAB_BATCH_SECRET in the dashboard.',
-        [{ text: 'OK' }, { text: 'CLI fallback', onPress: showLocalCliFallback }],
-      )
+      Alert.alert('Missing secret', 'Set EXPO_PUBLIC_VOCAB_BATCH_SECRET in admin .env, then restart Expo.')
       return
     }
-
-    setBatchRunning(true)
+    setActionId(r.id)
     setError('')
-    const { data, error: fnErr } = await supabase.functions.invoke('vocab-illustration-batch', {
-      body: { limit: SERVER_BATCH_LIMIT, dry_run: false },
+    const { data, error: fnErr } = await supabase.functions.invoke('word-illustration-generate', {
+      body: { word_id: r.id },
       headers: { 'x-vocab-batch-secret': secret },
     })
-    setBatchRunning(false)
-
+    setActionId(null)
     if (fnErr) {
       setError(fnErr.message)
-      Alert.alert('Batch failed', fnErr.message, [
-        { text: 'OK' },
-        { text: 'CLI fallback', onPress: showLocalCliFallback },
-      ])
+      Alert.alert('Generate failed', fnErr.message, [{ text: 'OK' }])
       return
     }
-
-    const payload = data as {
-      ok?: boolean
-      error?: string
-      message?: string
-      totalQueue?: number
-      batchSize?: number
-      remainingAfterBatch?: number
-      hasMore?: boolean
-      processed?: Array<{ id: number; english: string; oromo: string; kind: string; ok: boolean; detail?: string }>
-    }
-
-    if (payload?.error && !payload.processed) {
-      Alert.alert('Batch error', payload.error, [{ text: 'OK' }])
+    const payload = data as { ok?: boolean; error?: string; illustration_url?: string }
+    if (payload?.error) {
+      setError(payload.error)
+      Alert.alert('Generate failed', payload.error, [{ text: 'OK' }])
       return
     }
-
-    if (payload?.ok === false && payload?.error) {
-      Alert.alert('Batch stopped', payload.error, [{ text: 'OK' }])
+    if (payload?.illustration_url) {
+      setRows((prev) => prev.map((row) => (row.id === r.id ? { ...row, illustration_url: payload.illustration_url! } : row)))
+    } else {
       void load()
-      return
     }
-
-    const okCount = payload.processed?.filter((p) => p.ok).length ?? 0
-    const failLines =
-      payload.processed
-        ?.filter((p) => !p.ok)
-        .map((p) => `${p.oromo}: ${p.detail || 'failed'}`)
-        .slice(0, 6)
-        .join('\n') || ''
-
-    const summary = [
-      payload.message ||
-        `Processed ${okCount} of ${payload.batchSize ?? 0} in this batch.`,
-      typeof payload.totalQueue === 'number' ? `Queue size: ${payload.totalQueue}` : '',
-      typeof payload.remainingAfterBatch === 'number'
-        ? `Still queued after this run: ${payload.remainingAfterBatch}`
-        : '',
-      payload.hasMore ? 'Tap “Process queue” again to continue.' : '',
-      failLines ? `Issues:\n${failLines}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n\n')
-
-    const buttons: {
-      text: string
-      style?: 'cancel' | 'default' | 'destructive'
-      onPress?: () => void
-    }[] = [{ text: 'OK' }]
-    if (payload.hasMore) {
-      buttons.push({ text: 'Run again', onPress: () => void runServerBatch() })
-    }
-    buttons.push({ text: 'CLI fallback', onPress: showLocalCliFallback })
-
-    Alert.alert('Illustration batch', summary, buttons)
-    void load()
   }
 
-  const confirmRunServerBatch = () => {
-    Alert.alert(
-      'Process illustration queue?',
-      `Generates up to ${SERVER_BATCH_LIMIT} images on the server (bad + comment first, then “Request image” rows). OpenAI billing applies. Tap again if more remain in the queue.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Run', onPress: () => void runServerBatch() },
-      ],
-    )
-  }
-
-  const renderItem = ({ item: r }: { item: VocabRow }) => {
-    const st = getDraftStatus(r)
-    const notes = getDraftNotes(r)
-    const busy = savingId === r.id
-    const imgBusy = vocabActionId === r.id
+  const renderItem = ({ item: r }: { item: WordRow }) => {
+    const busy = actionId === r.id
     const hasImg = Boolean(r.illustration_url)
-    const queued =
-      Boolean(r.illustration_generation_requested_at) && !hasImg
+    const friendly = r.picture_friendly !== false
     return (
       <View style={styles.card}>
         <View style={styles.cardTop}>
@@ -433,92 +250,36 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
             </View>
           )}
           <View style={styles.cardMeta}>
-            <Text style={styles.oromo}>{r.oromo}</Text>
-            <Text style={styles.english}>{r.english}</Text>
+            <Text style={styles.oromo}>{r.word}</Text>
+            <Text style={styles.english}>{String(r.translation ?? '').trim() || '—'}</Text>
             <Text style={styles.metaSmall}>
-              id {r.id}
-              {r.category ? ` · ${r.category}` : ''}
+              {r.category ? `${r.category}` : '—'}
               {r.part_of_speech ? ` · ${r.part_of_speech}` : ''}
+              {friendly ? ' · PictureFriendly' : ' · Not picture-friendly'}
             </Text>
-            {r.serverReview?.updated_at ? (
-              <Text style={styles.savedAt}>
-                Saved {new Date(r.serverReview.updated_at).toLocaleString()}
-              </Text>
-            ) : null}
-            {queued ? (
-              <Text style={styles.queuedBadge}>Requested · waiting for batch generation</Text>
-            ) : null}
+            <Text style={styles.metaSmall}>id {r.id}</Text>
           </View>
         </View>
 
         <View style={styles.imageActions}>
-          {hasImg ? (
-            <Pressable
-              style={[styles.secondaryBtn, styles.secondaryDanger, imgBusy && styles.btnDisabled]}
-              onPress={() => confirmRemovePicture(r)}
-              disabled={imgBusy}
-            >
-              <Text style={styles.secondaryBtnTextDanger}>Remove picture</Text>
-            </Pressable>
-          ) : null}
-          {!hasImg && !queued ? (
-            <Pressable
-              style={[styles.secondaryBtn, styles.secondaryAccent, imgBusy && styles.btnDisabled]}
-              onPress={() => void requestImage(r)}
-              disabled={imgBusy}
-            >
-              <Text style={styles.secondaryBtnText}>Request image</Text>
-            </Pressable>
-          ) : null}
-          {!hasImg && queued ? (
-            <Pressable
-              style={[styles.secondaryBtn, imgBusy && styles.btnDisabled]}
-              onPress={() => void clearImageRequest(r)}
-              disabled={imgBusy}
-            >
-              <Text style={styles.secondaryMuted}>Clear request</Text>
-            </Pressable>
-          ) : null}
-          {imgBusy ? <ActivityIndicator size="small" color={ADMIN_ACCENT_GOLD} style={styles.inlineSpinner} /> : null}
-        </View>
-
-        <View style={styles.ratingRow}>
-          <Pressable
-            onPress={() => setStatusDraft(r.id, 'good')}
-            style={[styles.chip, st === 'good' && styles.chipSelectedGood]}
-          >
-            <Text style={[styles.chipText, st === 'good' && styles.chipTextOn]}>Good</Text>
+          <Pressable style={[styles.secondaryBtn, busy && styles.btnDisabled]} onPress={() => openEdit(r)} disabled={busy}>
+            <Text style={styles.secondaryMuted}>Edit</Text>
           </Pressable>
-          <Pressable
-            onPress={() => setStatusDraft(r.id, 'bad')}
-            style={[styles.chip, st === 'bad' && styles.chipSelectedBad]}
-          >
-            <Text style={[styles.chipText, st === 'bad' && styles.chipTextOn]}>Bad</Text>
-          </Pressable>
+          {!hasImg ? (
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                styles.secondaryAccent,
+                (busy || !canGenerate || (!friendly && role === 'voice')) && styles.btnDisabled,
+              ]}
+              onPress={() => void generateImageNow(r)}
+              disabled={busy || !canGenerate || (!friendly && role === 'voice')}
+            >
+              <Text style={styles.secondaryBtnText}>Generate image</Text>
+            </Pressable>
+          ) : null}
+          {busy ? <ActivityIndicator size="small" color={ADMIN_ACCENT_GOLD} style={styles.inlineSpinner} /> : null}
         </View>
-
-        <Text style={styles.notesLabel}>Why (notes for future regeneration)</Text>
-        <TextInput
-          style={styles.notesInput}
-          placeholder="e.g. Wrong object, weird crop, color misleading…"
-          placeholderTextColor="#6b7280"
-          multiline
-          value={notes}
-          onChangeText={(t) => setNotesDraft(r.id, t)}
-          editable={!busy}
-        />
-
-        <Pressable
-          style={[styles.saveBtn, busy && styles.saveBtnDisabled]}
-          onPress={() => void saveRow(r)}
-          disabled={busy}
-        >
-          {busy ? (
-            <ActivityIndicator color="#111" />
-          ) : (
-            <Text style={styles.saveBtnText}>Save review</Text>
-          )}
-        </Pressable>
       </View>
     )
   }
@@ -538,27 +299,9 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
       <View style={styles.toolbar}>
-        <Pressable
-          style={[styles.batchBanner, batchRunning && styles.batchBannerDisabled]}
-          onPress={confirmRunServerBatch}
-          disabled={batchRunning}
-        >
-          <View style={styles.batchBannerRow}>
-            {batchRunning ? (
-              <ActivityIndicator color={ADMIN_ACCENT_GOLD} style={styles.batchSpinner} />
-            ) : null}
-            <View style={styles.batchBannerTextCol}>
-              <Text style={styles.batchBannerTitle}>Process illustration queue</Text>
-              <Text style={styles.batchBannerSub}>
-                Server batch (up to {SERVER_BATCH_LIMIT} per tap) · bad + notes, then requested · tap again if queue
-                remains
-              </Text>
-            </View>
-          </View>
-        </Pressable>
         <TextInput
           style={styles.search}
-          placeholder="Search Oromo, English, id…"
+          placeholder="Search word, translation, category, id…"
           placeholderTextColor="#6b7280"
           value={query}
           onChangeText={setQuery}
@@ -582,12 +325,134 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
         Showing {filtered.length} of {rows.length}
       </Text>
 
+      <Modal visible={editOpen} transparent animationType="fade" onRequestClose={() => !editBusy && setEditOpen(false)}>
+        <Pressable style={styles.modalOverlay} onPress={() => !editBusy && setEditOpen(false)}>
+          <Pressable style={styles.modalSheet} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Edit word</Text>
+            <Text style={styles.modalHint}>
+              Voice actor can edit text + image. Admin can also toggle PictureFriendly.
+            </Text>
+
+            <Text style={styles.modalLabel}>Afaan Oromo (word)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editWord}
+              onChangeText={setEditWord}
+              placeholder="Afaan Oromo…"
+              placeholderTextColor="#6b7280"
+              editable={!editBusy}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <Text style={styles.modalLabel}>English (translation)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editTranslation}
+              onChangeText={setEditTranslation}
+              placeholder="English…"
+              placeholderTextColor="#6b7280"
+              editable={!editBusy}
+              autoCapitalize="sentences"
+              autoCorrect
+            />
+
+            <Text style={styles.modalLabel}>Category</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editCategory}
+              onChangeText={setEditCategory}
+              placeholder="e.g. Weather, Emotion…"
+              placeholderTextColor="#6b7280"
+              editable={!editBusy}
+              autoCapitalize="words"
+            />
+
+            <Text style={styles.modalLabel}>Part of speech</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editPos}
+              onChangeText={setEditPos}
+              placeholder="e.g. noun, verb…"
+              placeholderTextColor="#6b7280"
+              editable={!editBusy}
+              autoCapitalize="none"
+            />
+
+            <Text style={styles.modalLabel}>Definition (optional)</Text>
+            <TextInput
+              style={[styles.modalInput, { minHeight: 64, textAlignVertical: 'top' }]}
+              value={editDefinition}
+              onChangeText={setEditDefinition}
+              placeholder="Longer definition…"
+              placeholderTextColor="#6b7280"
+              editable={!editBusy}
+              multiline
+            />
+
+            <Text style={styles.modalLabel}>Example sentence (optional)</Text>
+            <TextInput
+              style={[styles.modalInput, { minHeight: 64, textAlignVertical: 'top' }]}
+              value={editExample}
+              onChangeText={setEditExample}
+              placeholder="Example sentence…"
+              placeholderTextColor="#6b7280"
+              editable={!editBusy}
+              multiline
+            />
+
+            <Text style={styles.modalLabel}>Illustration URL</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editIllustrationUrl}
+              onChangeText={setEditIllustrationUrl}
+              placeholder="https://…"
+              placeholderTextColor="#6b7280"
+              editable={!editBusy}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <View style={styles.modalSwitchRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalLabel}>PictureFriendly</Text>
+                <Text style={styles.modalHint}>
+                  Voice actor cannot generate images when off. Admin only.
+                </Text>
+              </View>
+              <Switch
+                value={editPictureFriendly}
+                onValueChange={setEditPictureFriendly}
+                disabled={!isAdmin || editBusy}
+                trackColor={{ false: '#334155', true: 'rgba(212,175,55,0.35)' }}
+                thumbColor={editPictureFriendly ? ADMIN_ACCENT_GOLD : '#94a3b8'}
+              />
+            </View>
+
+            <Pressable
+              style={[styles.saveBtn, editBusy && styles.saveBtnDisabled, { marginTop: 12 }]}
+              onPress={() => void saveEdit()}
+              disabled={editBusy}
+            >
+              {editBusy ? <ActivityIndicator color="#111" /> : <Text style={styles.saveBtnText}>Save</Text>}
+            </Pressable>
+            <Pressable
+              style={[styles.secondaryBtn, { marginTop: 10 }, editBusy && styles.btnDisabled]}
+              onPress={() => !editBusy && setEditOpen(false)}
+              disabled={editBusy}
+            >
+              <Text style={styles.secondaryMuted}>Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <FlatList
         data={filtered}
         keyExtractor={(item) => String(item.id)}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
-        initialNumToRender={8}
+        initialNumToRender={10}
         windowSize={7}
       />
     </KeyboardAvoidingView>
@@ -611,41 +476,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#2c2c2e',
   },
-  batchBanner: {
-    backgroundColor: '#2d2640',
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: ADMIN_ACCENT_GOLD,
-  },
-  batchBannerDisabled: {
-    opacity: 0.75,
-  },
-  batchBannerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  batchBannerTextCol: {
-    flex: 1,
-    minWidth: 0,
-  },
-  batchSpinner: {
-    marginRight: 4,
-  },
-  batchBannerTitle: {
-    color: ADMIN_ACCENT_GOLD,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  batchBannerSub: {
-    color: '#a1a1aa',
-    fontSize: 12,
-    marginTop: 6,
-    lineHeight: 17,
-  },
   search: {
     backgroundColor: '#1c1c1e',
     borderRadius: 12,
@@ -660,202 +490,117 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   filterChip: {
-    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.25)',
     paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#1c1c1e',
-    marginRight: 8,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(2,6,23,0.35)',
   },
   filterChipOn: {
-    backgroundColor: '#2d2640',
-    borderWidth: 1,
     borderColor: ADMIN_ACCENT_GOLD,
+    backgroundColor: 'rgba(212,175,55,0.14)',
   },
-  filterChipText: {
-    color: '#a1a1aa',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  filterChipTextOn: {
-    color: ADMIN_ACCENT_GOLD,
-  },
+  filterChipText: { color: '#cbd5e1', fontWeight: '700' },
+  filterChipTextOn: { color: '#fff' },
   errorBanner: {
-    color: '#f87171',
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    fontSize: 14,
+    paddingVertical: 10,
+    color: '#fecaca',
+    backgroundColor: 'rgba(239,68,68,0.14)',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(239,68,68,0.35)',
   },
-  countLine: {
-    color: '#8e8e93',
-    fontSize: 13,
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-  },
-  listContent: {
-    padding: 16,
-    paddingBottom: 40,
-    gap: 16,
-  },
+  countLine: { color: '#a1a1aa', paddingHorizontal: 16, paddingVertical: 10 },
+  listContent: { padding: 16, paddingBottom: 40, gap: 16 },
   card: {
-    backgroundColor: '#1c1c1e',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 4,
+    backgroundColor: '#0b1220',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.18)',
+    padding: 12,
   },
-  cardTop: {
-    flexDirection: 'row',
-    gap: 14,
-  },
+  cardTop: { flexDirection: 'row', gap: 12 },
   thumb: {
-    width: 120,
-    height: 120,
+    width: 82,
+    height: 82,
     borderRadius: 12,
-    backgroundColor: '#2c2c2e',
+    backgroundColor: '#0b1020',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.18)',
   },
-  thumbPlaceholder: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  thumbPlaceholderText: {
-    color: '#6b7280',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  cardMeta: {
-    flex: 1,
-    minWidth: 0,
-  },
-  oromo: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  english: {
-    color: '#e5e5e5',
-    fontSize: 16,
-    marginTop: 4,
-  },
-  metaSmall: {
-    color: '#8e8e93',
-    fontSize: 13,
-    marginTop: 8,
-  },
-  savedAt: {
-    color: '#6ee7b7',
-    fontSize: 12,
-    marginTop: 6,
-  },
-  queuedBadge: {
-    color: '#fbbf24',
-    fontSize: 12,
-    marginTop: 6,
-    fontWeight: '600',
-  },
+  thumbPlaceholder: { alignItems: 'center', justifyContent: 'center' },
+  thumbPlaceholderText: { color: '#6b7280', fontSize: 12, fontWeight: '700' },
+  cardMeta: { flex: 1, minWidth: 0 },
+  oromo: { color: '#fff', fontSize: 20, fontWeight: '900' },
+  english: { color: '#e5e7eb', fontSize: 15, fontWeight: '700', marginTop: 4 },
+  metaSmall: { color: '#a1a1aa', fontSize: 12, marginTop: 6 },
   imageActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    alignItems: 'center',
     gap: 10,
     marginTop: 12,
-  },
-  secondaryBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    backgroundColor: '#2c2c2e',
-    borderWidth: 1,
-    borderColor: '#3f3f46',
-  },
-  secondaryDanger: {
-    borderColor: '#7f1d1d',
-    backgroundColor: '#1f1515',
-  },
-  secondaryAccent: {
-    borderColor: ADMIN_ACCENT_GOLD,
-    backgroundColor: '#1a1520',
-  },
-  secondaryBtnText: {
-    color: ADMIN_ACCENT_GOLD,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  secondaryBtnTextDanger: {
-    color: '#fca5a5',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  secondaryMuted: {
-    color: '#a1a1aa',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  btnDisabled: {
-    opacity: 0.5,
-  },
-  inlineSpinner: {
-    marginLeft: 4,
-  },
-  ratingRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 14,
-  },
-  chip: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
     alignItems: 'center',
-    backgroundColor: '#2c2c2e',
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  chipSelectedGood: {
-    borderColor: '#22c55e',
-    backgroundColor: '#14532d',
-  },
-  chipSelectedBad: {
-    borderColor: '#ef4444',
-    backgroundColor: '#450a0a',
-  },
-  chipText: {
-    color: '#d4d4d8',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  chipTextOn: {
-    color: '#fff',
-  },
-  notesLabel: {
-    color: '#a1a1aa',
-    fontSize: 13,
-    marginTop: 14,
-    marginBottom: 6,
-  },
-  notesInput: {
-    backgroundColor: '#0a0a0a',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#3f3f46',
-    color: '#fff',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    minHeight: 72,
-    textAlignVertical: 'top',
   },
   saveBtn: {
-    marginTop: 12,
     backgroundColor: ADMIN_ACCENT_GOLD,
     borderRadius: 12,
-    paddingVertical: 14,
+    paddingVertical: 12,
     alignItems: 'center',
   },
-  saveBtnDisabled: {
-    opacity: 0.6,
+  saveBtnDisabled: { opacity: 0.6 },
+  saveBtnText: { color: '#111', fontSize: 16, fontWeight: '900' },
+  secondaryBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.25)',
+    backgroundColor: 'rgba(2,6,23,0.25)',
   },
-  saveBtnText: {
-    color: '#111',
-    fontSize: 16,
-    fontWeight: '800',
+  secondaryAccent: {
+    borderColor: 'rgba(212,175,55,0.35)',
+    backgroundColor: 'rgba(212,175,55,0.14)',
+  },
+  secondaryBtnText: { color: '#fff', fontWeight: '800' },
+  secondaryMuted: { color: '#cbd5e1', fontWeight: '800' },
+  btnDisabled: { opacity: 0.6 },
+  inlineSpinner: { marginLeft: 6 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  modalSheet: {
+    width: '100%',
+    maxWidth: 520,
+    backgroundColor: '#0b1220',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.18)',
+    padding: 14,
+  },
+  modalTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
+  modalHint: { color: '#a1a1aa', fontSize: 12, marginTop: 8, lineHeight: 17 },
+  modalLabel: { color: '#e5e7eb', fontSize: 13, fontWeight: '800', marginTop: 12 },
+  modalInput: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.26)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#fff',
+    backgroundColor: 'rgba(2,6,23,0.55)',
+    fontSize: 15,
+  },
+  modalSwitchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 6,
   },
 })
+

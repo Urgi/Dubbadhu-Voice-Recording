@@ -49,7 +49,6 @@ const FILTERS: { key: FilterKey; label: string }[] = [
 export default function AdminVocabIllustrationReviewScreen({ navigation }: Props) {
   const { role } = useAuth()
   const isAdmin = role === 'admin'
-  const canGenerate = role === 'admin' || role === 'voice'
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -57,6 +56,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   const [filter, setFilter] = useState<FilterKey>('has_image')
   const [query, setQuery] = useState('')
   const [actionId, setActionId] = useState<string | null>(null)
+  const [friendlyBusyId, setFriendlyBusyId] = useState<string | null>(null)
 
   const [editOpen, setEditOpen] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
@@ -64,11 +64,28 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   const [editTranslation, setEditTranslation] = useState('')
   const [editCategory, setEditCategory] = useState('')
   const [editPos, setEditPos] = useState('')
-  const [editDefinition, setEditDefinition] = useState('')
   const [editExample, setEditExample] = useState('')
-  const [editIllustrationUrl, setEditIllustrationUrl] = useState('')
   const [editPictureFriendly, setEditPictureFriendly] = useState(true)
   const [editBusy, setEditBusy] = useState(false)
+  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
+  const [newCategoryDraft, setNewCategoryDraft] = useState('')
+  const [newCategoryOpen, setNewCategoryOpen] = useState(false)
+
+  const [illustrationModalRow, setIllustrationModalRow] = useState<WordRow | null>(null)
+  const [illustrationPrompt, setIllustrationPrompt] = useState('')
+
+  const distinctCategories = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of rows) {
+      const c = String(r.category ?? '').trim()
+      if (c) set.add(c)
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [rows])
+
+  const patchRow = useCallback((id: string, patch: Partial<WordRow>) => {
+    setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
+  }, [])
 
   const openEdit = (r: WordRow) => {
     setEditId(r.id)
@@ -76,10 +93,11 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     setEditTranslation(String(r.translation ?? '').trim())
     setEditCategory(String(r.category ?? '').trim())
     setEditPos(String(r.part_of_speech ?? '').trim())
-    setEditDefinition(String(r.definition ?? '').trim())
     setEditExample(String(r.example ?? '').trim())
-    setEditIllustrationUrl(String(r.illustration_url ?? '').trim())
     setEditPictureFriendly(r.picture_friendly !== false)
+    setNewCategoryDraft('')
+    setNewCategoryOpen(false)
+    setCategoryPickerOpen(false)
     setEditOpen(true)
   }
 
@@ -166,21 +184,28 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     const nextWord = editWord.trim()
     const nextTranslation = editTranslation.trim()
     if (!nextWord || !nextTranslation) {
-      Alert.alert('Missing fields', 'Both Afaan Oromo (word) and English (translation) are required.')
+      Alert.alert('Missing fields', 'Word (Afaan Oromo) and Translation (English) are required.')
       return
     }
     setEditBusy(true)
     setError('')
-    const payload: Record<string, unknown> = {
-      word: nextWord,
-      translation: nextTranslation,
-      category: editCategory.trim() || null,
-      part_of_speech: editPos.trim() || null,
-      definition: editDefinition.trim() || null,
-      example: editExample.trim() || null,
-      illustration_url: editIllustrationUrl.trim() || null,
+    let payload: Record<string, unknown>
+    if (!isAdmin) {
+      payload = {
+        word: nextWord,
+        translation: nextTranslation,
+        example: editExample.trim() || null,
+      }
+    } else {
+      payload = {
+        word: nextWord,
+        translation: nextTranslation,
+        category: editCategory.trim() || null,
+        part_of_speech: editPos.trim() || null,
+        example: editExample.trim() || null,
+        picture_friendly: Boolean(editPictureFriendly),
+      }
     }
-    if (isAdmin) payload.picture_friendly = Boolean(editPictureFriendly)
 
     const { data, error: e } = await supabase
       .from('words')
@@ -198,22 +223,66 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     setEditOpen(false)
   }
 
-  const generateImageNow = async (r: WordRow) => {
-    if (!canGenerate) return
-    const friendly = r.picture_friendly !== false
-    if (!friendly && role === 'voice') {
-      Alert.alert('Not picture-friendly', 'Admin marked this word as not picture-friendly. You can still edit text.')
+  const togglePictureFriendlyCard = async (r: WordRow, value: boolean) => {
+    if (!isAdmin) return
+    setFriendlyBusyId(r.id)
+    setError('')
+    const { error: e } = await supabase.from('words').update({ picture_friendly: value }).eq('id', r.id)
+    setFriendlyBusyId(null)
+    if (e) {
+      setError(e.message)
+      Alert.alert('Update failed', e.message)
       return
     }
+    patchRow(r.id, { picture_friendly: value })
+  }
+
+  const clearIllustration = (r: WordRow) => {
+    if (!isAdmin) return
+    Alert.alert('Remove illustration?', 'This clears the image URL for this word.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          setActionId(r.id)
+          setError('')
+          const { error: e } = await supabase.from('words').update({ illustration_url: null }).eq('id', r.id)
+          setActionId(null)
+          if (e) {
+            setError(e.message)
+            Alert.alert('Failed', e.message)
+            return
+          }
+          patchRow(r.id, { illustration_url: null })
+          if (illustrationModalRow?.id === r.id) {
+            setIllustrationModalRow((prev) => (prev ? { ...prev, illustration_url: null } : null))
+          }
+        },
+      },
+    ])
+  }
+
+  const getVocabSecret = (): string | null => {
     const secret = getExpoPublicVocabBatchSecret().trim()
     if (!secret) {
       Alert.alert('Missing secret', 'Set EXPO_PUBLIC_VOCAB_BATCH_SECRET in admin .env, then restart Expo.')
-      return
+      return null
     }
-    setActionId(r.id)
+    return secret
+  }
+
+  const generateIllustration = async (wordId: string, customPrompt?: string) => {
+    if (!isAdmin) return
+    const secret = getVocabSecret()
+    if (!secret) return
+    setActionId(wordId)
     setError('')
+    const body: { word_id: string; custom_prompt?: string } = { word_id: wordId }
+    const p = String(customPrompt ?? '').trim()
+    if (p) body.custom_prompt = p
     const { data, error: fnErr } = await supabase.functions.invoke('word-illustration-generate', {
-      body: { word_id: r.id },
+      body,
       headers: { 'x-vocab-batch-secret': secret },
     })
     setActionId(null)
@@ -229,26 +298,206 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       return
     }
     if (payload?.illustration_url) {
-      setRows((prev) => prev.map((row) => (row.id === r.id ? { ...row, illustration_url: payload.illustration_url! } : row)))
+      patchRow(wordId, { illustration_url: payload.illustration_url })
+      setIllustrationModalRow((prev) =>
+        prev && prev.id === wordId ? { ...prev, illustration_url: payload.illustration_url! } : prev,
+      )
     } else {
       void load()
     }
+  }
+
+  const openIllustrationModal = (r: WordRow) => {
+    if (!isAdmin) return
+    if (r.picture_friendly === false) {
+      Alert.alert('Not picture-friendly', 'Turn on PictureFriendly to generate illustrations.')
+      return
+    }
+    setIllustrationPrompt('')
+    setIllustrationModalRow(r)
+  }
+
+  const confirmSelectCategory = (name: string) => {
+    setEditCategory(name)
+    setCategoryPickerOpen(false)
+    setNewCategoryOpen(false)
+    setNewCategoryDraft('')
+  }
+
+  const confirmNewCategory = () => {
+    const n = newCategoryDraft.trim()
+    if (!n) return
+    setEditCategory(n)
+    setCategoryPickerOpen(false)
+    setNewCategoryOpen(false)
+    setNewCategoryDraft('')
+  }
+
+  const renderCategoryPickerModal = () => (
+    <Modal visible={categoryPickerOpen} transparent animationType="fade" onRequestClose={() => setCategoryPickerOpen(false)}>
+      <Pressable style={styles.modalOverlay} onPress={() => setCategoryPickerOpen(false)}>
+        <Pressable style={styles.pickerSheet} onPress={() => {}}>
+          <Text style={styles.modalTitle}>Category</Text>
+          <Text style={styles.modalHint}>Pick an existing category or add a new one.</Text>
+          <FlatList
+            data={distinctCategories}
+            keyExtractor={(item) => item}
+            style={{ maxHeight: 220 }}
+            renderItem={({ item }) => (
+              <Pressable
+                style={[styles.pickerRow, item === editCategory && styles.pickerRowOn]}
+                onPress={() => confirmSelectCategory(item)}
+              >
+                <Text style={styles.pickerRowText}>{item}</Text>
+              </Pressable>
+            )}
+          />
+          <Pressable
+            style={[styles.secondaryBtn, { marginTop: 12 }]}
+            onPress={() => {
+              setNewCategoryOpen(true)
+              setNewCategoryDraft(editCategory.trim() || '')
+            }}
+          >
+            <Text style={styles.secondaryBtnText}>＋ Add new category…</Text>
+          </Pressable>
+          {newCategoryOpen ? (
+            <>
+              <TextInput
+                style={styles.modalInput}
+                value={newCategoryDraft}
+                onChangeText={setNewCategoryDraft}
+                placeholder="New category name"
+                placeholderTextColor="#6b7280"
+                autoCapitalize="words"
+              />
+              <Pressable style={[styles.saveBtn, { marginTop: 10 }]} onPress={confirmNewCategory}>
+                <Text style={styles.saveBtnText}>Use this category</Text>
+              </Pressable>
+            </>
+          ) : null}
+          <Pressable style={[styles.secondaryBtn, { marginTop: 10 }]} onPress={() => setCategoryPickerOpen(false)}>
+            <Text style={styles.secondaryMuted}>Close</Text>
+          </Pressable>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  )
+
+  const renderIllustrationModal = () => {
+    const r = illustrationModalRow
+    if (!r) return null
+    const busy = actionId === r.id
+    const hasImg = Boolean(r.illustration_url)
+    return (
+      <Modal visible={Boolean(illustrationModalRow)} transparent animationType="fade" onRequestClose={() => !busy && setIllustrationModalRow(null)}>
+        <Pressable style={styles.modalOverlay} onPress={() => !busy && setIllustrationModalRow(null)}>
+          <Pressable style={styles.illModalSheet} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Illustration</Text>
+            <Text style={styles.modalHint}>
+              Optional prompt guides the image. Leave blank to use the default style for this word.
+            </Text>
+            <Pressable
+              disabled={busy}
+              onPress={() => {}}
+              style={styles.illPreviewWrap}
+            >
+              {r.illustration_url ? (
+                <Image source={{ uri: r.illustration_url }} style={styles.illPreview} resizeMode="contain" />
+              ) : (
+                <View style={[styles.illPreview, styles.thumbPlaceholder]}>
+                  <Text style={styles.thumbPlaceholderText}>No image yet</Text>
+                </View>
+              )}
+            </Pressable>
+            <Text style={styles.modalLabel}>Prompt for new image</Text>
+            <TextInput
+              style={[styles.modalInput, { minHeight: 72, textAlignVertical: 'top' }]}
+              value={illustrationPrompt}
+              onChangeText={setIllustrationPrompt}
+              placeholder='e.g. "child holding umbrella in rain"'
+              placeholderTextColor="#6b7280"
+              multiline
+              editable={!busy}
+            />
+            <Pressable
+              style={[styles.saveBtn, busy && styles.saveBtnDisabled, { marginTop: 12 }]}
+              disabled={busy}
+              onPress={() => void generateIllustration(r.id, illustrationPrompt)}
+            >
+              {busy ? <ActivityIndicator color="#111" /> : <Text style={styles.saveBtnText}>Generate / replace image</Text>}
+            </Pressable>
+            {hasImg ? (
+              <Pressable
+                style={[styles.secondaryBtn, { marginTop: 10 }, busy && styles.btnDisabled]}
+                disabled={busy}
+                onPress={() => clearIllustration(r)}
+              >
+                <Text style={styles.dangerText}>Remove image</Text>
+              </Pressable>
+            ) : null}
+            <Pressable style={[styles.secondaryBtn, { marginTop: 10 }, busy && styles.btnDisabled]} onPress={() => !busy && setIllustrationModalRow(null)}>
+              <Text style={styles.secondaryMuted}>Close</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    )
   }
 
   const renderItem = ({ item: r }: { item: WordRow }) => {
     const busy = actionId === r.id
     const hasImg = Boolean(r.illustration_url)
     const friendly = r.picture_friendly !== false
+    const friendlyBusy = friendlyBusyId === r.id
+
+    const imageTile = (
+      <Pressable
+        onPress={() => openIllustrationModal(r)}
+        disabled={!isAdmin}
+        style={[styles.thumb, !isAdmin && styles.thumbDisabled]}
+      >
+        {r.illustration_url ? (
+          <Image source={{ uri: r.illustration_url }} style={styles.thumbImage} resizeMode="contain" />
+        ) : (
+          <View style={[styles.thumbImage, styles.thumbPlaceholder]}>
+            <Text style={styles.thumbPlaceholderText}>{isAdmin ? 'Tap to add' : 'No image'}</Text>
+          </View>
+        )}
+      </Pressable>
+    )
+
     return (
       <View style={styles.card}>
         <View style={styles.cardTop}>
-          {r.illustration_url ? (
-            <Image source={{ uri: r.illustration_url }} style={styles.thumb} resizeMode="contain" />
-          ) : (
-            <View style={[styles.thumb, styles.thumbPlaceholder]}>
-              <Text style={styles.thumbPlaceholderText}>No image</Text>
-            </View>
-          )}
+          <View>
+            {imageTile}
+            {isAdmin ? (
+              <View style={styles.cardPictureControls}>
+                <View style={styles.cardToggleRow}>
+                  <Text style={styles.cardToggleLabel}>PictureFriendly</Text>
+                  {friendlyBusy ? (
+                    <ActivityIndicator size="small" color={ADMIN_ACCENT_GOLD} />
+                  ) : (
+                    <Switch
+                      value={friendly}
+                      onValueChange={(v) => void togglePictureFriendlyCard(r, v)}
+                      disabled={busy}
+                      trackColor={{ false: '#334155', true: 'rgba(212,175,55,0.35)' }}
+                      thumbColor={friendly ? ADMIN_ACCENT_GOLD : '#94a3b8'}
+                    />
+                  )}
+                </View>
+                <Pressable
+                  style={[styles.microBtn, busy && styles.btnDisabled]}
+                  onPress={() => clearIllustration(r)}
+                  disabled={busy || !hasImg}
+                >
+                  <Text style={styles.dangerText}>Delete image</Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
           <View style={styles.cardMeta}>
             <Text style={styles.oromo}>{r.word}</Text>
             <Text style={styles.english}>{String(r.translation ?? '').trim() || '—'}</Text>
@@ -263,21 +512,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
 
         <View style={styles.imageActions}>
           <Pressable style={[styles.secondaryBtn, busy && styles.btnDisabled]} onPress={() => openEdit(r)} disabled={busy}>
-            <Text style={styles.secondaryMuted}>Edit</Text>
+            <Text style={styles.secondaryMuted}>Edit word</Text>
           </Pressable>
-          {!hasImg ? (
-            <Pressable
-              style={[
-                styles.secondaryBtn,
-                styles.secondaryAccent,
-                (busy || !canGenerate || (!friendly && role === 'voice')) && styles.btnDisabled,
-              ]}
-              onPress={() => void generateImageNow(r)}
-              disabled={busy || !canGenerate || (!friendly && role === 'voice')}
-            >
-              <Text style={styles.secondaryBtnText}>Generate image</Text>
-            </Pressable>
-          ) : null}
           {busy ? <ActivityIndicator size="small" color={ADMIN_ACCENT_GOLD} style={styles.inlineSpinner} /> : null}
         </View>
       </View>
@@ -328,124 +564,108 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       <Modal visible={editOpen} transparent animationType="fade" onRequestClose={() => !editBusy && setEditOpen(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => !editBusy && setEditOpen(false)}>
           <Pressable style={styles.modalSheet} onPress={() => {}}>
-            <Text style={styles.modalTitle}>Edit word</Text>
-            <Text style={styles.modalHint}>
-              Voice actor can edit text + image. Admin can also toggle PictureFriendly.
-            </Text>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>{isAdmin ? 'Edit word (admin)' : 'Edit word'}</Text>
+              <Text style={styles.modalHint}>
+                {isAdmin
+                  ? 'Tap the illustration on the card to generate or replace the image. Category uses existing values or add new.'
+                  : 'You can edit Word (Afaan Oromo), Translation (English), and Sentence.'}
+              </Text>
 
-            <Text style={styles.modalLabel}>Afaan Oromo (word)</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editWord}
-              onChangeText={setEditWord}
-              placeholder="Afaan Oromo…"
-              placeholderTextColor="#6b7280"
-              editable={!editBusy}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <Text style={styles.modalLabel}>English (translation)</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editTranslation}
-              onChangeText={setEditTranslation}
-              placeholder="English…"
-              placeholderTextColor="#6b7280"
-              editable={!editBusy}
-              autoCapitalize="sentences"
-              autoCorrect
-            />
-
-            <Text style={styles.modalLabel}>Category</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editCategory}
-              onChangeText={setEditCategory}
-              placeholder="e.g. Weather, Emotion…"
-              placeholderTextColor="#6b7280"
-              editable={!editBusy}
-              autoCapitalize="words"
-            />
-
-            <Text style={styles.modalLabel}>Part of speech</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editPos}
-              onChangeText={setEditPos}
-              placeholder="e.g. noun, verb…"
-              placeholderTextColor="#6b7280"
-              editable={!editBusy}
-              autoCapitalize="none"
-            />
-
-            <Text style={styles.modalLabel}>Definition (optional)</Text>
-            <TextInput
-              style={[styles.modalInput, { minHeight: 64, textAlignVertical: 'top' }]}
-              value={editDefinition}
-              onChangeText={setEditDefinition}
-              placeholder="Longer definition…"
-              placeholderTextColor="#6b7280"
-              editable={!editBusy}
-              multiline
-            />
-
-            <Text style={styles.modalLabel}>Example sentence (optional)</Text>
-            <TextInput
-              style={[styles.modalInput, { minHeight: 64, textAlignVertical: 'top' }]}
-              value={editExample}
-              onChangeText={setEditExample}
-              placeholder="Example sentence…"
-              placeholderTextColor="#6b7280"
-              editable={!editBusy}
-              multiline
-            />
-
-            <Text style={styles.modalLabel}>Illustration URL</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editIllustrationUrl}
-              onChangeText={setEditIllustrationUrl}
-              placeholder="https://…"
-              placeholderTextColor="#6b7280"
-              editable={!editBusy}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            <View style={styles.modalSwitchRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.modalLabel}>PictureFriendly</Text>
-                <Text style={styles.modalHint}>
-                  Voice actor cannot generate images when off. Admin only.
-                </Text>
-              </View>
-              <Switch
-                value={editPictureFriendly}
-                onValueChange={setEditPictureFriendly}
-                disabled={!isAdmin || editBusy}
-                trackColor={{ false: '#334155', true: 'rgba(212,175,55,0.35)' }}
-                thumbColor={editPictureFriendly ? ADMIN_ACCENT_GOLD : '#94a3b8'}
+              <Text style={styles.modalLabel}>Word — Afaan Oromo</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={editWord}
+                onChangeText={setEditWord}
+                placeholder="Afaan Oromo…"
+                placeholderTextColor="#6b7280"
+                editable={!editBusy}
+                autoCapitalize="none"
+                autoCorrect={false}
               />
-            </View>
 
-            <Pressable
-              style={[styles.saveBtn, editBusy && styles.saveBtnDisabled, { marginTop: 12 }]}
-              onPress={() => void saveEdit()}
-              disabled={editBusy}
-            >
-              {editBusy ? <ActivityIndicator color="#111" /> : <Text style={styles.saveBtnText}>Save</Text>}
-            </Pressable>
-            <Pressable
-              style={[styles.secondaryBtn, { marginTop: 10 }, editBusy && styles.btnDisabled]}
-              onPress={() => !editBusy && setEditOpen(false)}
-              disabled={editBusy}
-            >
-              <Text style={styles.secondaryMuted}>Cancel</Text>
-            </Pressable>
+              <Text style={styles.modalLabel}>Translation — English</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={editTranslation}
+                onChangeText={setEditTranslation}
+                placeholder="English…"
+                placeholderTextColor="#6b7280"
+                editable={!editBusy}
+                autoCapitalize="sentences"
+                autoCorrect
+              />
+
+              {isAdmin ? (
+                <>
+                  <Text style={styles.modalLabel}>Category</Text>
+                  <Pressable
+                    style={[styles.modalInput, styles.categoryTrigger]}
+                    onPress={() => setCategoryPickerOpen(true)}
+                    disabled={editBusy}
+                  >
+                    <Text style={{ color: editCategory.trim() ? '#fff' : '#6b7280' }}>
+                      {editCategory.trim() || 'Select or add category…'}
+                    </Text>
+                  </Pressable>
+
+                  <Text style={styles.modalLabel}>Part of speech</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    value={editPos}
+                    onChangeText={setEditPos}
+                    placeholder="e.g. noun, verb…"
+                    placeholderTextColor="#6b7280"
+                    editable={!editBusy}
+                    autoCapitalize="none"
+                  />
+                </>
+              ) : null}
+
+              <Text style={styles.modalLabel}>Sentence</Text>
+              <TextInput
+                style={[styles.modalInput, { minHeight: 88, textAlignVertical: 'top' }]}
+                value={editExample}
+                onChangeText={setEditExample}
+                placeholder="Example sentence…"
+                placeholderTextColor="#6b7280"
+                editable={!editBusy}
+                multiline
+              />
+
+              {isAdmin ? (
+                <View style={styles.modalSwitchRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.modalLabel}>PictureFriendly</Text>
+                    <Text style={styles.modalHint}>When off, illustration generation is blocked.</Text>
+                  </View>
+                  <Switch
+                    value={editPictureFriendly}
+                    onValueChange={setEditPictureFriendly}
+                    disabled={editBusy}
+                    trackColor={{ false: '#334155', true: 'rgba(212,175,55,0.35)' }}
+                    thumbColor={editPictureFriendly ? ADMIN_ACCENT_GOLD : '#94a3b8'}
+                  />
+                </View>
+              ) : null}
+
+              <Pressable
+                style={[styles.saveBtn, editBusy && styles.saveBtnDisabled, { marginTop: 12 }]}
+                onPress={() => void saveEdit()}
+                disabled={editBusy}
+              >
+                {editBusy ? <ActivityIndicator color="#111" /> : <Text style={styles.saveBtnText}>Save</Text>}
+              </Pressable>
+              <Pressable style={[styles.secondaryBtn, { marginTop: 10 }, editBusy && styles.btnDisabled]} onPress={() => !editBusy && setEditOpen(false)}>
+                <Text style={styles.secondaryMuted}>Cancel</Text>
+              </Pressable>
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
+
+      {renderCategoryPickerModal()}
+      {renderIllustrationModal()}
 
       <FlatList
         data={filtered}
@@ -485,10 +705,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 10,
   },
-  filterScroll: {
-    gap: 8,
-    paddingBottom: 8,
-  },
+  filterScroll: { gap: 8, paddingBottom: 8 },
   filterChip: {
     borderRadius: 999,
     borderWidth: 1,
@@ -522,26 +739,42 @@ const styles = StyleSheet.create({
   },
   cardTop: { flexDirection: 'row', gap: 12 },
   thumb: {
-    width: 82,
-    height: 82,
+    width: 100,
     borderRadius: 12,
-    backgroundColor: '#0b1020',
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(148,163,184,0.18)',
+    backgroundColor: '#0b1020',
   },
+  thumbDisabled: { opacity: 0.95 },
+  thumbImage: { width: 100, height: 100 },
   thumbPlaceholder: { alignItems: 'center', justifyContent: 'center' },
-  thumbPlaceholderText: { color: '#6b7280', fontSize: 12, fontWeight: '700' },
+  thumbPlaceholderText: { color: '#6b7280', fontSize: 11, fontWeight: '700', textAlign: 'center', paddingHorizontal: 6 },
+  cardPictureControls: {
+    marginTop: 10,
+    gap: 8,
+    maxWidth: 100,
+  },
+  cardToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  cardToggleLabel: { color: '#94a3b8', fontSize: 11, fontWeight: '700', flex: 1 },
+  microBtn: {
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.35)',
+    backgroundColor: 'rgba(127,29,29,0.2)',
+  },
   cardMeta: { flex: 1, minWidth: 0 },
   oromo: { color: '#fff', fontSize: 20, fontWeight: '900' },
   english: { color: '#e5e7eb', fontSize: 15, fontWeight: '700', marginTop: 4 },
   metaSmall: { color: '#a1a1aa', fontSize: 12, marginTop: 6 },
-  imageActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 12,
-    alignItems: 'center',
-  },
+  imageActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12, alignItems: 'center' },
   saveBtn: {
     backgroundColor: ADMIN_ACCENT_GOLD,
     borderRadius: 12,
@@ -557,6 +790,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(148,163,184,0.25)',
     backgroundColor: 'rgba(2,6,23,0.25)',
+    alignItems: 'center',
   },
   secondaryAccent: {
     borderColor: 'rgba(212,175,55,0.35)',
@@ -564,6 +798,7 @@ const styles = StyleSheet.create({
   },
   secondaryBtnText: { color: '#fff', fontWeight: '800' },
   secondaryMuted: { color: '#cbd5e1', fontWeight: '800' },
+  dangerText: { color: '#fca5a5', fontWeight: '800', fontSize: 13 },
   btnDisabled: { opacity: 0.6 },
   inlineSpinner: { marginLeft: 6 },
   modalOverlay: {
@@ -576,11 +811,41 @@ const styles = StyleSheet.create({
   modalSheet: {
     width: '100%',
     maxWidth: 520,
+    maxHeight: '88%',
     backgroundColor: '#0b1220',
     borderRadius: 14,
     borderWidth: 1,
     borderColor: 'rgba(212,175,55,0.18)',
     padding: 14,
+  },
+  pickerSheet: {
+    width: '100%',
+    maxWidth: 440,
+    maxHeight: '80%',
+    backgroundColor: '#0b1220',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.18)',
+    padding: 14,
+  },
+  illModalSheet: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '92%',
+    backgroundColor: '#0b1220',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.18)',
+    padding: 14,
+  },
+  illPreviewWrap: { alignSelf: 'center', marginTop: 12 },
+  illPreview: {
+    width: 220,
+    height: 220,
+    borderRadius: 12,
+    backgroundColor: '#0b1020',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.18)',
   },
   modalTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
   modalHint: { color: '#a1a1aa', fontSize: 12, marginTop: 8, lineHeight: 17 },
@@ -596,6 +861,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(2,6,23,0.55)',
     fontSize: 15,
   },
+  categoryTrigger: {
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  pickerRow: {
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(148,163,184,0.15)',
+  },
+  pickerRowOn: { backgroundColor: 'rgba(212,175,55,0.12)' },
+  pickerRowText: { color: '#e5e7eb', fontSize: 15 },
   modalSwitchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -603,4 +880,3 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 })
-

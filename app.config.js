@@ -1,7 +1,3 @@
-/**
- * Mirrors EXPO_PUBLIC_* from loaded .env into `expo.extra` so they are available
- * via expo-constants when the JS bundle was built without Metro inlining them.
- */
 module.exports = ({ config }) => ({
   ...config,
   extra: {

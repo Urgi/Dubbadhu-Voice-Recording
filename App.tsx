@@ -16,6 +16,7 @@ import AdminVocabIllustrationReviewScreen from './src/screens/AdminVocabIllustra
 import LessonConfigScreen from './src/screens/LessonConfigScreen'
 import LessonConfigSeriesScreen from './src/screens/LessonConfigSeriesScreen'
 import LessonConfigDetailScreen from './src/screens/LessonConfigDetailScreen'
+import VoiceActorHomeScreen from './src/screens/VoiceActorHomeScreen'
 import VoiceActorDashboardScreen from './src/screens/VoiceActorDashboardScreen'
 import { AuthProvider } from './src/context/AuthContext'
 import type { RootStackParamList } from './src/types'
@@ -73,9 +74,14 @@ function AppStack() {
         />
         <Stack.Screen name="AdminSeriesAudioReview" component={AdminSeriesAudioReviewScreen} />
         <Stack.Screen
+          name="VoiceActorHome"
+          component={VoiceActorHomeScreen}
+          options={{ title: 'Voice Actor Hub' }}
+        />
+        <Stack.Screen
           name="VoiceActorDashboard"
           component={VoiceActorDashboardScreen}
-          options={{ title: 'Home' }}
+          options={{ title: 'Voice Recording' }}
         />
         <Stack.Screen name="Recording" component={RecordingScreen} options={{ title: 'Recording' }} />
         <Stack.Screen name="Review" component={ReviewScreen} options={{ title: 'Review' }} />

@@ -5,6 +5,11 @@
 
 export const VOICE_BANK_LANGUAGE = 'Afaan Oromo'
 
+/**
+ * Canonical `words.series` for merged vocabulary rows (lesson vocab); excluded from the voice recording queue.
+ */
+export const VOCABULARY_MERGED_SERIES = 'Vocabulary'
+
 /** Normalized key for matching `lesson_series.id` (e.g. series2) to `words.series` (e.g. "Series 2"). */
 export function seriesKey(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, '')

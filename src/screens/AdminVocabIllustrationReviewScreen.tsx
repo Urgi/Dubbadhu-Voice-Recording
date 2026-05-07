@@ -16,6 +16,7 @@ import {
   View,
 } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
+import { Picker } from '@react-native-picker/picker'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
 import { useAuth } from '../context/AuthContext'
 import { getExpoPublicVocabBatchSecret } from '../lib/expoPublicEnv'
@@ -46,6 +47,23 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'not_picture_friendly', label: 'Not picture-friendly' },
 ]
 
+/** Canonical POS labels for the dropdown; empty string = none. */
+const PART_OF_SPEECH_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: '— None —' },
+  { value: 'noun', label: 'noun' },
+  { value: 'verb', label: 'verb' },
+  { value: 'adjective', label: 'adjective' },
+  { value: 'adverb', label: 'adverb' },
+  { value: 'pronoun', label: 'pronoun' },
+  { value: 'preposition', label: 'preposition' },
+  { value: 'conjunction', label: 'conjunction' },
+  { value: 'interjection', label: 'interjection' },
+  { value: 'determiner', label: 'determiner' },
+  { value: 'numeral', label: 'numeral' },
+  { value: 'phrase', label: 'phrase' },
+  { value: 'other', label: 'other' },
+]
+
 export default function AdminVocabIllustrationReviewScreen({ navigation }: Props) {
   const { role } = useAuth()
   const isAdmin = role === 'admin'
@@ -67,9 +85,11 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   const [editExample, setEditExample] = useState('')
   const [editPictureFriendly, setEditPictureFriendly] = useState(true)
   const [editBusy, setEditBusy] = useState(false)
-  const [categoryPickerOpen, setCategoryPickerOpen] = useState(false)
+  const [addCategoryModalOpen, setAddCategoryModalOpen] = useState(false)
   const [newCategoryDraft, setNewCategoryDraft] = useState('')
-  const [newCategoryOpen, setNewCategoryOpen] = useState(false)
+
+  const [changeImageOpen, setChangeImageOpen] = useState(false)
+  const [changeImageRegenContext, setChangeImageRegenContext] = useState('')
 
   const [illustrationModalRow, setIllustrationModalRow] = useState<WordRow | null>(null)
   const [illustrationPrompt, setIllustrationPrompt] = useState('')
@@ -82,6 +102,21 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     }
     return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
   }, [rows])
+
+  const categoryPickerValues = useMemo(() => {
+    const cur = editCategory.trim()
+    const rest = new Set(distinctCategories)
+    if (cur) rest.add(cur)
+    const sorted = [...rest].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    return ['', ...sorted]
+  }, [distinctCategories, editCategory])
+
+  const partOfSpeechPickerOptions = useMemo(() => {
+    const v = editPos.trim()
+    const base = PART_OF_SPEECH_OPTIONS
+    if (!v || base.some((o) => o.value === v)) return base
+    return [...base, { value: v, label: `${v} (from word)` }]
+  }, [editPos])
 
   const patchRow = useCallback((id: string, patch: Partial<WordRow>) => {
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
@@ -96,8 +131,9 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     setEditExample(String(r.example ?? '').trim())
     setEditPictureFriendly(r.picture_friendly !== false)
     setNewCategoryDraft('')
-    setNewCategoryOpen(false)
-    setCategoryPickerOpen(false)
+    setAddCategoryModalOpen(false)
+    setChangeImageOpen(false)
+    setChangeImageRegenContext('')
     setEditOpen(true)
   }
 
@@ -141,15 +177,27 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   }, [load])
 
   useEffect(() => {
+    const onBackHub = () => {
+      if (navigation.canGoBack()) navigation.goBack()
+      else navigation.navigate('VoiceActorHome')
+    }
     navigation.setOptions({
       title: 'Vocab Center',
+      headerLeft:
+        role === 'voice'
+          ? () => (
+              <Pressable onPress={onBackHub} style={styles.headerBtn} hitSlop={10}>
+                <Text style={styles.headerBackText}>‹ Hub</Text>
+              </Pressable>
+            )
+          : undefined,
       headerRight: () => (
         <Pressable onPress={() => void load()} style={styles.headerBtn} hitSlop={10}>
           <Text style={styles.headerBtnText}>Refresh</Text>
         </Pressable>
       ),
     })
-  }, [navigation, load])
+  }, [navigation, load, role])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -178,7 +226,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     })
   }, [rows, filter, query])
 
-  const saveEdit = async () => {
+  const performSaveEdit = async () => {
     const id = editId
     if (!id) return
     const nextWord = editWord.trim()
@@ -187,6 +235,10 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       Alert.alert('Missing fields', 'Word (Afaan Oromo) and Translation (English) are required.')
       return
     }
+    const existing = rows.find((r) => r.id === id)
+    const clearImageForNotFriendly =
+      isAdmin && existing?.illustration_url && !editPictureFriendly
+
     setEditBusy(true)
     setError('')
     let payload: Record<string, unknown>
@@ -204,6 +256,9 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
         part_of_speech: editPos.trim() || null,
         example: editExample.trim() || null,
         picture_friendly: Boolean(editPictureFriendly),
+      }
+      if (clearImageForNotFriendly) {
+        payload.illustration_url = null
       }
     }
 
@@ -223,18 +278,83 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     setEditOpen(false)
   }
 
+  const saveEdit = async () => {
+    const id = editId
+    if (!id) return
+    const nextWord = editWord.trim()
+    const nextTranslation = editTranslation.trim()
+    if (!nextWord || !nextTranslation) {
+      Alert.alert('Missing fields', 'Word (Afaan Oromo) and Translation (English) are required.')
+      return
+    }
+    if (!isAdmin) {
+      await performSaveEdit()
+      return
+    }
+    const existing = rows.find((r) => r.id === id)
+    const hasImg = Boolean(existing?.illustration_url?.trim())
+    if (hasImg && !editPictureFriendly) {
+      Alert.alert(
+        'Remove illustration?',
+        'PictureFriendly is off but this word still has an image. Saving will delete the stored illustration.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete image & save',
+            style: 'destructive',
+            onPress: () => void performSaveEdit(),
+          },
+        ],
+      )
+      return
+    }
+    await performSaveEdit()
+  }
+
   const togglePictureFriendlyCard = async (r: WordRow, value: boolean) => {
     if (!isAdmin) return
+    const hasImg = Boolean(r.illustration_url?.trim())
+    if (!value && hasImg) {
+      Alert.alert(
+        'Remove illustration?',
+        'Turning off PictureFriendly will delete the stored image for this word.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete image',
+            style: 'destructive',
+            onPress: () => void applyPictureFriendlyAndMaybeClearImage(r, false),
+          },
+        ],
+      )
+      return
+    }
+    await applyPictureFriendlyAndMaybeClearImage(r, value)
+  }
+
+  const applyPictureFriendlyAndMaybeClearImage = async (r: WordRow, value: boolean) => {
     setFriendlyBusyId(r.id)
     setError('')
-    const { error: e } = await supabase.from('words').update({ picture_friendly: value }).eq('id', r.id)
+    const payload: { picture_friendly: boolean; illustration_url?: null } = { picture_friendly: value }
+    if (!value && r.illustration_url?.trim()) {
+      payload.illustration_url = null
+    }
+    const { error: e } = await supabase.from('words').update(payload).eq('id', r.id)
     setFriendlyBusyId(null)
     if (e) {
       setError(e.message)
       Alert.alert('Update failed', e.message)
       return
     }
-    patchRow(r.id, { picture_friendly: value })
+    patchRow(r.id, {
+      picture_friendly: value,
+      ...(!value && r.illustration_url?.trim() ? { illustration_url: null } : {}),
+    })
+    if (illustrationModalRow?.id === r.id) {
+      setIllustrationModalRow((prev) =>
+        prev && prev.id === r.id ? { ...prev, picture_friendly: value, illustration_url: value ? prev.illustration_url : null } : prev,
+      )
+    }
   }
 
   const clearIllustration = (r: WordRow) => {
@@ -272,10 +392,14 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     return secret
   }
 
-  const generateIllustration = async (wordId: string, customPrompt?: string) => {
-    if (!isAdmin) return
+  const generateIllustration = async (
+    wordId: string,
+    customPrompt?: string,
+    opts?: { onSuccess?: () => void },
+  ): Promise<boolean> => {
+    if (!isAdmin) return false
     const secret = getVocabSecret()
-    if (!secret) return
+    if (!secret) return false
     setActionId(wordId)
     setError('')
     const body: { word_id: string; custom_prompt?: string } = { word_id: wordId }
@@ -289,13 +413,13 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     if (fnErr) {
       setError(fnErr.message)
       Alert.alert('Generate failed', fnErr.message, [{ text: 'OK' }])
-      return
+      return false
     }
     const payload = data as { ok?: boolean; error?: string; illustration_url?: string }
     if (payload?.error) {
       setError(payload.error)
       Alert.alert('Generate failed', payload.error, [{ text: 'OK' }])
-      return
+      return false
     }
     if (payload?.illustration_url) {
       patchRow(wordId, { illustration_url: payload.illustration_url })
@@ -305,6 +429,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     } else {
       void load()
     }
+    opts?.onSuccess?.()
+    return true
   }
 
   const openIllustrationModal = (r: WordRow) => {
@@ -317,72 +443,100 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     setIllustrationModalRow(r)
   }
 
-  const confirmSelectCategory = (name: string) => {
-    setEditCategory(name)
-    setCategoryPickerOpen(false)
-    setNewCategoryOpen(false)
-    setNewCategoryDraft('')
-  }
-
-  const confirmNewCategory = () => {
+  const confirmNewCategoryFromModal = () => {
     const n = newCategoryDraft.trim()
     if (!n) return
     setEditCategory(n)
-    setCategoryPickerOpen(false)
-    setNewCategoryOpen(false)
+    setAddCategoryModalOpen(false)
     setNewCategoryDraft('')
   }
 
-  const renderCategoryPickerModal = () => (
-    <Modal visible={categoryPickerOpen} transparent animationType="fade" onRequestClose={() => setCategoryPickerOpen(false)}>
-      <Pressable style={styles.modalOverlay} onPress={() => setCategoryPickerOpen(false)}>
+  const renderAddCategoryModal = () => (
+    <Modal visible={addCategoryModalOpen} transparent animationType="fade" onRequestClose={() => setAddCategoryModalOpen(false)}>
+      <Pressable style={styles.modalOverlay} onPress={() => setAddCategoryModalOpen(false)}>
         <Pressable style={styles.pickerSheet} onPress={() => {}}>
-          <Text style={styles.modalTitle}>Category</Text>
-          <Text style={styles.modalHint}>Pick an existing category or add a new one.</Text>
-          <FlatList
-            data={distinctCategories}
-            keyExtractor={(item) => item}
-            style={{ maxHeight: 220 }}
-            renderItem={({ item }) => (
-              <Pressable
-                style={[styles.pickerRow, item === editCategory && styles.pickerRowOn]}
-                onPress={() => confirmSelectCategory(item)}
-              >
-                <Text style={styles.pickerRowText}>{item}</Text>
-              </Pressable>
-            )}
+          <Text style={styles.modalTitle}>New category</Text>
+          <Text style={styles.modalHint}>Type a label; it will appear in the category dropdown for this and future edits.</Text>
+          <TextInput
+            style={styles.modalInput}
+            value={newCategoryDraft}
+            onChangeText={setNewCategoryDraft}
+            placeholder="Category name"
+            placeholderTextColor="#6b7280"
+            autoCapitalize="words"
           />
-          <Pressable
-            style={[styles.secondaryBtn, { marginTop: 12 }]}
-            onPress={() => {
-              setNewCategoryOpen(true)
-              setNewCategoryDraft(editCategory.trim() || '')
-            }}
-          >
-            <Text style={styles.secondaryBtnText}>＋ Add new category…</Text>
+          <Pressable style={[styles.saveBtn, { marginTop: 12 }]} onPress={confirmNewCategoryFromModal}>
+            <Text style={styles.saveBtnText}>Add</Text>
           </Pressable>
-          {newCategoryOpen ? (
-            <>
-              <TextInput
-                style={styles.modalInput}
-                value={newCategoryDraft}
-                onChangeText={setNewCategoryDraft}
-                placeholder="New category name"
-                placeholderTextColor="#6b7280"
-                autoCapitalize="words"
-              />
-              <Pressable style={[styles.saveBtn, { marginTop: 10 }]} onPress={confirmNewCategory}>
-                <Text style={styles.saveBtnText}>Use this category</Text>
-              </Pressable>
-            </>
-          ) : null}
-          <Pressable style={[styles.secondaryBtn, { marginTop: 10 }]} onPress={() => setCategoryPickerOpen(false)}>
-            <Text style={styles.secondaryMuted}>Close</Text>
+          <Pressable style={[styles.secondaryBtn, { marginTop: 10 }]} onPress={() => setAddCategoryModalOpen(false)}>
+            <Text style={styles.secondaryMuted}>Cancel</Text>
           </Pressable>
         </Pressable>
       </Pressable>
     </Modal>
   )
+
+  const editingRow = editId ? rows.find((r) => r.id === editId) : null
+
+  const renderChangeImageModal = () => {
+    if (!changeImageOpen || !editId || !isAdmin) return null
+    const r = editingRow
+    const busy = actionId === editId
+    const url = r?.illustration_url?.trim() ?? null
+    return (
+      <Modal visible={changeImageOpen} transparent animationType="fade" onRequestClose={() => !busy && setChangeImageOpen(false)}>
+        <Pressable style={styles.modalOverlay} onPress={() => !busy && setChangeImageOpen(false)}>
+          <Pressable style={styles.illModalSheet} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Change image</Text>
+            <Text style={styles.modalHint}>
+              Optional sentence or scene context is sent to illustration generation. Leave blank to use defaults for this word.
+            </Text>
+            <View style={styles.illPreviewWrap}>
+              {url ? (
+                <Image source={{ uri: url }} style={styles.illPreview} resizeMode="contain" />
+              ) : (
+                <View style={[styles.illPreview, styles.thumbPlaceholder]}>
+                  <Text style={styles.thumbPlaceholderText}>No image yet — Save will generate one</Text>
+                </View>
+              )}
+            </View>
+            <Text style={styles.modalLabel}>Context for regeneration</Text>
+            <TextInput
+              style={[styles.modalInput, { minHeight: 72, textAlignVertical: 'top' }]}
+              value={changeImageRegenContext}
+              onChangeText={setChangeImageRegenContext}
+              placeholder="e.g. classroom scene, outdoor market…"
+              placeholderTextColor="#6b7280"
+              multiline
+              editable={!busy}
+            />
+            <Pressable
+              style={[styles.saveBtn, busy && styles.saveBtnDisabled, { marginTop: 12 }]}
+              disabled={busy || !editPictureFriendly}
+              onPress={() =>
+                void generateIllustration(editId, changeImageRegenContext, {
+                  onSuccess: () => {
+                    setChangeImageOpen(false)
+                    setChangeImageRegenContext('')
+                  },
+                })
+              }
+            >
+              {busy ? <ActivityIndicator color="#111" /> : <Text style={styles.saveBtnText}>Save</Text>}
+            </Pressable>
+            {!editPictureFriendly ? (
+              <Text style={[styles.modalHint, { marginTop: 10, color: '#fca5a5' }]}>
+                Turn on PictureFriendly to generate illustrations.
+              </Text>
+            ) : null}
+            <Pressable style={[styles.secondaryBtn, { marginTop: 10 }, busy && styles.btnDisabled]} onPress={() => !busy && setChangeImageOpen(false)}>
+              <Text style={styles.secondaryMuted}>Close</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    )
+  }
 
   const renderIllustrationModal = () => {
     const r = illustrationModalRow
@@ -568,7 +722,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               <Text style={styles.modalTitle}>{isAdmin ? 'Edit word (admin)' : 'Edit word'}</Text>
               <Text style={styles.modalHint}>
                 {isAdmin
-                  ? 'Tap the illustration on the card to generate or replace the image. Category uses existing values or add new.'
+                  ? 'Use Change image to preview and regenerate with optional context. Category and part of speech are dropdowns; add a new category with the link below.'
                   : 'You can edit Word (Afaan Oromo), Translation (English), and Sentence.'}
               </Text>
 
@@ -599,26 +753,46 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               {isAdmin ? (
                 <>
                   <Text style={styles.modalLabel}>Category</Text>
+                  <View style={styles.pickerShell}>
+                    <Picker
+                      selectedValue={editCategory}
+                      onValueChange={(v) => setEditCategory(v)}
+                      enabled={!editBusy}
+                      style={styles.picker}
+                      dropdownIconColor={ADMIN_ACCENT_GOLD}
+                      itemStyle={styles.pickerItemIos}
+                    >
+                      {categoryPickerValues.map((cat) => (
+                        <Picker.Item key={cat || '__none__'} label={cat ? cat : '— None —'} value={cat} />
+                      ))}
+                    </Picker>
+                  </View>
                   <Pressable
-                    style={[styles.modalInput, styles.categoryTrigger]}
-                    onPress={() => setCategoryPickerOpen(true)}
+                    style={[styles.secondaryBtn, { marginTop: 8 }]}
+                    onPress={() => {
+                      setNewCategoryDraft('')
+                      setAddCategoryModalOpen(true)
+                    }}
                     disabled={editBusy}
                   >
-                    <Text style={{ color: editCategory.trim() ? '#fff' : '#6b7280' }}>
-                      {editCategory.trim() || 'Select or add category…'}
-                    </Text>
+                    <Text style={styles.secondaryBtnText}>＋ Add new category…</Text>
                   </Pressable>
 
                   <Text style={styles.modalLabel}>Part of speech</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    value={editPos}
-                    onChangeText={setEditPos}
-                    placeholder="e.g. noun, verb…"
-                    placeholderTextColor="#6b7280"
-                    editable={!editBusy}
-                    autoCapitalize="none"
-                  />
+                  <View style={styles.pickerShell}>
+                    <Picker
+                      selectedValue={editPos}
+                      onValueChange={(v) => setEditPos(v)}
+                      enabled={!editBusy}
+                      style={styles.picker}
+                      dropdownIconColor={ADMIN_ACCENT_GOLD}
+                      itemStyle={styles.pickerItemIos}
+                    >
+                      {partOfSpeechPickerOptions.map((o) => (
+                        <Picker.Item key={o.value || '__pos_none__'} label={o.label} value={o.value} />
+                      ))}
+                    </Picker>
+                  </View>
                 </>
               ) : null}
 
@@ -632,6 +806,19 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
                 editable={!editBusy}
                 multiline
               />
+
+              {isAdmin ? (
+                <Pressable
+                  style={[styles.secondaryBtn, styles.secondaryAccent, { marginTop: 12 }, editBusy && styles.btnDisabled]}
+                  onPress={() => {
+                    setChangeImageRegenContext('')
+                    setChangeImageOpen(true)
+                  }}
+                  disabled={editBusy}
+                >
+                  <Text style={styles.secondaryBtnText}>Change image</Text>
+                </Pressable>
+              ) : null}
 
               {isAdmin ? (
                 <View style={styles.modalSwitchRow}>
@@ -664,7 +851,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
         </Pressable>
       </Modal>
 
-      {renderCategoryPickerModal()}
+      {renderAddCategoryModal()}
+      {renderChangeImageModal()}
       {renderIllustrationModal()}
 
       <FlatList
@@ -689,6 +877,7 @@ const styles = StyleSheet.create({
   },
   headerBtn: { paddingHorizontal: 12, paddingVertical: 8 },
   headerBtnText: { color: ADMIN_ACCENT_GOLD, fontSize: 16, fontWeight: '600' },
+  headerBackText: { color: '#a1a1aa', fontSize: 15, fontWeight: '600' },
   toolbar: {
     paddingHorizontal: 16,
     paddingTop: 8,
@@ -861,9 +1050,21 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(2,6,23,0.55)',
     fontSize: 15,
   },
-  categoryTrigger: {
-    justifyContent: 'center',
-    minHeight: 44,
+  pickerShell: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.26)',
+    borderRadius: 10,
+    backgroundColor: 'rgba(2,6,23,0.55)',
+    overflow: 'hidden',
+  },
+  picker: {
+    color: '#ffffff',
+    ...(Platform.OS === 'android' ? { backgroundColor: 'rgba(2,6,23,0.55)' } : {}),
+  },
+  pickerItemIos: {
+    color: '#ffffff',
+    fontSize: 17,
   },
   pickerRow: {
     paddingVertical: 12,

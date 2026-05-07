@@ -36,7 +36,7 @@ export default function LoginScreen({ navigation }: Props) {
         setRole('voice')
         setError('')
         setPin('')
-        navigation.reset({ index: 0, routes: [{ name: 'VoiceActorDashboard' }] })
+        navigation.reset({ index: 0, routes: [{ name: 'VoiceActorHome' }] })
         return
       }
       if (fullPin === PROFESSOR_PIN) {

@@ -40,6 +40,7 @@ export type RootStackParamList = {
   /** QA vocabulary quiz illustrations (good/bad + notes for regeneration). */
   AdminVocabIllustrationReview: undefined
   AdminSeriesAudioReview: { seriesName: string; language: string }
+  VoiceActorHome: undefined
   VoiceActorDashboard: undefined
   Recording: {
     words: RecordingWord[]

@@ -18,6 +18,7 @@ import {
   type WordAggRow,
 } from '../lib/seriesAggregation'
 import supabase from '../lib/supabase'
+import { VOCABULARY_MERGED_SERIES } from '../lib/voiceBankLabels'
 import { normalizeRecordingStatus, normalizeRecordingWords } from '../lib/wordStatus'
 import type { RootStackParamList } from '../types'
 
@@ -36,6 +37,7 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
     const { data, error: fetchError } = await supabase
       .from('words')
       .select('series, language, status')
+      .or(`series.is.null,series.neq.${VOCABULARY_MERGED_SERIES}`)
 
     if (fetchError) {
       setError(fetchError.message)
@@ -55,15 +57,28 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
     navigation.reset({ index: 0, routes: [{ name: 'Login' }] })
   }, [navigation, setRole])
 
+  const onBackHome = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack()
+    } else {
+      navigation.navigate('VoiceActorHome')
+    }
+  }, [navigation])
+
   useLayoutEffect(() => {
     navigation.setOptions({
       headerLeft: () => (
-        <Pressable onPress={onSignOut} style={styles.headerSignOut} hitSlop={8}>
+        <Pressable onPress={onBackHome} style={styles.headerSignOut} hitSlop={8}>
+          <Text style={styles.headerSignOutText}>‹ Home</Text>
+        </Pressable>
+      ),
+      headerRight: () => (
+        <Pressable onPress={onSignOut} style={styles.headerSignOutRight} hitSlop={8}>
           <Text style={styles.headerSignOutText}>Sign Out</Text>
         </Pressable>
       ),
     })
-  }, [navigation, onSignOut])
+  }, [navigation, onBackHome, onSignOut])
 
   useFocusEffect(
     useCallback(() => {
@@ -98,6 +113,7 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
       .from('words')
       .select('*')
       .in('status', ['pending', 'rerecord_requested'])
+      .or(`series.is.null,series.neq.${VOCABULARY_MERGED_SERIES}`)
       .order('series', { ascending: true })
       .order('word', { ascending: true })
     if (err) {
@@ -118,6 +134,7 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
         .eq('series', item.series)
         .eq('language', item.language)
         .in('status', ['pending', 'rerecord_requested'])
+        .neq('series', VOCABULARY_MERGED_SERIES)
         .order('word', { ascending: true })
       if (err) {
         setError(err.message)
@@ -209,6 +226,11 @@ const styles = StyleSheet.create({
   },
   headerSignOut: {
     marginLeft: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  headerSignOutRight: {
+    marginRight: 4,
     paddingHorizontal: 10,
     paddingVertical: 8,
   },

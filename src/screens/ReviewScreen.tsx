@@ -68,7 +68,7 @@ export default function ReviewScreen({ navigation, route }: Props) {
           onPress={() => {
             navigation.reset({
               index: 0,
-              routes: [{ name: 'VoiceActorDashboard' }],
+              routes: [{ name: 'VoiceActorHome' }],
             })
           }}
         >

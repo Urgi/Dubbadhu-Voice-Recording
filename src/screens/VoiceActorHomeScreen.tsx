@@ -46,7 +46,7 @@ export default function VoiceActorHomeScreen({ navigation }: Props) {
       >
         <Text style={styles.tileTitle}>Vocab Center</Text>
         <Text style={styles.recordedLine}>Edit words, translations, and example sentences</Text>
-        <Text style={styles.tileHint}>Illustration tools remain admin-only</Text>
+        <Text style={styles.tileHint}>Add new vocabulary words here; illustration tools remain admin-only</Text>
       </Pressable>
     </ScrollView>
   )

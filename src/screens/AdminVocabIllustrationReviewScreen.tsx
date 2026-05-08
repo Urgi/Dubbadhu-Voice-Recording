@@ -21,6 +21,11 @@ import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfig
 import { useAuth } from '../context/AuthContext'
 import { getExpoPublicVocabBatchSecret } from '../lib/expoPublicEnv'
 import supabase from '../lib/supabase'
+import {
+  VOCABULARY_MERGED_SERIES,
+  VOICE_BANK_LANGUAGE,
+  voiceBankLanguageSqlValues,
+} from '../lib/voiceBankLabels'
 import type { RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminVocabIllustrationReview'>
@@ -47,7 +52,12 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'not_picture_friendly', label: 'Not picture-friendly' },
 ]
 
+function escapeForILikeExact(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+}
+
 /** Canonical POS labels for the dropdown; empty string = none. */
+
 const PART_OF_SPEECH_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: '— None —' },
   { value: 'noun', label: 'noun' },
@@ -67,6 +77,7 @@ const PART_OF_SPEECH_OPTIONS: { value: string; label: string }[] = [
 export default function AdminVocabIllustrationReviewScreen({ navigation }: Props) {
   const { role } = useAuth()
   const isAdmin = role === 'admin'
+  const canCreateVocabulary = role === 'voice' || isAdmin
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -86,7 +97,16 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   const [editPictureFriendly, setEditPictureFriendly] = useState(true)
   const [editBusy, setEditBusy] = useState(false)
   const [addCategoryModalOpen, setAddCategoryModalOpen] = useState(false)
+  const [categoryModalTarget, setCategoryModalTarget] = useState<'edit' | 'create'>('edit')
   const [newCategoryDraft, setNewCategoryDraft] = useState('')
+
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createBusy, setCreateBusy] = useState(false)
+  const [createWord, setCreateWord] = useState('')
+  const [createTranslation, setCreateTranslation] = useState('')
+  const [createCategory, setCreateCategory] = useState('')
+  const [createPos, setCreatePos] = useState('')
+  const [createExample, setCreateExample] = useState('')
 
   const [changeImageOpen, setChangeImageOpen] = useState(false)
   const [changeImageRegenContext, setChangeImageRegenContext] = useState('')
@@ -118,9 +138,33 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     return [...base, { value: v, label: `${v} (from word)` }]
   }, [editPos])
 
+  const createCategoryPickerValues = useMemo(() => {
+    const cur = createCategory.trim()
+    const rest = new Set(distinctCategories)
+    if (cur) rest.add(cur)
+    const sorted = [...rest].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    return ['', ...sorted]
+  }, [distinctCategories, createCategory])
+
+  const createPartOfSpeechPickerOptions = useMemo(() => {
+    const v = createPos.trim()
+    const base = PART_OF_SPEECH_OPTIONS
+    if (!v || base.some((o) => o.value === v)) return base
+    return [...base, { value: v, label: `${v} (custom)` }]
+  }, [createPos])
+
   const patchRow = useCallback((id: string, patch: Partial<WordRow>) => {
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
   }, [])
+
+  const openCreateVocabulary = () => {
+    setCreateWord('')
+    setCreateTranslation('')
+    setCreateCategory('')
+    setCreatePos('')
+    setCreateExample('')
+    setCreateOpen(true)
+  }
 
   const openEdit = (r: WordRow) => {
     setEditId(r.id)
@@ -446,9 +490,65 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   const confirmNewCategoryFromModal = () => {
     const n = newCategoryDraft.trim()
     if (!n) return
-    setEditCategory(n)
+    if (categoryModalTarget === 'create') setCreateCategory(n)
+    else setEditCategory(n)
     setAddCategoryModalOpen(false)
     setNewCategoryDraft('')
+  }
+
+  const saveCreateVocabulary = async () => {
+    const nextWord = createWord.trim()
+    const nextTranslation = createTranslation.trim()
+    if (!nextWord || !nextTranslation) {
+      Alert.alert('Missing fields', 'Word (Afaan Oromo) and Translation (English) are required.')
+      return
+    }
+    setCreateBusy(true)
+    setError('')
+    const langVals = voiceBankLanguageSqlValues()
+    const { data: dupRows, error: dupErr } = await supabase
+      .from('words')
+      .select('id')
+      .eq('series', VOCABULARY_MERGED_SERIES)
+      .in('language', langVals)
+      .ilike('word', escapeForILikeExact(nextWord))
+      .limit(3)
+    if (dupErr) {
+      setCreateBusy(false)
+      setError(dupErr.message)
+      Alert.alert('Could not check duplicates', dupErr.message)
+      return
+    }
+    if ((dupRows?.length ?? 0) > 0) {
+      setCreateBusy(false)
+      Alert.alert('Duplicate', 'A vocabulary row with this Afaan Oromo word already exists.')
+      return
+    }
+
+    const insertPayload = {
+      series: VOCABULARY_MERGED_SERIES,
+      language: VOICE_BANK_LANGUAGE,
+      word: nextWord,
+      translation: nextTranslation,
+      category: createCategory.trim() || null,
+      part_of_speech: createPos.trim() || null,
+      example: createExample.trim() || null,
+      picture_friendly: true,
+      status: 'pending' as const,
+      slow_audio_url: null,
+      fast_audio_url: null,
+    }
+
+    const { error: insErr } = await supabase.from('words').insert(insertPayload)
+    setCreateBusy(false)
+    if (insErr) {
+      setError(insErr.message)
+      Alert.alert('Could not create word', insErr.message)
+      return
+    }
+    setCreateOpen(false)
+    setFilter('all')
+    await load()
   }
 
   const renderAddCategoryModal = () => (
@@ -707,6 +807,11 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
             </Pressable>
           ))}
         </ScrollView>
+        {canCreateVocabulary ? (
+          <Pressable style={[styles.secondaryBtn, styles.secondaryAccent, styles.newVocabToolbarBtn]} onPress={openCreateVocabulary}>
+            <Text style={styles.secondaryBtnText}>New vocabulary word</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
@@ -714,6 +819,108 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       <Text style={styles.countLine}>
         Showing {filtered.length} of {rows.length}
       </Text>
+
+      <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => !createBusy && setCreateOpen(false)}>
+        <Pressable style={styles.modalOverlay} onPress={() => !createBusy && setCreateOpen(false)}>
+          <Pressable style={styles.modalSheet} onPress={() => {}}>
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalTitle}>New vocabulary word</Text>
+              <Text style={styles.modalHint}>
+                Adds a row with series &quot;Vocabulary&quot; ({VOICE_BANK_LANGUAGE}). It will not appear in the voice recording queue.
+              </Text>
+
+              <Text style={styles.modalLabel}>Word — Afaan Oromo</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={createWord}
+                onChangeText={setCreateWord}
+                placeholder="Afaan Oromo…"
+                placeholderTextColor="#6b7280"
+                editable={!createBusy}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              <Text style={styles.modalLabel}>Translation — English</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={createTranslation}
+                onChangeText={setCreateTranslation}
+                placeholder="English…"
+                placeholderTextColor="#6b7280"
+                editable={!createBusy}
+                autoCapitalize="sentences"
+                autoCorrect
+              />
+
+              <Text style={styles.modalLabel}>Category</Text>
+              <View style={styles.pickerShell}>
+                <Picker
+                  selectedValue={createCategory}
+                  onValueChange={(v) => setCreateCategory(v)}
+                  enabled={!createBusy}
+                  style={styles.picker}
+                  dropdownIconColor={ADMIN_ACCENT_GOLD}
+                  itemStyle={styles.pickerItemIos}
+                >
+                  {createCategoryPickerValues.map((cat) => (
+                    <Picker.Item key={cat || '__create_cat_none__'} label={cat ? cat : '— None —'} value={cat} />
+                  ))}
+                </Picker>
+              </View>
+              <Pressable
+                style={[styles.secondaryBtn, { marginTop: 8 }]}
+                onPress={() => {
+                  setCategoryModalTarget('create')
+                  setNewCategoryDraft('')
+                  setAddCategoryModalOpen(true)
+                }}
+                disabled={createBusy}
+              >
+                <Text style={styles.secondaryBtnText}>＋ Add new category…</Text>
+              </Pressable>
+
+              <Text style={styles.modalLabel}>Part of speech</Text>
+              <View style={styles.pickerShell}>
+                <Picker
+                  selectedValue={createPos}
+                  onValueChange={(v) => setCreatePos(v)}
+                  enabled={!createBusy}
+                  style={styles.picker}
+                  dropdownIconColor={ADMIN_ACCENT_GOLD}
+                  itemStyle={styles.pickerItemIos}
+                >
+                  {createPartOfSpeechPickerOptions.map((o) => (
+                    <Picker.Item key={o.value || '__create_pos_none__'} label={o.label} value={o.value} />
+                  ))}
+                </Picker>
+              </View>
+
+              <Text style={styles.modalLabel}>Sentence</Text>
+              <TextInput
+                style={[styles.modalInput, { minHeight: 88, textAlignVertical: 'top' }]}
+                value={createExample}
+                onChangeText={setCreateExample}
+                placeholder="Example sentence…"
+                placeholderTextColor="#6b7280"
+                editable={!createBusy}
+                multiline
+              />
+
+              <Pressable
+                style={[styles.saveBtn, createBusy && styles.saveBtnDisabled, { marginTop: 12 }]}
+                onPress={() => void saveCreateVocabulary()}
+                disabled={createBusy}
+              >
+                {createBusy ? <ActivityIndicator color="#111" /> : <Text style={styles.saveBtnText}>Create word</Text>}
+              </Pressable>
+              <Pressable style={[styles.secondaryBtn, { marginTop: 10 }, createBusy && styles.btnDisabled]} onPress={() => !createBusy && setCreateOpen(false)}>
+                <Text style={styles.secondaryMuted}>Cancel</Text>
+              </Pressable>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal visible={editOpen} transparent animationType="fade" onRequestClose={() => !editBusy && setEditOpen(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => !editBusy && setEditOpen(false)}>
@@ -770,6 +977,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
                   <Pressable
                     style={[styles.secondaryBtn, { marginTop: 8 }]}
                     onPress={() => {
+                      setCategoryModalTarget('edit')
                       setNewCategoryDraft('')
                       setAddCategoryModalOpen(true)
                     }}
@@ -895,6 +1103,11 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   filterScroll: { gap: 8, paddingBottom: 8 },
+  newVocabToolbarBtn: {
+    marginTop: 10,
+    marginBottom: 6,
+    alignSelf: 'flex-start',
+  },
   filterChip: {
     borderRadius: 999,
     borderWidth: 1,

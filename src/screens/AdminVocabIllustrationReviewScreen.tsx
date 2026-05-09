@@ -37,7 +37,6 @@ type WordRow = {
   translation: string | null
   category: string | null
   part_of_speech: string | null
-  definition: string | null
   example: string | null
   illustration_url: string | null
   picture_friendly: boolean | null
@@ -94,6 +93,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   const [query, setQuery] = useState('')
   const [actionId, setActionId] = useState<string | null>(null)
   const [friendlyBusyId, setFriendlyBusyId] = useState<string | null>(null)
+  const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null)
 
   const [editOpen, setEditOpen] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
@@ -102,7 +102,6 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   const [editCategory, setEditCategory] = useState('')
   const [editPos, setEditPos] = useState('')
   const [editExample, setEditExample] = useState('')
-  const [editDefinition, setEditDefinition] = useState('')
   const [editPictureFriendly, setEditPictureFriendly] = useState(true)
   const [editBusy, setEditBusy] = useState(false)
   const [addCategoryModalOpen, setAddCategoryModalOpen] = useState(false)
@@ -182,7 +181,6 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     setEditCategory(String(r.category ?? '').trim())
     setEditPos(String(r.part_of_speech ?? '').trim())
     setEditExample(String(r.example ?? '').trim())
-    setEditDefinition(String(r.definition ?? '').trim())
     setEditPictureFriendly(r.picture_friendly !== false)
     setNewCategoryDraft('')
     setAddCategoryModalOpen(false)
@@ -197,7 +195,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     const { data, error: e } = await supabase
       .from('words')
       .select(
-        'id, word, translation, category, part_of_speech, definition, example, illustration_url, picture_friendly, series, status, vocab_text_approved',
+        'id, word, translation, category, part_of_speech, example, illustration_url, picture_friendly, series, status, vocab_text_approved',
       )
       .order('word', { ascending: true })
       .limit(5000)
@@ -216,7 +214,6 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
         part_of_speech: (r as { part_of_speech?: unknown }).part_of_speech
           ? String((r as { part_of_speech?: unknown }).part_of_speech)
           : null,
-        definition: (r as { definition?: unknown }).definition ? String((r as { definition?: unknown }).definition) : null,
         example: (r as { example?: unknown }).example ? String((r as { example?: unknown }).example) : null,
         illustration_url: (r as { illustration_url?: unknown }).illustration_url
           ? String((r as { illustration_url?: unknown }).illustration_url).trim()
@@ -302,9 +299,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       const id = String(r.id).toLowerCase()
       const w = String(r.word).toLowerCase()
       const t = String(r.translation ?? '').toLowerCase()
-      const d = String(r.definition ?? '').toLowerCase()
       const ex = String(r.example ?? '').toLowerCase()
-      return id.includes(q) || w.includes(q) || t.includes(q) || d.includes(q) || ex.includes(q)
+      return id.includes(q) || w.includes(q) || t.includes(q) || ex.includes(q)
     })
   }, [voiceTextReviewQueue, query])
 
@@ -324,7 +320,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       .update({ vocab_text_approved: true })
       .eq('id', r.id)
       .select(
-        'id, word, translation, category, part_of_speech, definition, example, illustration_url, picture_friendly, series, status, vocab_text_approved',
+        'id, word, translation, category, part_of_speech, example, illustration_url, picture_friendly, series, status, vocab_text_approved',
       )
       .single()
     setApproveBusyId(null)
@@ -335,6 +331,45 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     }
     const row = data as unknown as WordRow
     patchRow(r.id, row)
+  }
+
+  const canDeleteVocabWords = isAdmin || role === 'voice'
+
+  const requestDeleteVocabWord = (r: WordRow) => {
+    if (!canDeleteVocabWords || !isVocabularyRow(r)) return
+    const gloss = String(r.translation ?? '').trim() || '—'
+    Alert.alert(
+      'Delete vocabulary word?',
+      `This permanently removes this word bank row:\n\n${r.word}\n${gloss}\n\nThis cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => void performDeleteVocabWord(r.id),
+        },
+      ],
+    )
+  }
+
+  const performDeleteVocabWord = async (id: string) => {
+    setDeleteBusyId(id)
+    setError('')
+    const { error: e } = await supabase.from('words').delete().eq('id', id)
+    setDeleteBusyId(null)
+    if (e) {
+      setError(e.message)
+      Alert.alert('Delete failed', e.message)
+      return
+    }
+    if (editId === id) {
+      setEditOpen(false)
+      setEditId(null)
+    }
+    if (illustrationModalRow?.id === id) {
+      setIllustrationModalRow(null)
+    }
+    setRows((prev) => prev.filter((row) => row.id !== id))
   }
 
   const startVocabRecordingFromCenter = useCallback(async () => {
@@ -383,7 +418,6 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       payload = {
         word: nextWord,
         translation: nextTranslation,
-        definition: editDefinition.trim() || null,
         example: editExample.trim() || null,
       }
     } else {
@@ -408,7 +442,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       .update(payload)
       .eq('id', id)
       .select(
-        'id, word, translation, category, part_of_speech, definition, example, illustration_url, picture_friendly, series, status, vocab_text_approved',
+        'id, word, translation, category, part_of_speech, example, illustration_url, picture_friendly, series, status, vocab_text_approved',
       )
       .single()
     setEditBusy(false)
@@ -801,27 +835,37 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
 
   const renderVoiceReviewItem = ({ item: r }: { item: WordRow }) => {
     const busy = approveBusyId === r.id
+    const delBusy = deleteBusyId === r.id
+    const rowBusy = busy || delBusy
     return (
       <View style={styles.card}>
         <View style={styles.cardMeta}>
           <Text style={styles.oromo}>{r.word}</Text>
           <Text style={styles.english}>{String(r.translation ?? '').trim() || '—'}</Text>
-          {r.definition?.trim() ? (
-            <Text style={styles.metaSmall}>Definition: {String(r.definition).trim()}</Text>
-          ) : null}
           {r.example?.trim() ? (
             <Text style={styles.metaSmall}>Sentence: {String(r.example).trim()}</Text>
           ) : null}
           <Text style={styles.metaSmall}>id {r.id}</Text>
         </View>
         <View style={styles.imageActions}>
-          <Pressable style={styles.secondaryBtn} onPress={() => openEdit(r)} disabled={busy}>
+          <Pressable style={styles.secondaryBtn} onPress={() => openEdit(r)} disabled={rowBusy}>
             <Text style={styles.secondaryMuted}>Edit</Text>
           </Pressable>
           <Pressable
-            style={[styles.saveBtn, { flex: 1, minWidth: 140 }, busy && styles.saveBtnDisabled]}
+            style={[styles.microBtnDangerOutline, rowBusy && styles.btnDisabled]}
+            onPress={() => requestDeleteVocabWord(r)}
+            disabled={rowBusy}
+          >
+            {delBusy ? (
+              <ActivityIndicator size="small" color="#fca5a5" />
+            ) : (
+              <Text style={styles.dangerText}>Delete</Text>
+            )}
+          </Pressable>
+          <Pressable
+            style={[styles.saveBtn, { flex: 1, minWidth: 120 }, busy && styles.saveBtnDisabled]}
             onPress={() => void approveVocabTextForRecording(r)}
-            disabled={busy}
+            disabled={rowBusy}
           >
             {busy ? <ActivityIndicator color="#111" /> : <Text style={styles.saveBtnText}>Approve for recording</Text>}
           </Pressable>
@@ -831,7 +875,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   }
 
   const renderItem = ({ item: r }: { item: WordRow }) => {
-    const busy = actionId === r.id
+    const busy = actionId === r.id || deleteBusyId === r.id
     const hasImg = Boolean(r.illustration_url)
     const friendly = r.picture_friendly !== false
     const friendlyBusy = friendlyBusyId === r.id
@@ -904,7 +948,22 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
           <Pressable style={[styles.secondaryBtn, busy && styles.btnDisabled]} onPress={() => openEdit(r)} disabled={busy}>
             <Text style={styles.secondaryMuted}>Edit word</Text>
           </Pressable>
-          {busy ? <ActivityIndicator size="small" color={ADMIN_ACCENT_GOLD} style={styles.inlineSpinner} /> : null}
+          {canDeleteVocabWords && isVocabularyRow(r) ? (
+            <Pressable
+              style={[styles.microBtnDangerOutline, busy && styles.btnDisabled]}
+              onPress={() => requestDeleteVocabWord(r)}
+              disabled={busy}
+            >
+              {deleteBusyId === r.id ? (
+                <ActivityIndicator size="small" color="#fca5a5" />
+              ) : (
+                <Text style={styles.dangerText}>Delete word</Text>
+              )}
+            </Pressable>
+          ) : null}
+          {busy && deleteBusyId !== r.id ? (
+            <ActivityIndicator size="small" color={ADMIN_ACCENT_GOLD} style={styles.inlineSpinner} />
+          ) : null}
         </View>
       </View>
     )
@@ -1105,7 +1164,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               <Text style={styles.modalHint}>
                 {isAdmin
                   ? 'Use Change image to preview and regenerate with optional context. Category and part of speech are dropdowns; add a new category with the link below.'
-                  : 'You can edit word (Afaan Oromo), translation (English), definition, and sentence. Saving does not approve text — use Approve for recording on the card.'}
+                  : 'You can edit word (Afaan Oromo), translation (English), and sentence. Saving does not approve text — use Approve for recording on the card.'}
               </Text>
 
               <Text style={styles.modalLabel}>Word — Afaan Oromo</Text>
@@ -1131,21 +1190,6 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
                 autoCapitalize="sentences"
                 autoCorrect
               />
-
-              {!isAdmin ? (
-                <>
-                  <Text style={styles.modalLabel}>Definition (optional)</Text>
-                  <TextInput
-                    style={[styles.modalInput, { minHeight: 72, textAlignVertical: 'top' }]}
-                    value={editDefinition}
-                    onChangeText={setEditDefinition}
-                    placeholder="Short definition…"
-                    placeholderTextColor="#6b7280"
-                    editable={!editBusy}
-                    multiline
-                  />
-                </>
-              ) : null}
 
               {isAdmin ? (
                 <>
@@ -1384,6 +1428,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(248,113,113,0.35)',
     backgroundColor: 'rgba(127,29,29,0.2)',
+  },
+  microBtnDangerOutline: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.45)',
+    backgroundColor: 'transparent',
+    minWidth: 88,
   },
   cardMeta: { flex: 1, minWidth: 0 },
   oromo: { color: '#fff', fontSize: 20, fontWeight: '900' },

@@ -18,15 +18,47 @@ import {
   type WordAggRow,
 } from '../lib/seriesAggregation'
 import supabase from '../lib/supabase'
-import { VOCABULARY_MERGED_SERIES } from '../lib/voiceBankLabels'
+import {
+  VOCABULARY_MERGED_SERIES,
+  VOICE_BANK_LANGUAGE,
+  voiceBankLanguageSqlValues,
+} from '../lib/voiceBankLabels'
 import { normalizeRecordingStatus, normalizeRecordingWords } from '../lib/wordStatus'
 import type { RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'VoiceActorDashboard'>
 
+function emptyVocabSummary(): SeriesSummary {
+  return {
+    key: `${VOCABULARY_MERGED_SERIES}\u0000${VOICE_BANK_LANGUAGE}`,
+    series: VOCABULARY_MERGED_SERIES,
+    language: VOICE_BANK_LANGUAGE,
+    pending: 0,
+    recorded: 0,
+    approved: 0,
+    rerecordRequested: 0,
+    total: 0,
+  }
+}
+
+/** One tile for all `Vocabulary` rows (may span minor language string variants in DB). */
+function mergeVocabSummaries(aggregated: SeriesSummary[]): SeriesSummary {
+  if (aggregated.length === 0) return emptyVocabSummary()
+  const base = emptyVocabSummary()
+  for (const a of aggregated) {
+    base.pending += a.pending
+    base.recorded += a.recorded
+    base.approved += a.approved
+    base.rerecordRequested += a.rerecordRequested
+    base.total += a.total
+  }
+  return base
+}
+
 export default function VoiceActorDashboardScreen({ navigation }: Props) {
   const { setRole } = useAuth()
   const [summaries, setSummaries] = useState<SeriesSummary[]>([])
+  const [vocabSummary, setVocabSummary] = useState<SeriesSummary>(() => emptyVocabSummary())
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
@@ -34,22 +66,45 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
 
   const load = useCallback(async () => {
     setError('')
-    const { data, error: fetchError } = await supabase
-      .from('words')
-      .select('series, language, status')
-      .or(`series.is.null,series.neq.${VOCABULARY_MERGED_SERIES}`)
+    const langVals = voiceBankLanguageSqlValues()
+    const [seriesRes, vocabRes] = await Promise.all([
+      supabase
+        .from('words')
+        .select('series, language, status')
+        .or(`series.is.null,series.neq.${VOCABULARY_MERGED_SERIES}`),
+      supabase
+        .from('words')
+        .select('series, language, status')
+        .eq('series', VOCABULARY_MERGED_SERIES)
+        .eq('vocab_text_approved', true)
+        .in('language', langVals),
+    ])
 
-    if (fetchError) {
-      setError(fetchError.message)
+    if (seriesRes.error) {
+      setError(seriesRes.error.message)
       setSummaries([])
+      setVocabSummary(emptyVocabSummary())
+      return
+    }
+    if (vocabRes.error) {
+      setError(vocabRes.error.message)
+      setSummaries([])
+      setVocabSummary(emptyVocabSummary())
       return
     }
 
-    const rows = ((data as WordAggRow[] | null) ?? []).map((r) => ({
+    const seriesRows = ((seriesRes.data as WordAggRow[] | null) ?? []).map((r) => ({
       ...r,
       status: normalizeRecordingStatus(r.status),
     }))
-    setSummaries(aggregateWordRows(rows))
+    setSummaries(aggregateWordRows(seriesRows))
+
+    const vocabRows = ((vocabRes.data as WordAggRow[] | null) ?? []).map((r) => ({
+      ...r,
+      status: normalizeRecordingStatus(r.status),
+    }))
+    const vocabAgg = aggregateWordRows(vocabRows)
+    setVocabSummary(mergeVocabSummaries(vocabAgg))
   }, [])
 
   const onSignOut = useCallback(() => {
@@ -103,24 +158,40 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
     setRefreshing(false)
   }, [load])
 
-  const hasRemainingWords = useMemo(
-    () => summaries.reduce((n, s) => n + s.pending + s.rerecordRequested, 0) > 0,
-    [summaries],
-  )
+  const hasRemainingWords = useMemo(() => {
+    const v = vocabSummary.pending + vocabSummary.rerecordRequested
+    const s = summaries.reduce((n, x) => n + x.pending + x.rerecordRequested, 0)
+    return v + s > 0
+  }, [summaries, vocabSummary])
 
   const startRecordingAll = useCallback(async () => {
-    const { data, error: err } = await supabase
-      .from('words')
-      .select('*')
-      .in('status', ['pending', 'rerecord_requested'])
-      .or(`series.is.null,series.neq.${VOCABULARY_MERGED_SERIES}`)
-      .order('series', { ascending: true })
-      .order('word', { ascending: true })
+    const langVals = voiceBankLanguageSqlValues()
+    const [vRes, sRes] = await Promise.all([
+      supabase
+        .from('words')
+        .select('*')
+        .eq('series', VOCABULARY_MERGED_SERIES)
+        .eq('vocab_text_approved', true)
+        .in('language', langVals)
+        .in('status', ['pending', 'rerecord_requested'])
+        .order('word', { ascending: true }),
+      supabase
+        .from('words')
+        .select('*')
+        .in('status', ['pending', 'rerecord_requested'])
+        .or(`series.is.null,series.neq.${VOCABULARY_MERGED_SERIES}`)
+        .order('series', { ascending: true })
+        .order('word', { ascending: true }),
+    ])
+    const err = vRes.error ?? sRes.error
     if (err) {
       setError(err.message)
       return
     }
-    const list = normalizeRecordingWords(data ?? [])
+    const list = [
+      ...normalizeRecordingWords(vRes.data ?? []),
+      ...normalizeRecordingWords(sRes.data ?? []),
+    ]
     if (list.length === 0) return
     navigation.navigate('Recording', { words: list })
   }, [navigation])
@@ -128,14 +199,25 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
   const startSeriesRecording = useCallback(
     async (item: SeriesSummary) => {
       if (item.pending + item.rerecordRequested <= 0) return
-      const { data, error: err } = await supabase
-        .from('words')
-        .select('*')
-        .eq('series', item.series)
-        .eq('language', item.language)
-        .in('status', ['pending', 'rerecord_requested'])
-        .neq('series', VOCABULARY_MERGED_SERIES)
-        .order('word', { ascending: true })
+      const langVals = voiceBankLanguageSqlValues()
+      const q =
+        item.series === VOCABULARY_MERGED_SERIES
+          ? supabase
+              .from('words')
+              .select('*')
+              .eq('series', VOCABULARY_MERGED_SERIES)
+              .eq('vocab_text_approved', true)
+              .in('language', langVals)
+              .in('status', ['pending', 'rerecord_requested'])
+              .order('word', { ascending: true })
+          : supabase
+              .from('words')
+              .select('*')
+              .eq('series', item.series)
+              .eq('language', item.language)
+              .in('status', ['pending', 'rerecord_requested'])
+              .order('word', { ascending: true })
+      const { data, error: err } = await q
       if (err) {
         setError(err.message)
         return
@@ -150,7 +232,8 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
     [navigation],
   )
 
-  const showQueueEmptyMessage = !hasRemainingWords && summaries.length > 0
+  const showQueueEmptyMessage =
+    !hasRemainingWords && (summaries.length > 0 || vocabSummary.total > 0)
 
   const listHeader = useMemo(
     () => (
@@ -163,9 +246,26 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
         ) : showQueueEmptyMessage ? (
           <Text style={styles.queueEmptyText}>There are no words in the queue …</Text>
         ) : null}
+        <Text style={styles.sectionTitle}>Vocabulary (word bank)</Text>
+        <Text style={styles.sectionHint}>
+          {VOCABULARY_MERGED_SERIES} · {vocabSummary.language} — text-approved, pending audio
+        </Text>
+        <SeriesTileCard
+          item={vocabSummary}
+          disabled={vocabSummary.pending + vocabSummary.rerecordRequested <= 0}
+          onPress={() => void startSeriesRecording(vocabSummary)}
+        />
+        <Text style={[styles.sectionTitle, styles.sectionTitleSpaced]}>Lesson series</Text>
       </View>
     ),
-    [error, hasRemainingWords, showQueueEmptyMessage, startRecordingAll],
+    [
+      error,
+      hasRemainingWords,
+      showQueueEmptyMessage,
+      startRecordingAll,
+      vocabSummary,
+      startSeriesRecording,
+    ],
   )
 
   if (loading) {
@@ -182,7 +282,9 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
         data={summaries}
         keyExtractor={(item) => item.key}
         ListHeaderComponent={listHeader}
-        contentContainerStyle={summaries.length === 0 ? styles.emptyList : styles.listContent}
+        contentContainerStyle={
+          summaries.length === 0 && vocabSummary.total === 0 ? styles.emptyList : styles.listContent
+        }
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7C3AED" />
         }
@@ -194,7 +296,9 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
           />
         )}
         ListEmptyComponent={
-          <Text style={styles.emptyText}>No series yet. Ask an admin to add words.</Text>
+          summaries.length === 0 ? (
+            <Text style={styles.emptyText}>No lesson series with words in the recording queue.</Text>
+          ) : null
         }
       />
     </View>
@@ -223,6 +327,24 @@ const styles = StyleSheet.create({
   },
   headerBlock: {
     marginBottom: 8,
+  },
+  sectionTitle: {
+    color: '#e4e4e7',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: 4,
+  },
+  sectionTitleSpaced: {
+    marginTop: 20,
+  },
+  sectionHint: {
+    color: '#71717a',
+    fontSize: 12,
+    marginTop: 4,
+    marginBottom: 8,
+    lineHeight: 16,
   },
   headerSignOut: {
     marginLeft: 4,

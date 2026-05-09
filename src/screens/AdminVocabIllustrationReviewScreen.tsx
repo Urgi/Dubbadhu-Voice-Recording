@@ -26,6 +26,7 @@ import {
   VOICE_BANK_LANGUAGE,
   voiceBankLanguageSqlValues,
 } from '../lib/voiceBankLabels'
+import { normalizeRecordingWords } from '../lib/wordStatus'
 import type { RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminVocabIllustrationReview'>
@@ -40,6 +41,9 @@ type WordRow = {
   example: string | null
   illustration_url: string | null
   picture_friendly: boolean | null
+  series: string | null
+  status: string
+  vocab_text_approved: boolean
 }
 
 type FilterKey = 'all' | 'has_image' | 'no_image' | 'picture_friendly' | 'not_picture_friendly'
@@ -74,6 +78,10 @@ const PART_OF_SPEECH_OPTIONS: { value: string; label: string }[] = [
   { value: 'other', label: 'other' },
 ]
 
+function isVocabularyRow(r: Pick<WordRow, 'series'>): boolean {
+  return String(r.series ?? '').trim().toLowerCase() === 'vocabulary'
+}
+
 export default function AdminVocabIllustrationReviewScreen({ navigation }: Props) {
   const { role } = useAuth()
   const isAdmin = role === 'admin'
@@ -94,6 +102,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   const [editCategory, setEditCategory] = useState('')
   const [editPos, setEditPos] = useState('')
   const [editExample, setEditExample] = useState('')
+  const [editDefinition, setEditDefinition] = useState('')
   const [editPictureFriendly, setEditPictureFriendly] = useState(true)
   const [editBusy, setEditBusy] = useState(false)
   const [addCategoryModalOpen, setAddCategoryModalOpen] = useState(false)
@@ -173,6 +182,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     setEditCategory(String(r.category ?? '').trim())
     setEditPos(String(r.part_of_speech ?? '').trim())
     setEditExample(String(r.example ?? '').trim())
+    setEditDefinition(String(r.definition ?? '').trim())
     setEditPictureFriendly(r.picture_friendly !== false)
     setNewCategoryDraft('')
     setAddCategoryModalOpen(false)
@@ -186,7 +196,9 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     setLoading(true)
     const { data, error: e } = await supabase
       .from('words')
-      .select('id, word, translation, category, part_of_speech, definition, example, illustration_url, picture_friendly')
+      .select(
+        'id, word, translation, category, part_of_speech, definition, example, illustration_url, picture_friendly, series, status, vocab_text_approved',
+      )
       .order('word', { ascending: true })
       .limit(5000)
     if (e) {
@@ -210,6 +222,11 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
           ? String((r as { illustration_url?: unknown }).illustration_url).trim()
           : null,
         picture_friendly: ((r as { picture_friendly?: unknown }).picture_friendly as boolean | null | undefined) ?? null,
+        series: (r as { series?: unknown }).series != null ? String((r as { series?: unknown }).series) : null,
+        status: String((r as { status?: unknown }).status ?? ''),
+        vocab_text_approved: Boolean(
+          (r as { vocab_text_approved?: unknown }).vocab_text_approved ?? true,
+        ),
       }))
       .filter((r) => r.id && r.word)
     setRows(out)
@@ -270,6 +287,82 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     })
   }, [rows, filter, query])
 
+  const voiceTextReviewQueue = useMemo(
+    () =>
+      rows
+        .filter((r) => isVocabularyRow(r) && !r.vocab_text_approved)
+        .sort((a, b) => a.word.localeCompare(b.word, undefined, { sensitivity: 'base' })),
+    [rows],
+  )
+
+  const voiceReviewFiltered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return voiceTextReviewQueue
+    return voiceTextReviewQueue.filter((r) => {
+      const id = String(r.id).toLowerCase()
+      const w = String(r.word).toLowerCase()
+      const t = String(r.translation ?? '').toLowerCase()
+      const d = String(r.definition ?? '').toLowerCase()
+      const ex = String(r.example ?? '').toLowerCase()
+      return id.includes(q) || w.includes(q) || t.includes(q) || d.includes(q) || ex.includes(q)
+    })
+  }, [voiceTextReviewQueue, query])
+
+  const [approveBusyId, setApproveBusyId] = useState<string | null>(null)
+
+  const approveVocabTextForRecording = async (r: WordRow) => {
+    const w = String(r.word ?? '').trim()
+    const t = String(r.translation ?? '').trim()
+    if (!w || !t) {
+      Alert.alert('Cannot approve', 'Word and translation must be filled. Use Edit to fix.')
+      return
+    }
+    setApproveBusyId(r.id)
+    setError('')
+    const { data, error: e } = await supabase
+      .from('words')
+      .update({ vocab_text_approved: true })
+      .eq('id', r.id)
+      .select(
+        'id, word, translation, category, part_of_speech, definition, example, illustration_url, picture_friendly, series, status, vocab_text_approved',
+      )
+      .single()
+    setApproveBusyId(null)
+    if (e) {
+      setError(e.message)
+      Alert.alert('Approve failed', e.message)
+      return
+    }
+    const row = data as unknown as WordRow
+    patchRow(r.id, row)
+  }
+
+  const startVocabRecordingFromCenter = useCallback(async () => {
+    const langVals = voiceBankLanguageSqlValues()
+    const { data, error: err } = await supabase
+      .from('words')
+      .select('*')
+      .eq('series', VOCABULARY_MERGED_SERIES)
+      .eq('vocab_text_approved', true)
+      .in('language', langVals)
+      .in('status', ['pending', 'rerecord_requested'])
+      .order('word', { ascending: true })
+    if (err) {
+      setError(err.message)
+      Alert.alert('Could not load recording queue', err.message)
+      return
+    }
+    const list = normalizeRecordingWords(data ?? [])
+    if (list.length === 0) {
+      Alert.alert('Nothing to record', 'No vocabulary words are pending audio right now.')
+      return
+    }
+    navigation.navigate('Recording', {
+      words: list,
+      seriesSession: { series: VOCABULARY_MERGED_SERIES, language: VOICE_BANK_LANGUAGE },
+    })
+  }, [navigation])
+
   const performSaveEdit = async () => {
     const id = editId
     if (!id) return
@@ -290,6 +383,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       payload = {
         word: nextWord,
         translation: nextTranslation,
+        definition: editDefinition.trim() || null,
         example: editExample.trim() || null,
       }
     } else {
@@ -304,13 +398,18 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       if (clearImageForNotFriendly) {
         payload.illustration_url = null
       }
+      if (existing && isVocabularyRow(existing)) {
+        payload.vocab_text_approved = true
+      }
     }
 
     const { data, error: e } = await supabase
       .from('words')
       .update(payload)
       .eq('id', id)
-      .select('id, word, translation, category, part_of_speech, definition, example, illustration_url, picture_friendly')
+      .select(
+        'id, word, translation, category, part_of_speech, definition, example, illustration_url, picture_friendly, series, status, vocab_text_approved',
+      )
       .single()
     setEditBusy(false)
     if (e) {
@@ -537,6 +636,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       status: 'pending' as const,
       slow_audio_url: null,
       fast_audio_url: null,
+      vocab_text_approved: false,
     }
 
     const { error: insErr } = await supabase.from('words').insert(insertPayload)
@@ -699,6 +799,37 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     )
   }
 
+  const renderVoiceReviewItem = ({ item: r }: { item: WordRow }) => {
+    const busy = approveBusyId === r.id
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardMeta}>
+          <Text style={styles.oromo}>{r.word}</Text>
+          <Text style={styles.english}>{String(r.translation ?? '').trim() || '—'}</Text>
+          {r.definition?.trim() ? (
+            <Text style={styles.metaSmall}>Definition: {String(r.definition).trim()}</Text>
+          ) : null}
+          {r.example?.trim() ? (
+            <Text style={styles.metaSmall}>Sentence: {String(r.example).trim()}</Text>
+          ) : null}
+          <Text style={styles.metaSmall}>id {r.id}</Text>
+        </View>
+        <View style={styles.imageActions}>
+          <Pressable style={styles.secondaryBtn} onPress={() => openEdit(r)} disabled={busy}>
+            <Text style={styles.secondaryMuted}>Edit</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.saveBtn, { flex: 1, minWidth: 140 }, busy && styles.saveBtnDisabled]}
+            onPress={() => void approveVocabTextForRecording(r)}
+            disabled={busy}
+          >
+            {busy ? <ActivityIndicator color="#111" /> : <Text style={styles.saveBtnText}>Approve for recording</Text>}
+          </Pressable>
+        </View>
+      </View>
+    )
+  }
+
   const renderItem = ({ item: r }: { item: WordRow }) => {
     const busy = actionId === r.id
     const hasImg = Boolean(r.illustration_url)
@@ -760,6 +891,11 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               {r.part_of_speech ? ` · ${r.part_of_speech}` : ''}
               {friendly ? ' · PictureFriendly' : ' · Not picture-friendly'}
             </Text>
+            {isVocabularyRow(r) && !r.vocab_text_approved ? (
+              <View style={styles.textReviewBadge}>
+                <Text style={styles.textReviewBadgeText}>Awaiting text review</Text>
+              </View>
+            ) : null}
             <Text style={styles.metaSmall}>id {r.id}</Text>
           </View>
         </View>
@@ -782,42 +918,81 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     )
   }
 
+  const voiceInTextReview = role === 'voice' && voiceTextReviewQueue.length > 0
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
     >
-      <View style={styles.toolbar}>
-        <TextInput
-          style={styles.search}
-          placeholder="Search word, translation, category, id…"
-          placeholderTextColor="#6b7280"
-          value={query}
-          onChangeText={setQuery}
-        />
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          {FILTERS.map((f) => (
-            <Pressable
-              key={f.key}
-              onPress={() => setFilter(f.key)}
-              style={[styles.filterChip, filter === f.key && styles.filterChipOn]}
-            >
-              <Text style={[styles.filterChipText, filter === f.key && styles.filterChipTextOn]}>{f.label}</Text>
+      {voiceInTextReview ? (
+        <View style={styles.toolbar}>
+          <Text style={styles.voicePhaseTitle}>Vocabulary text review</Text>
+          <Text style={styles.modalHint}>
+            Edit or approve each entry. Nothing appears in the audio recording queue until you approve the text ({voiceTextReviewQueue.length}{' '}
+            {voiceTextReviewQueue.length === 1 ? 'word' : 'words'}).
+          </Text>
+          <TextInput
+            style={styles.search}
+            placeholder="Search this queue…"
+            placeholderTextColor="#6b7280"
+            value={query}
+            onChangeText={setQuery}
+          />
+          {canCreateVocabulary ? (
+            <Pressable style={[styles.secondaryBtn, styles.secondaryAccent, styles.newVocabToolbarBtn]} onPress={openCreateVocabulary}>
+              <Text style={styles.secondaryBtnText}>New vocabulary word</Text>
             </Pressable>
-          ))}
-        </ScrollView>
-        {canCreateVocabulary ? (
-          <Pressable style={[styles.secondaryBtn, styles.secondaryAccent, styles.newVocabToolbarBtn]} onPress={openCreateVocabulary}>
-            <Text style={styles.secondaryBtnText}>New vocabulary word</Text>
-          </Pressable>
-        ) : null}
-      </View>
+          ) : null}
+        </View>
+      ) : (
+        <>
+          {role === 'voice' ? (
+            <View style={styles.voiceRecordingBanner}>
+              <Text style={styles.voiceRecordingBannerTitle}>Text review is clear</Text>
+              <Text style={styles.voiceRecordingBannerHint}>
+                Open the recording flow for vocabulary words that are text-approved and still need slow / fast audio.
+              </Text>
+              <Pressable style={styles.saveBtn} onPress={() => void startVocabRecordingFromCenter()}>
+                <Text style={styles.saveBtnText}>Start vocabulary recording</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          <View style={styles.toolbar}>
+            <TextInput
+              style={styles.search}
+              placeholder="Search word, translation, category, id…"
+              placeholderTextColor="#6b7280"
+              value={query}
+              onChangeText={setQuery}
+            />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+              {FILTERS.map((f) => (
+                <Pressable
+                  key={f.key}
+                  onPress={() => setFilter(f.key)}
+                  style={[styles.filterChip, filter === f.key && styles.filterChipOn]}
+                >
+                  <Text style={[styles.filterChipText, filter === f.key && styles.filterChipTextOn]}>{f.label}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+            {canCreateVocabulary ? (
+              <Pressable style={[styles.secondaryBtn, styles.secondaryAccent, styles.newVocabToolbarBtn]} onPress={openCreateVocabulary}>
+                <Text style={styles.secondaryBtnText}>New vocabulary word</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </>
+      )}
 
       {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
 
       <Text style={styles.countLine}>
-        Showing {filtered.length} of {rows.length}
+        {voiceInTextReview
+          ? `Showing ${voiceReviewFiltered.length} of ${voiceTextReviewQueue.length} in text review`
+          : `Showing ${filtered.length} of ${rows.length}`}
       </Text>
 
       <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => !createBusy && setCreateOpen(false)}>
@@ -826,7 +1001,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
             <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               <Text style={styles.modalTitle}>New vocabulary word</Text>
               <Text style={styles.modalHint}>
-                Adds a row with series &quot;Vocabulary&quot; ({VOICE_BANK_LANGUAGE}). It will not appear in the voice recording queue.
+                Adds a row with series &quot;Vocabulary&quot; ({VOICE_BANK_LANGUAGE}). New rows go to text review first; after approval they join the audio queue when status is pending.
               </Text>
 
               <Text style={styles.modalLabel}>Word — Afaan Oromo</Text>
@@ -930,7 +1105,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               <Text style={styles.modalHint}>
                 {isAdmin
                   ? 'Use Change image to preview and regenerate with optional context. Category and part of speech are dropdowns; add a new category with the link below.'
-                  : 'You can edit Word (Afaan Oromo), Translation (English), and Sentence.'}
+                  : 'You can edit word (Afaan Oromo), translation (English), definition, and sentence. Saving does not approve text — use Approve for recording on the card.'}
               </Text>
 
               <Text style={styles.modalLabel}>Word — Afaan Oromo</Text>
@@ -956,6 +1131,21 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
                 autoCapitalize="sentences"
                 autoCorrect
               />
+
+              {!isAdmin ? (
+                <>
+                  <Text style={styles.modalLabel}>Definition (optional)</Text>
+                  <TextInput
+                    style={[styles.modalInput, { minHeight: 72, textAlignVertical: 'top' }]}
+                    value={editDefinition}
+                    onChangeText={setEditDefinition}
+                    placeholder="Short definition…"
+                    placeholderTextColor="#6b7280"
+                    editable={!editBusy}
+                    multiline
+                  />
+                </>
+              ) : null}
 
               {isAdmin ? (
                 <>
@@ -1064,9 +1254,9 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       {renderIllustrationModal()}
 
       <FlatList
-        data={filtered}
+        data={voiceInTextReview ? voiceReviewFiltered : filtered}
         keyExtractor={(item) => String(item.id)}
-        renderItem={renderItem}
+        renderItem={voiceInTextReview ? renderVoiceReviewItem : renderItem}
         contentContainerStyle={styles.listContent}
         initialNumToRender={10}
         windowSize={7}
@@ -1131,6 +1321,29 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(239,68,68,0.35)',
   },
   countLine: { color: '#a1a1aa', paddingHorizontal: 16, paddingVertical: 10 },
+  voicePhaseTitle: { color: '#fff', fontSize: 20, fontWeight: '900', marginBottom: 6 },
+  voiceRecordingBanner: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(212,175,55,0.22)',
+    backgroundColor: 'rgba(212,175,55,0.06)',
+    gap: 10,
+  },
+  voiceRecordingBannerTitle: { color: '#fff', fontSize: 17, fontWeight: '900' },
+  voiceRecordingBannerHint: { color: '#a1a1aa', fontSize: 13, lineHeight: 18 },
+  textReviewBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: 'rgba(251,146,60,0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(251,146,60,0.45)',
+  },
+  textReviewBadgeText: { color: '#fdba74', fontSize: 11, fontWeight: '800' },
   listContent: { padding: 16, paddingBottom: 40, gap: 16 },
   card: {
     backgroundColor: '#0b1220',

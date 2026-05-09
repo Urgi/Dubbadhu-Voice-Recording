@@ -36,8 +36,8 @@ export default function VoiceActorHomeScreen({ navigation }: Props) {
         onPress={() => navigation.navigate('VoiceActorDashboard')}
       >
         <Text style={styles.tileTitle}>Voice Recording</Text>
-        <Text style={styles.recordedLine}>Series queue (Vocabulary series excluded)</Text>
-        <Text style={styles.tileHint}>Record pending and re-requested words by series</Text>
+        <Text style={styles.recordedLine}>Vocabulary word bank + lesson series queues</Text>
+        <Text style={styles.tileHint}>Record pending and re-requested words; vocabulary is listed first</Text>
       </Pressable>
 
       <Pressable

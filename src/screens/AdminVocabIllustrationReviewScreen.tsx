@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
@@ -123,6 +123,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
 
   const [changeImageOpen, setChangeImageOpen] = useState(false)
   const [changeImageRegenContext, setChangeImageRegenContext] = useState('')
+  /** Edit word + Change image both use Modal; stacking hides the second sheet — close Edit while Change image is open, then reopen Edit when done. */
+  const reopenEditAfterChangeImageRef = useRef(false)
 
   const [illustrationModalRow, setIllustrationModalRow] = useState<WordRow | null>(null)
   const [illustrationPrompt, setIllustrationPrompt] = useState('')
@@ -732,16 +734,25 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
 
   const editingRow = editId ? rows.find((r) => r.id === editId) : null
 
+  const closeChangeImageSheet = useCallback(() => {
+    setChangeImageOpen(false)
+    setChangeImageRegenContext('')
+    if (reopenEditAfterChangeImageRef.current) {
+      reopenEditAfterChangeImageRef.current = false
+      setEditOpen(true)
+    }
+  }, [])
+
   const renderChangeImageModal = () => {
     if (!changeImageOpen || !editId || !isAdmin) return null
     const r = editingRow
     const busy = actionId === editId
     const url = r?.illustration_url?.trim() ?? null
     return (
-      <Modal visible={changeImageOpen} transparent animationType="fade" onRequestClose={() => !busy && setChangeImageOpen(false)}>
+      <Modal visible={changeImageOpen} transparent animationType="fade" onRequestClose={() => !busy && closeChangeImageSheet()}>
         <View style={styles.modalOverlay}>
           <View style={styles.illModalSheet}>
-            {renderSheetHeader('Change image', () => !busy && setChangeImageOpen(false), busy)}
+            {renderSheetHeader('Change image', () => !busy && closeChangeImageSheet(), busy)}
             <Text style={styles.modalHint}>
               Optional sentence or scene context is sent to illustration generation. Leave blank to use defaults for this word.
             </Text>
@@ -770,8 +781,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               onPress={() =>
                 void generateIllustration(editId, changeImageRegenContext, {
                   onSuccess: () => {
-                    setChangeImageOpen(false)
-                    setChangeImageRegenContext('')
+                    closeChangeImageSheet()
                   },
                 })
               }
@@ -1280,6 +1290,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
                   style={[styles.secondaryBtn, styles.secondaryAccent, { marginTop: 12 }, editBusy && styles.btnDisabled]}
                   onPress={() => {
                     setChangeImageRegenContext('')
+                    reopenEditAfterChangeImageRef.current = true
+                    setEditOpen(false)
                     setChangeImageOpen(true)
                   }}
                   disabled={editBusy}

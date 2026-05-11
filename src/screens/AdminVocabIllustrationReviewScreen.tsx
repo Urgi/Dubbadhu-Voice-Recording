@@ -84,6 +84,7 @@ function isVocabularyRow(r: Pick<WordRow, 'series'>): boolean {
 
 /** Caps modal form ScrollViews so content scrolls reliably (inner Pressable steals drags on some devices). */
 const MODAL_SCROLL_MAX_HEIGHT = Math.round(Dimensions.get('window').height * 0.82)
+const MODAL_SCROLL_HEADER_RESERVE = 56
 
 export default function AdminVocabIllustrationReviewScreen({ navigation }: Props) {
   const { role } = useAuth()
@@ -689,11 +690,29 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     await load()
   }
 
+  const renderSheetHeader = (title: string, onClose: () => void, closeDisabled?: boolean) => (
+    <View style={styles.modalHeaderRow}>
+      <Text style={styles.modalHeaderTitle} numberOfLines={1}>
+        {title}
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Close"
+        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        onPress={onClose}
+        disabled={closeDisabled}
+        style={[styles.modalCloseBtn, closeDisabled && styles.btnDisabled]}
+      >
+        <Text style={styles.modalCloseBtnText}>×</Text>
+      </Pressable>
+    </View>
+  )
+
   const renderAddCategoryModal = () => (
     <Modal visible={addCategoryModalOpen} transparent animationType="fade" onRequestClose={() => setAddCategoryModalOpen(false)}>
-      <Pressable style={styles.modalOverlay} onPress={() => setAddCategoryModalOpen(false)}>
+      <View style={styles.modalOverlay}>
         <View style={styles.pickerSheet}>
-          <Text style={styles.modalTitle}>New category</Text>
+          {renderSheetHeader('New category', () => setAddCategoryModalOpen(false))}
           <Text style={styles.modalHint}>Type a label; it will appear in the category dropdown for this and future edits.</Text>
           <TextInput
             style={styles.modalInput}
@@ -706,11 +725,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
           <Pressable style={[styles.saveBtn, { marginTop: 12 }]} onPress={confirmNewCategoryFromModal}>
             <Text style={styles.saveBtnText}>Add</Text>
           </Pressable>
-          <Pressable style={[styles.secondaryBtn, { marginTop: 10 }]} onPress={() => setAddCategoryModalOpen(false)}>
-            <Text style={styles.secondaryMuted}>Cancel</Text>
-          </Pressable>
         </View>
-      </Pressable>
+      </View>
     </Modal>
   )
 
@@ -723,9 +739,9 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     const url = r?.illustration_url?.trim() ?? null
     return (
       <Modal visible={changeImageOpen} transparent animationType="fade" onRequestClose={() => !busy && setChangeImageOpen(false)}>
-        <Pressable style={styles.modalOverlay} onPress={() => !busy && setChangeImageOpen(false)}>
+        <View style={styles.modalOverlay}>
           <View style={styles.illModalSheet}>
-            <Text style={styles.modalTitle}>Change image</Text>
+            {renderSheetHeader('Change image', () => !busy && setChangeImageOpen(false), busy)}
             <Text style={styles.modalHint}>
               Optional sentence or scene context is sent to illustration generation. Leave blank to use defaults for this word.
             </Text>
@@ -767,11 +783,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
                 Turn on PictureFriendly to generate illustrations.
               </Text>
             ) : null}
-            <Pressable style={[styles.secondaryBtn, { marginTop: 10 }, busy && styles.btnDisabled]} onPress={() => !busy && setChangeImageOpen(false)}>
-              <Text style={styles.secondaryMuted}>Close</Text>
-            </Pressable>
           </View>
-        </Pressable>
+        </View>
       </Modal>
     )
   }
@@ -783,9 +796,9 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     const hasImg = Boolean(r.illustration_url)
     return (
       <Modal visible={Boolean(illustrationModalRow)} transparent animationType="fade" onRequestClose={() => !busy && setIllustrationModalRow(null)}>
-        <Pressable style={styles.modalOverlay} onPress={() => !busy && setIllustrationModalRow(null)}>
+        <View style={styles.modalOverlay}>
           <View style={styles.illModalSheet}>
-            <Text style={styles.modalTitle}>Illustration</Text>
+            {renderSheetHeader('Illustration', () => !busy && setIllustrationModalRow(null), busy)}
             <Text style={styles.modalHint}>
               Optional prompt guides the image. Leave blank to use the default style for this word.
             </Text>
@@ -828,11 +841,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
                 <Text style={styles.dangerText}>Remove image</Text>
               </Pressable>
             ) : null}
-            <Pressable style={[styles.secondaryBtn, { marginTop: 10 }, busy && styles.btnDisabled]} onPress={() => !busy && setIllustrationModalRow(null)}>
-              <Text style={styles.secondaryMuted}>Close</Text>
-            </Pressable>
           </View>
-        </Pressable>
+        </View>
       </Modal>
     )
   }
@@ -1059,8 +1069,9 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
       </Text>
 
       <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => !createBusy && setCreateOpen(false)}>
-        <Pressable style={styles.modalOverlay} onPress={() => !createBusy && setCreateOpen(false)}>
+        <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
+            {renderSheetHeader('New vocabulary word', () => !createBusy && setCreateOpen(false), createBusy)}
             <ScrollView
               style={styles.modalBodyScroll}
               contentContainerStyle={styles.modalScrollContent}
@@ -1068,7 +1079,6 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               showsVerticalScrollIndicator
               nestedScrollEnabled
             >
-              <Text style={styles.modalTitle}>New vocabulary word</Text>
               <Text style={styles.modalHint}>
                 Adds a row with series &quot;Vocabulary&quot; ({VOICE_BANK_LANGUAGE}). New rows go to text review first; after approval they join the audio queue when status is pending.
               </Text>
@@ -1163,12 +1173,13 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               </Pressable>
             </ScrollView>
           </View>
-        </Pressable>
+        </View>
       </Modal>
 
       <Modal visible={editOpen} transparent animationType="fade" onRequestClose={() => !editBusy && setEditOpen(false)}>
-        <Pressable style={styles.modalOverlay} onPress={() => !editBusy && setEditOpen(false)}>
+        <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
+            {renderSheetHeader(isAdmin ? 'Edit word (admin)' : 'Edit word', () => !editBusy && setEditOpen(false), editBusy)}
             <ScrollView
               style={styles.modalBodyScroll}
               contentContainerStyle={styles.modalScrollContent}
@@ -1176,7 +1187,6 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               showsVerticalScrollIndicator
               nestedScrollEnabled
             >
-              <Text style={styles.modalTitle}>{isAdmin ? 'Edit word (admin)' : 'Edit word'}</Text>
               <Text style={styles.modalHint}>
                 {isAdmin
                   ? 'Use Change image to preview and regenerate with optional context. Category and part of speech are dropdowns; add a new category with the link below.'
@@ -1306,7 +1316,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               </Pressable>
             </ScrollView>
           </View>
-        </Pressable>
+        </View>
       </Modal>
 
       {renderAddCategoryModal()}
@@ -1494,6 +1504,32 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 18,
   },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 6,
+  },
+  modalHeaderTitle: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  modalCloseBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(148,163,184,0.18)',
+  },
+  modalCloseBtnText: {
+    color: '#e5e7eb',
+    fontSize: 22,
+    fontWeight: '300',
+    lineHeight: 26,
+    marginTop: -2,
+  },
   modalSheet: {
     width: '100%',
     maxWidth: 520,
@@ -1506,7 +1542,7 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   modalBodyScroll: {
-    maxHeight: MODAL_SCROLL_MAX_HEIGHT,
+    maxHeight: MODAL_SCROLL_MAX_HEIGHT - MODAL_SCROLL_HEADER_RESERVE,
   },
   modalScrollContent: {
     paddingBottom: 28,

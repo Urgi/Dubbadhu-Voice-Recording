@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -80,6 +81,9 @@ const PART_OF_SPEECH_OPTIONS: { value: string; label: string }[] = [
 function isVocabularyRow(r: Pick<WordRow, 'series'>): boolean {
   return String(r.series ?? '').trim().toLowerCase() === 'vocabulary'
 }
+
+/** Caps modal form ScrollViews so content scrolls reliably (inner Pressable steals drags on some devices). */
+const MODAL_SCROLL_MAX_HEIGHT = Math.round(Dimensions.get('window').height * 0.82)
 
 export default function AdminVocabIllustrationReviewScreen({ navigation }: Props) {
   const { role } = useAuth()
@@ -688,7 +692,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
   const renderAddCategoryModal = () => (
     <Modal visible={addCategoryModalOpen} transparent animationType="fade" onRequestClose={() => setAddCategoryModalOpen(false)}>
       <Pressable style={styles.modalOverlay} onPress={() => setAddCategoryModalOpen(false)}>
-        <Pressable style={styles.pickerSheet} onPress={() => {}}>
+        <View style={styles.pickerSheet}>
           <Text style={styles.modalTitle}>New category</Text>
           <Text style={styles.modalHint}>Type a label; it will appear in the category dropdown for this and future edits.</Text>
           <TextInput
@@ -705,7 +709,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
           <Pressable style={[styles.secondaryBtn, { marginTop: 10 }]} onPress={() => setAddCategoryModalOpen(false)}>
             <Text style={styles.secondaryMuted}>Cancel</Text>
           </Pressable>
-        </Pressable>
+        </View>
       </Pressable>
     </Modal>
   )
@@ -720,7 +724,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     return (
       <Modal visible={changeImageOpen} transparent animationType="fade" onRequestClose={() => !busy && setChangeImageOpen(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => !busy && setChangeImageOpen(false)}>
-          <Pressable style={styles.illModalSheet} onPress={() => {}}>
+          <View style={styles.illModalSheet}>
             <Text style={styles.modalTitle}>Change image</Text>
             <Text style={styles.modalHint}>
               Optional sentence or scene context is sent to illustration generation. Leave blank to use defaults for this word.
@@ -766,7 +770,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
             <Pressable style={[styles.secondaryBtn, { marginTop: 10 }, busy && styles.btnDisabled]} onPress={() => !busy && setChangeImageOpen(false)}>
               <Text style={styles.secondaryMuted}>Close</Text>
             </Pressable>
-          </Pressable>
+          </View>
         </Pressable>
       </Modal>
     )
@@ -780,7 +784,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     return (
       <Modal visible={Boolean(illustrationModalRow)} transparent animationType="fade" onRequestClose={() => !busy && setIllustrationModalRow(null)}>
         <Pressable style={styles.modalOverlay} onPress={() => !busy && setIllustrationModalRow(null)}>
-          <Pressable style={styles.illModalSheet} onPress={() => {}}>
+          <View style={styles.illModalSheet}>
             <Text style={styles.modalTitle}>Illustration</Text>
             <Text style={styles.modalHint}>
               Optional prompt guides the image. Leave blank to use the default style for this word.
@@ -827,7 +831,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
             <Pressable style={[styles.secondaryBtn, { marginTop: 10 }, busy && styles.btnDisabled]} onPress={() => !busy && setIllustrationModalRow(null)}>
               <Text style={styles.secondaryMuted}>Close</Text>
             </Pressable>
-          </Pressable>
+          </View>
         </Pressable>
       </Modal>
     )
@@ -1056,8 +1060,14 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
 
       <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => !createBusy && setCreateOpen(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => !createBusy && setCreateOpen(false)}>
-          <Pressable style={styles.modalSheet} onPress={() => {}}>
-            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={styles.modalSheet}>
+            <ScrollView
+              style={styles.modalBodyScroll}
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              nestedScrollEnabled
+            >
               <Text style={styles.modalTitle}>New vocabulary word</Text>
               <Text style={styles.modalHint}>
                 Adds a row with series &quot;Vocabulary&quot; ({VOICE_BANK_LANGUAGE}). New rows go to text review first; after approval they join the audio queue when status is pending.
@@ -1152,14 +1162,20 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
                 <Text style={styles.secondaryMuted}>Cancel</Text>
               </Pressable>
             </ScrollView>
-          </Pressable>
+          </View>
         </Pressable>
       </Modal>
 
       <Modal visible={editOpen} transparent animationType="fade" onRequestClose={() => !editBusy && setEditOpen(false)}>
         <Pressable style={styles.modalOverlay} onPress={() => !editBusy && setEditOpen(false)}>
-          <Pressable style={styles.modalSheet} onPress={() => {}}>
-            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={styles.modalSheet}>
+            <ScrollView
+              style={styles.modalBodyScroll}
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              nestedScrollEnabled
+            >
               <Text style={styles.modalTitle}>{isAdmin ? 'Edit word (admin)' : 'Edit word'}</Text>
               <Text style={styles.modalHint}>
                 {isAdmin
@@ -1289,7 +1305,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
                 <Text style={styles.secondaryMuted}>Cancel</Text>
               </Pressable>
             </ScrollView>
-          </Pressable>
+          </View>
         </Pressable>
       </Modal>
 
@@ -1482,11 +1498,18 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 520,
     maxHeight: '88%',
+    overflow: 'hidden',
     backgroundColor: '#0b1220',
     borderRadius: 14,
     borderWidth: 1,
     borderColor: 'rgba(212,175,55,0.18)',
     padding: 14,
+  },
+  modalBodyScroll: {
+    maxHeight: MODAL_SCROLL_MAX_HEIGHT,
+  },
+  modalScrollContent: {
+    paddingBottom: 28,
   },
   pickerSheet: {
     width: '100%',

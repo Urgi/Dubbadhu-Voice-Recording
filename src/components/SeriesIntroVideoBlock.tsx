@@ -8,9 +8,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native'
+import { AdminTextInput } from './AdminTextInput'
 import {
   VIDEOS_DUBBADHU_BUCKET,
   listVideosDubbadhuBucket,
@@ -131,7 +131,7 @@ export default function SeriesIntroVideoBlock({
         <Pressable style={styles.overlay} onPress={() => setBrowseOpen(false)}>
           <Pressable style={styles.sheet} onPress={() => {}}>
             <Text style={styles.sheetTitle}>Videos in {VIDEOS_DUBBADHU_BUCKET}</Text>
-            <TextInput
+            <AdminTextInput
               style={styles.input}
               value={filterQ}
               onChangeText={setFilterQ}

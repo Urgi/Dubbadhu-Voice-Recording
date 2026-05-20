@@ -582,7 +582,6 @@ export function sanitizeAudioExposureWordTokenForPersistence(
   return out
 }
 
-/** Admin / save gate: learner requires a bank `word_id` on every audioExposure token. */
 export type AudioExposureWordIdGap = {
   /** 0-based index in `lesson.screens` */
   screenIndex: number
@@ -592,9 +591,56 @@ export type AudioExposureWordIdGap = {
   label: string
 }
 
+function audioExposureAfaanFromRec(rec: Record<string, unknown>): string {
+  return String(rec.word ?? (rec as { oromo?: string }).oromo ?? (rec as { text?: string }).text ?? '').trim()
+}
+
+function audioExposureGlossFromRec(rec: Record<string, unknown>): string {
+  return String(rec.translation ?? rec.english ?? '').trim()
+}
+
+/**
+ * Lesson / screen save while series is still draft: require Afaan + translation (or an existing `word_id`).
+ * New phrases stay as `draftTokenId` in JSON until **Approve Series** inserts `words` rows and backfills ids.
+ */
+export function findAudioExposureWordsBlockingLessonSave(screens: LessonScreen[]): AudioExposureWordIdGap[] {
+  const out: AudioExposureWordIdGap[] = []
+  screens.forEach((s, si) => {
+    if (s.type !== 'audioExposure') return
+    const words = (s.content as Record<string, unknown>).words
+    if (!Array.isArray(words)) return
+    words.forEach((w, wi) => {
+      if (w == null || typeof w !== 'object' || Array.isArray(w)) return
+      const rec = w as Record<string, unknown>
+      const wid = String(rec.word_id ?? '').trim().toLowerCase()
+      if (UUID_RE_FOR_WORD_ROW.test(wid)) return
+      const afaan = audioExposureAfaanFromRec(rec)
+      const gloss = audioExposureGlossFromRec(rec)
+      const label = afaan.slice(0, 48) || `row ${wi + 1}`
+      if (!afaan || !gloss) {
+        out.push({ screenIndex: si, wordIndex: wi, label })
+      }
+    })
+  })
+  return out
+}
+
+/** Human-readable checklist when saving a lesson screen (draft phrases allowed). */
+export function formatAudioExposureDraftGapsForLessonSave(gaps: AudioExposureWordIdGap[]): string {
+  if (gaps.length === 0) return ''
+  const lines = gaps
+    .slice(0, 14)
+    .map(
+      (g) =>
+        `• Screen ${g.screenIndex + 1} (Listen & Learn), word ${g.wordIndex + 1}: “${g.label}” — add Afaan Oromo and translation`,
+    )
+  const more = gaps.length > 14 ? `\n… +${gaps.length - 14} more` : ''
+  return `${lines.join('\n')}${more}`
+}
+
 /**
  * Returns exposure `words[]` rows that do not have a UUID `word_id` (not linked to `public.words`).
- * Pass the same `screens` shape you would save (after celebrate sync if you use it).
+ * Use before **Approve Series** (after seed/backfill) or for published curriculum checks — not for draft lesson saves.
  */
 export function findAudioExposureWordsMissingWordId(screens: LessonScreen[]): AudioExposureWordIdGap[] {
   const out: AudioExposureWordIdGap[] = []

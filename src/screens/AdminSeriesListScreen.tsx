@@ -8,9 +8,9 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native'
+import { AdminTextInput } from '../components/AdminTextInput'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { SeriesTileCard } from '../components/SeriesTileCard'
 import {
@@ -175,7 +175,7 @@ export default function AdminSeriesListScreen({ navigation }: Props) {
         <Pressable style={styles.modalBackdrop} onPress={() => setCreateOpen(false)}>
           <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.modalTitle}>New series</Text>
-            <TextInput
+            <AdminTextInput
               style={styles.modalInput}
               value={newSeriesName}
               onChangeText={setNewSeriesName}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { AdminTextInput } from '../AdminTextInput'
 import { normalizeDialogueContent } from '../../lib/lessonEditor'
 
 type Props = {
@@ -340,7 +341,7 @@ export function DialogueTwoPersonEditor({
       </Text>
       <Text style={styles.sectionTitle}>Names</Text>
       <Text style={styles.fieldLabel}>Person 1</Text>
-      <TextInput
+      <AdminTextInput
         style={styles.input}
         value={name1}
         onChangeText={(t) => setPerson(1, { name: t })}
@@ -349,7 +350,7 @@ export function DialogueTwoPersonEditor({
         editable={!readOnly}
       />
       <Text style={styles.fieldLabel}>Person 2</Text>
-      <TextInput
+      <AdminTextInput
         style={styles.input}
         value={name2}
         onChangeText={(t) => setPerson(2, { name: t })}
@@ -376,23 +377,21 @@ export function DialogueTwoPersonEditor({
                 )}
               </View>
               <Text style={styles.fieldLabel}>Line</Text>
-              <TextInput
+              <AdminTextInput
                 style={styles.input}
                 value={row.text}
                 onChangeText={(t) => updateLineText(row.speaker, row.lineIndex, t)}
                 placeholder="Afaan Oromo"
                 placeholderTextColor="#888"
-                multiline
                 editable={!readOnly}
               />
               <Text style={styles.fieldLabel}>Translation</Text>
-              <TextInput
+              <AdminTextInput
                 style={styles.transInput}
                 value={row.trans}
                 onChangeText={(t) => updateTranslation(row.speaker, row.lineIndex, t)}
                 placeholder="English"
                 placeholderTextColor="#666"
-                multiline
                 editable={!readOnly}
               />
             </View>
@@ -423,22 +422,20 @@ export function DialogueTwoPersonEditor({
             </Pressable>
           </View>
           <Text style={styles.fieldLabel}>Line</Text>
-          <TextInput
+          <AdminTextInput
             style={styles.input}
             value={draftLine}
             onChangeText={setDraftLine}
             placeholder="Afaan Oromo"
             placeholderTextColor="#888"
-            multiline
           />
           <Text style={styles.fieldLabel}>Translation</Text>
-          <TextInput
+          <AdminTextInput
             style={styles.input}
             value={draftTranslation}
             onChangeText={setDraftTranslation}
             placeholder="English"
             placeholderTextColor="#888"
-            multiline
           />
           <Pressable style={styles.addBtn} onPress={addLine}>
             <Text style={styles.addBtnText}>Add line</Text>

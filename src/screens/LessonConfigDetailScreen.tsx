@@ -8,9 +8,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native'
+import { AdminTextInput } from '../components/AdminTextInput'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { usePreventRemove } from '@react-navigation/native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
@@ -29,8 +29,8 @@ import {
   buildAddScreenOptionsForCurriculumEditor,
   defaultScreen,
   findAudioExposureWordRecordByDraftTokenId,
-  findAudioExposureWordsMissingWordId,
-  formatAudioExposureWordIdGapsForAdmin,
+  findAudioExposureWordsBlockingLessonSave,
+  formatAudioExposureDraftGapsForLessonSave,
   parseLessonContent,
   looksLikeWordsRowUuid,
   sanitizeLessonScreensForSave,
@@ -543,10 +543,10 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
           throw new Error('Invalid lesson content: need non-empty screens array with valid screen types.')
         }
         const syncedJson = syncCelebrateScreensWithAudioExposure(d.screens)
-        const gapsJson = findAudioExposureWordsMissingWordId(syncedJson)
+        const gapsJson = findAudioExposureWordsBlockingLessonSave(syncedJson)
         if (gapsJson.length > 0) {
           throw new Error(
-            `Link every Audio exposure row to the word bank (word_id required).\n\n${formatAudioExposureWordIdGapsForAdmin(gapsJson)}`,
+            `Complete every Audio exposure row (Afaan + translation).\n\n${formatAudioExposureDraftGapsForLessonSave(gapsJson)}`,
           )
         }
         const screensSynced = sanitizeLessonScreensForSave(syncedJson)
@@ -569,10 +569,10 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
           }
         }
         const syncedDraft = syncCelebrateScreensWithAudioExposure(draft.screens)
-        const gapsDraft = findAudioExposureWordsMissingWordId(syncedDraft)
+        const gapsDraft = findAudioExposureWordsBlockingLessonSave(syncedDraft)
         if (gapsDraft.length > 0) {
           throw new Error(
-            `Link every Audio exposure row to the word bank (word_id required).\n\n${formatAudioExposureWordIdGapsForAdmin(gapsDraft)}`,
+            `Complete every Audio exposure row (Afaan + translation).\n\n${formatAudioExposureDraftGapsForLessonSave(gapsDraft)}`,
           )
         }
         const merged = stripUndefined({
@@ -868,9 +868,9 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
             ) : null}
             <Text style={styles.meta}>id: {row.id} (locked)</Text>
             <AdminSectionHeader label="Full lesson content (JSON)" emphasis="gold" />
-            <TextInput
+            <AdminTextInput
               style={styles.rawJson}
-              multiline
+              allowMultiline
               editable={lessonContentEditable}
               value={rawJson}
               onChangeText={(t) => {
@@ -1006,7 +1006,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
           <AdminSectionHeader label="Lesson" emphasis="gold" />
           <View style={styles.lessonCard}>
             <Text style={styles.cardFieldLabel}>Title</Text>
-            <TextInput
+            <AdminTextInput
               style={styles.cardInput}
               editable={lessonContentEditable}
               value={draft.title}
@@ -1020,7 +1020,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
           </View>
           <View style={styles.lessonCard}>
             <Text style={styles.cardFieldLabel}>Goal (intro)</Text>
-            <TextInput
+            <AdminTextInput
               style={[styles.cardInput, styles.cardInputMultiline]}
               editable={lessonContentEditable}
               value={getIntroGoal(draft.screens)}
@@ -1030,7 +1030,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
               }}
               placeholder="What learners should achieve on the first screen"
               placeholderTextColor="#52525b"
-              multiline
+              allowMultiline
               textAlignVertical="top"
             />
             <Text style={styles.cardFieldHint}>Shown on the intro screen; intro is not listed below.</Text>

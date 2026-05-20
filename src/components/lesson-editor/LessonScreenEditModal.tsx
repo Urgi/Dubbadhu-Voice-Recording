@@ -21,9 +21,9 @@ import {
   StyleSheet,
   Switch,
   Text,
-  TextInput,
   View,
 } from 'react-native'
+import { AdminTextInput } from '../AdminTextInput'
 import type { LessonScreen } from '../../lib/lessonEditor'
 import {
   SCREEN_TYPE_OPTIONS,
@@ -35,8 +35,8 @@ import {
   celebrateSanitizedLearnedExtra,
   mergeCelebrateLearnedFromExposureAndExtra,
   finalizeScreenContentPayload,
-  findAudioExposureWordsMissingWordId,
-  formatAudioExposureWordIdGapsForAdmin,
+  findAudioExposureWordsBlockingLessonSave,
+  formatAudioExposureDraftGapsForLessonSave,
   listAudioExposureLinkOptionsFromScreens,
   normalizeAudioExposureContentForEdit,
   normalizeDialogueContent,
@@ -514,7 +514,7 @@ function LessonAndSeriesWordPicker({
     <View style={styles.wordPicker}>
       {label?.trim() ? <Text style={styles.label}>{label}</Text> : null}
       {hint ? <Text style={styles.hint}>{hint}</Text> : null}
-      <TextInput
+      <AdminTextInput
         style={styles.input}
         value={q}
         onChangeText={setQ}
@@ -758,7 +758,7 @@ function VideoReviewDubbadhuVideoField({
         <Pressable style={styles.quizCorrectOverlay} onPress={() => setBrowseOpen(false)}>
           <Pressable style={[styles.quizCorrectSheet, { maxHeight: 520 }]} onPress={() => {}}>
             <Text style={styles.personTitle}>Videos in {VIDEOS_DUBBADHU_BUCKET}</Text>
-            <TextInput
+            <AdminTextInput
               style={styles.input}
               value={filterQ}
               onChangeText={setFilterQ}
@@ -959,13 +959,13 @@ function WordDiscriminationSceneImageField({
             1–2 sentences for your team: why this picture fits this question (stored with the lesson; not shown to
             learners).
           </Text>
-          <TextInput
+          <AdminTextInput
             style={[styles.input, { minHeight: 72, textAlignVertical: 'top' }]}
             value={ctx}
             onChangeText={(t) => applyScenePatch({ imageContext: t })}
             placeholder="e.g. Shows the contrast we need between greeting vs. farewell…"
             placeholderTextColor="#52525b"
-            multiline
+            allowMultiline
           />
         </View>
       ) : null}
@@ -979,7 +979,7 @@ function WordDiscriminationSceneImageField({
                 <Text style={styles.hint}>
                   Filter by file name, tap a row to preview, then add optional context and confirm.
                 </Text>
-                <TextInput
+                <AdminTextInput
                   style={styles.input}
                   value={filterQ}
                   onChangeText={setFilterQ}
@@ -1057,13 +1057,13 @@ function WordDiscriminationSceneImageField({
                 ) : null}
                 <Text style={[styles.label, { marginTop: 12 }]}>Context (optional)</Text>
                 <Text style={styles.hint}>1–2 sentences — why this image fits this comparison.</Text>
-                <TextInput
+                <AdminTextInput
                   style={[styles.input, { minHeight: 88, textAlignVertical: 'top' }]}
                   value={browseContextDraft}
                   onChangeText={setBrowseContextDraft}
                   placeholder="Optional note for your team…"
                   placeholderTextColor="#52525b"
-                  multiline
+                  allowMultiline
                 />
                 <Pressable
                   style={[styles.addBtn, { marginTop: 10 }]}
@@ -1112,13 +1112,13 @@ function WordDiscriminationSceneImageField({
               1–2 sentences for your team: what to add in Storage. Learners see this text until an image is set. You can
               also generate a draft with Gemini (same API key as document word extraction) and upload it to this bucket.
             </Text>
-            <TextInput
+            <AdminTextInput
               style={[styles.input, { minHeight: 88, textAlignVertical: 'top' }]}
               value={requestDraft}
               onChangeText={setRequestDraft}
               placeholder="Short description — e.g. Two people at a market stall, clear facial expressions…"
               placeholderTextColor="#52525b"
-              multiline
+              allowMultiline
               editable={!geminiBusy}
             />
             {geminiBusy ? (
@@ -1463,7 +1463,6 @@ function WordDiscriminationQuizEditor({
       <Field
         label="Title Question"
         value={String(content.question ?? content.title ?? content.prompt ?? '')}
-        multiline
         onChangeText={(t) => setContent((cur) => ({ ...cur, question: t }))}
       />
       <Text style={styles.label}>Words on this screen</Text>
@@ -1575,7 +1574,7 @@ function WordDiscriminationQuizEditor({
             <Field
               label="Explanation (after answering)"
               value={String(sc.explanation ?? '')}
-              multiline
+              allowMultiline
               onChangeText={(t) => {
                 setContent((cur) => {
                   const arr = [...((cur.scenes as Record<string, unknown>[]) ?? [])]
@@ -1678,7 +1677,7 @@ function WordBankPicker({
       <Text style={styles.label}>{label}</Text>
       {value ? <Text style={styles.wordPicked}>{wordLabel(value)}</Text> : <Text style={styles.wordNone}>None</Text>}
       {ro ? null : (
-      <TextInput
+      <AdminTextInput
         style={styles.input}
         value={q}
         onChangeText={setQ}
@@ -1810,7 +1809,7 @@ function AudioExposureOromoField({
       {hideLabel ? null : (
         <Text style={[styles.label, compact && styles.labelVideoReviewCompact]}>Afaan Oromo</Text>
       )}
-      <TextInput
+      <AdminTextInput
         style={[
           styles.input,
           compact && styles.inputVideoReviewCompact,
@@ -2222,11 +2221,11 @@ export function LessonScreenEditModal({
       if (!d) return
       const content = finalizeScreenContentPayload(d.type, parsed)
       if (d.type === 'audioExposure') {
-        const gaps = findAudioExposureWordsMissingWordId([
+        const gaps = findAudioExposureWordsBlockingLessonSave([
           { type: 'audioExposure', content } as LessonScreen,
         ])
         if (gaps.length > 0) {
-          setJsonError(formatAudioExposureWordIdGapsForAdmin(gaps))
+          setJsonError(formatAudioExposureDraftGapsForLessonSave(gaps))
           return
         }
       }
@@ -2241,11 +2240,11 @@ export function LessonScreenEditModal({
     const d = draftRef.current
     if (!d) return
     if (d.type === 'audioExposure') {
-      const gaps = findAudioExposureWordsMissingWordId([
+      const gaps = findAudioExposureWordsBlockingLessonSave([
         { type: 'audioExposure', content } as LessonScreen,
       ])
       if (gaps.length > 0) {
-        setJsonError(formatAudioExposureWordIdGapsForAdmin(gaps))
+        setJsonError(formatAudioExposureDraftGapsForLessonSave(gaps))
         return
       }
     }
@@ -2373,7 +2372,7 @@ export function LessonScreenEditModal({
             <Text style={styles.label}>Bullets (max 3)</Text>
             {bullets.map((b, i) => (
               <View key={i} style={styles.bulletRow}>
-                <TextInput
+                <AdminTextInput
                   style={styles.bulletInput}
                   value={String(b ?? '')}
                   onChangeText={(t) => {
@@ -2648,7 +2647,6 @@ export function LessonScreenEditModal({
                       <Field
                         label="Question"
                         value={String(q.question ?? '')}
-                        multiline
                         onChangeText={(t) => {
                           setContent((cur) => patchQuizQuestionInContent(cur, qIdx, (row) => ({ ...row, question: t })))
                         }}
@@ -2735,7 +2733,7 @@ export function LessonScreenEditModal({
                       <Field
                         label="Explanation (optional)"
                         value={String(q.explanation ?? '')}
-                        multiline
+                        allowMultiline
                         onChangeText={(t) => {
                           setContent((cur) => patchQuizQuestionInContent(cur, qIdx, (row) => ({ ...row, explanation: t })))
                         }}
@@ -2923,7 +2921,9 @@ export function LessonScreenEditModal({
               setJsonError('')
               const current = draftRef.current
               if (!current) return
-              const c2 = current.content as Record<string, unknown>
+              const c2 = normalizeAudioExposureContentForEdit(
+                current.content as Record<string, unknown>,
+              )
               const ws = (c2.words as Record<string, unknown>[] | undefined) ?? []
               if (!Array.isArray(ws) || ws.length < 1) {
                 setJsonError(
@@ -2943,11 +2943,11 @@ export function LessonScreenEditModal({
                     promptTranslationConflict,
                   )
                 : (ws as Record<string, unknown>[])
-              const gaps = findAudioExposureWordsMissingWordId([
+              const gaps = findAudioExposureWordsBlockingLessonSave([
                 { type: 'audioExposure', content: { ...c2, words: resolvedWords } } as LessonScreen,
               ])
               if (gaps.length > 0) {
-                setJsonError(formatAudioExposureWordIdGapsForAdmin(gaps))
+                setJsonError(formatAudioExposureDraftGapsForLessonSave(gaps))
                 return
               }
               setTranslationConflict(null)
@@ -2972,8 +2972,9 @@ export function LessonScreenEditModal({
             ) : null}
             {words.length ? (
               <Text style={styles.hint}>
-                Each row must be linked to the word bank (tap a match) so the lesson stores a valid word_id and
-                learner audio URLs work. Free-typed text alone cannot be saved for this screen.
+                Type Afaan Oromo and translation for each row. Linking from search is optional while you draft the
+                series — Approve Series adds new phrases to the voice bank and recording queue. If a phrase already
+                exists, tap a search match to attach its word_id early.
               </Text>
             ) : null}
             {words.map((w, i) => (
@@ -3064,7 +3065,7 @@ export function LessonScreenEditModal({
                   const ws = (cur.words as Record<string, unknown>[]) ?? []
                   return {
                     ...cur,
-                    words: [...ws, { word: '', english: '', draftTokenId: newDraftTokenId() }],
+                    words: [...ws, { word: '', translation: '', draftTokenId: newDraftTokenId() }],
                   }
                 })
               }
@@ -3103,7 +3104,7 @@ export function LessonScreenEditModal({
         }
         return (
           <View style={styles.form}>
-            <Field label="Message" value={String(c.message ?? '')} multiline onChangeText={(t) => setContent((cur) => ({ ...cur, message: t }))} />
+            <Field label="Message" value={String(c.message ?? '')} allowMultiline onChangeText={(t) => setContent((cur) => ({ ...cur, message: t }))} />
             <View style={styles.learnedBlock}>
               <Text style={styles.label}>From Audio exposure</Text>
               <Text style={styles.hint}>
@@ -3130,7 +3131,7 @@ export function LessonScreenEditModal({
               </Text>
               {extraRows.map((ex, i) => (
                 <View key={`celebrate-extra-${i}`} style={styles.bulletRow}>
-                  <TextInput
+                  <AdminTextInput
                     style={styles.bulletInput}
                     value={ex}
                     onChangeText={(t) => {
@@ -3203,7 +3204,7 @@ export function LessonScreenEditModal({
 
         return (
           <View style={styles.form}>
-            <Field label="Prompt" value={String(ex0.prompt ?? '')} multiline onChangeText={(t) => patchEx0((e0) => ({ ...e0, prompt: t }))} />
+            <Field label="Prompt" value={String(ex0.prompt ?? '')} allowMultiline onChangeText={(t) => patchEx0((e0) => ({ ...e0, prompt: t }))} />
             <Text style={styles.label}>Options (pick from word bank)</Text>
             <Text style={styles.hint}>Same flow as quiz options, but stored as plain text (no audio).</Text>
             {options.map((opt, i) => (
@@ -3257,7 +3258,7 @@ export function LessonScreenEditModal({
             <Field
               label="Explanation (optional)"
               value={String(ex0.explanation ?? '')}
-              multiline
+              allowMultiline
               onChangeText={(t) => patchEx0((e0) => ({ ...e0, explanation: t }))}
             />
 
@@ -3354,7 +3355,6 @@ export function LessonScreenEditModal({
             <Field
               label="Original phrase"
               value={String(c.original ?? '')}
-              multiline
               multilineCompact
               onChangeText={(t) =>
                 setContent((cur) => {
@@ -3369,7 +3369,7 @@ export function LessonScreenEditModal({
               <View key={`wb-${i}`} style={styles.bulletRow}>
                 <View style={{ flex: 1, marginRight: 8 }}>
                   <Text style={styles.matchRightPreviewLabel}>Word</Text>
-                  <TextInput
+                  <AdminTextInput
                     style={styles.bulletInput}
                     value={String(row.word ?? '')}
                     onChangeText={(t) => {
@@ -3386,7 +3386,7 @@ export function LessonScreenEditModal({
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.matchRightPreviewLabel}>Translation</Text>
-                  <TextInput
+                  <AdminTextInput
                     style={styles.bulletInput}
                     value={String(row.translation ?? '')}
                     onChangeText={(t) => {
@@ -3431,7 +3431,6 @@ export function LessonScreenEditModal({
             <Field
               label="Tip (optional)"
               value={String(c.tip ?? '')}
-              multiline
               multilineCompact
               onChangeText={(t) => setContent((cur) => ({ ...cur, tip: t }))}
             />
@@ -3552,7 +3551,6 @@ export function LessonScreenEditModal({
                         <Field
                           label="Line text"
                           value={text}
-                          multiline
                           multilineCompact
                           onFocus={() => {
                             setVideoReviewActiveLineId(id)
@@ -3790,9 +3788,9 @@ export function LessonScreenEditModal({
             <>
               <Text style={styles.advancedLabel}>Screen content (JSON)</Text>
               {jsonError ? <Text style={styles.jsonErr}>{jsonError}</Text> : null}
-              <TextInput
+              <AdminTextInput
                 style={styles.jsonInput}
-                multiline
+                allowMultiline
                 value={jsonFallback}
                 onChangeText={(t) => {
                   setJsonFallback(t)
@@ -3831,33 +3829,38 @@ function Field(props: {
   label: string
   value: string
   onChangeText: (t: string) => void
-  multiline?: boolean
-  /** Multiline with ~one-line min height; scrolls when content exceeds max height. */
+  /** Return adds new lines (scripts, long notes). Default: Done dismisses keyboard. */
+  allowMultiline?: boolean
+  /** Taller field that scrolls; still uses Done (not Return) unless `allowMultiline`. */
   multilineCompact?: boolean
+  /** @deprecated Use `allowMultiline` */
+  multiline?: boolean
   keyboardType?: 'default' | 'number-pad'
   onFocus?: () => void
   editable?: boolean
 }) {
   const ro = useLessonEditorReadOnly()
-  const ml = !!props.multiline
+  const allowMl = props.allowMultiline === true || props.multiline === true
   const compact = !!props.multilineCompact
+  const useMultilineLayout = allowMl || compact
   const editable = props.editable !== false && !ro
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{props.label}</Text>
-      <TextInput
+      <AdminTextInput
         style={[
           styles.input,
-          ml && !compact && styles.inputMulti,
-          ml && compact && styles.inputMultiCompact,
+          useMultilineLayout && !compact && styles.inputMulti,
+          compact && styles.inputMultiCompact,
           !editable && styles.inputReadOnlyBank,
         ]}
         value={props.value}
         editable={editable}
         onChangeText={props.onChangeText}
         onFocus={props.onFocus}
-        multiline={ml}
-        scrollEnabled={ml && compact}
+        allowMultiline={allowMl}
+        multiline={useMultilineLayout}
+        scrollEnabled={compact}
         keyboardType={props.keyboardType}
         placeholderTextColor="#52525b"
       />

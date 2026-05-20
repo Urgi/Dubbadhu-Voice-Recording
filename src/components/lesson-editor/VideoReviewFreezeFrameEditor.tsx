@@ -1,6 +1,7 @@
 import * as VideoThumbnails from 'expo-video-thumbnails'
 import { useEffect, useMemo, useState } from 'react'
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native'
+import { AdminTextInput } from '../AdminTextInput'
 
 type SetContent = (patch: Record<string, unknown> | ((cur: Record<string, unknown>) => Record<string, unknown>)) => void
 
@@ -183,7 +184,7 @@ export function VideoReviewFreezeFrameEditor({
       </View>
 
       <Text style={styles.subLabel}>Background at (seconds), optional</Text>
-      <TextInput
+      <AdminTextInput
         style={styles.input}
         value={freezeDraft}
         onChangeText={onFreezeSecondText}

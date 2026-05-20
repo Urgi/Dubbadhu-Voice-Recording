@@ -13,9 +13,9 @@ import {
   StyleSheet,
   Switch,
   Text,
-  TextInput,
   View,
 } from 'react-native'
+import { AdminTextInput } from '../components/AdminTextInput'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { Picker } from '@react-native-picker/picker'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
@@ -716,7 +716,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
         <View style={styles.pickerSheet}>
           {renderSheetHeader('New category', () => setAddCategoryModalOpen(false))}
           <Text style={styles.modalHint}>Type a label; it will appear in the category dropdown for this and future edits.</Text>
-          <TextInput
+          <AdminTextInput
             style={styles.modalInput}
             value={newCategoryDraft}
             onChangeText={setNewCategoryDraft}
@@ -766,13 +766,13 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               )}
             </View>
             <Text style={styles.modalLabel}>Context for regeneration</Text>
-            <TextInput
+            <AdminTextInput
               style={[styles.modalInput, { minHeight: 72, textAlignVertical: 'top' }]}
               value={changeImageRegenContext}
               onChangeText={setChangeImageRegenContext}
               placeholder="e.g. classroom scene, outdoor market…"
               placeholderTextColor="#6b7280"
-              multiline
+              allowMultiline
               editable={!busy}
             />
             <Pressable
@@ -826,13 +826,13 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               )}
             </Pressable>
             <Text style={styles.modalLabel}>Prompt for new image</Text>
-            <TextInput
+            <AdminTextInput
               style={[styles.modalInput, { minHeight: 72, textAlignVertical: 'top' }]}
               value={illustrationPrompt}
               onChangeText={setIllustrationPrompt}
               placeholder='e.g. "child holding umbrella in rain"'
               placeholderTextColor="#6b7280"
-              multiline
+              allowMultiline
               editable={!busy}
             />
             <Pressable
@@ -1016,7 +1016,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
             Edit or approve each entry. Nothing appears in the audio recording queue until you approve the text ({voiceTextReviewQueue.length}{' '}
             {voiceTextReviewQueue.length === 1 ? 'word' : 'words'}).
           </Text>
-          <TextInput
+          <AdminTextInput
             style={styles.search}
             placeholder="Search this queue…"
             placeholderTextColor="#6b7280"
@@ -1043,7 +1043,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
             </View>
           ) : null}
           <View style={styles.toolbar}>
-            <TextInput
+            <AdminTextInput
               style={styles.search}
               placeholder="Search word, translation, category, id…"
               placeholderTextColor="#6b7280"
@@ -1094,7 +1094,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               </Text>
 
               <Text style={styles.modalLabel}>Word — Afaan Oromo</Text>
-              <TextInput
+              <AdminTextInput
                 style={styles.modalInput}
                 value={createWord}
                 onChangeText={setCreateWord}
@@ -1106,7 +1106,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               />
 
               <Text style={styles.modalLabel}>Translation — English</Text>
-              <TextInput
+              <AdminTextInput
                 style={styles.modalInput}
                 value={createTranslation}
                 onChangeText={setCreateTranslation}
@@ -1161,14 +1161,14 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               </View>
 
               <Text style={styles.modalLabel}>Sentence</Text>
-              <TextInput
+              <AdminTextInput
                 style={[styles.modalInput, { minHeight: 88, textAlignVertical: 'top' }]}
                 value={createExample}
                 onChangeText={setCreateExample}
                 placeholder="Example sentence…"
                 placeholderTextColor="#6b7280"
                 editable={!createBusy}
-                multiline
+                allowMultiline
               />
 
               <Pressable
@@ -1204,7 +1204,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               </Text>
 
               <Text style={styles.modalLabel}>Word — Afaan Oromo</Text>
-              <TextInput
+              <AdminTextInput
                 style={styles.modalInput}
                 value={editWord}
                 onChangeText={setEditWord}
@@ -1216,7 +1216,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               />
 
               <Text style={styles.modalLabel}>Translation — English</Text>
-              <TextInput
+              <AdminTextInput
                 style={styles.modalInput}
                 value={editTranslation}
                 onChangeText={setEditTranslation}
@@ -1275,14 +1275,14 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
               ) : null}
 
               <Text style={styles.modalLabel}>Sentence</Text>
-              <TextInput
+              <AdminTextInput
                 style={[styles.modalInput, { minHeight: 88, textAlignVertical: 'top' }]}
                 value={editExample}
                 onChangeText={setEditExample}
                 placeholder="Example sentence…"
                 placeholderTextColor="#6b7280"
                 editable={!editBusy}
-                multiline
+                allowMultiline
               />
 
               {isAdmin ? (

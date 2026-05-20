@@ -10,9 +10,9 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native'
+import { AdminTextInput } from '../components/AdminTextInput'
 import { Swipeable } from 'react-native-gesture-handler'
 import * as DocumentPicker from 'expo-document-picker'
 import type { StackScreenProps } from '@react-navigation/stack'
@@ -579,13 +579,13 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
               )}
             </Pressable>
             <View style={styles.addInputWrap}>
-              <TextInput
+              <AdminTextInput
                 style={styles.addMultiline}
                 value={addWordText}
                 onChangeText={setAddWordText}
                 placeholder="Paste words here, one per line"
                 placeholderTextColor="#a1a1aa"
-                multiline
+                allowMultiline
                 textAlignVertical="top"
                 editable={!addExtracting}
               />
@@ -633,7 +633,7 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
             <View style={styles.editCard}>
               <Text style={styles.editTitle}>Edit word</Text>
               <Text style={styles.fieldLabel}>Word</Text>
-              <TextInput
+              <AdminTextInput
                 style={styles.editInput}
                 value={editWordText}
                 onChangeText={setEditWordText}
@@ -666,7 +666,7 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
               {editUseNewSeries ? (
                 <>
                   <Text style={styles.fieldLabelSecondary}>New series name</Text>
-                  <TextInput
+                  <AdminTextInput
                     style={styles.editInput}
                     value={editNewSeriesName}
                     onChangeText={setEditNewSeriesName}

@@ -12,9 +12,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native'
+import { AdminTextInput } from '../AdminTextInput'
 import {
   ADMIN_ACCENT_GOLD,
   AdminChevronRight,
@@ -301,7 +301,7 @@ export default function SeriesConfigListView({ navigation }: Props) {
               assigned automatically for lessons to link to.
             </Text>
             <Text style={styles.modalLabel}>Title</Text>
-            <TextInput
+            <AdminTextInput
               style={styles.modalInput}
               value={newTitle}
               onChangeText={setNewTitle}

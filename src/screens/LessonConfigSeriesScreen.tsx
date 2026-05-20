@@ -13,9 +13,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native'
+import { AdminTextInput } from '../components/AdminTextInput'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { Swipeable } from 'react-native-gesture-handler'
 import {
@@ -745,22 +745,6 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
         Alert.alert('Could not validate lessons', withLessonSeriesRlsHint(lesErr.message))
         return
       }
-      const blocks: string[] = []
-      for (const lr of lessonRows ?? []) {
-        const pd = parseLessonContent(lr.content, lr.id)
-        if (!pd?.screens?.length) continue
-        const gaps = findAudioExposureWordsMissingWordId(pd.screens)
-        if (!gaps.length) continue
-        blocks.push(`${lr.title || lr.id}\n${formatAudioExposureWordIdGapsForAdmin(gaps)}`)
-      }
-      if (blocks.length > 0) {
-        setVaSyncing(false)
-        Alert.alert(
-          'Cannot approve series yet',
-          `Every Audio exposure row needs a word_id (word bank link).\n\n${blocks.join('\n\n')}`,
-        )
-        return
-      }
     } catch (e) {
       setVaSyncing(false)
       const msg = e instanceof Error ? e.message : String(e)
@@ -805,6 +789,28 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     )
     if (seed.backfillError) {
       lines.push('', `Warning — lesson JSON word_id backfill: ${seed.backfillError}`)
+    }
+    const { data: lessonsAfterSeed, error: lesAfterErr } = await supabase
+      .from('lessons')
+      .select('id,title,content')
+      .eq('series_id', seriesId)
+    const postGaps: string[] = []
+    if (!lesAfterErr) {
+      for (const lr of lessonsAfterSeed ?? []) {
+        const pd = parseLessonContent(lr.content, lr.id)
+        if (!pd?.screens?.length) continue
+        const gaps = findAudioExposureWordsMissingWordId(pd.screens)
+        if (!gaps.length) continue
+        postGaps.push(`${lr.title || lr.id}\n${formatAudioExposureWordIdGapsForAdmin(gaps)}`)
+      }
+    }
+    if (postGaps.length > 0) {
+      lines.push(
+        '',
+        'Some Audio exposure rows still have no word_id after sync (check blocked-other-series or incomplete rows):',
+        ...postGaps.slice(0, 5),
+      )
+      if (postGaps.length > 5) lines.push(`… +${postGaps.length - 5} more lesson(s)`)
     }
     Alert.alert('Approved', lines.join('\n'))
     await load()
@@ -1532,7 +1538,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
               automatically; you can set the title now or edit it on the next screen.
             </Text>
             <Text style={styles.modalLabel}>Title</Text>
-            <TextInput
+            <AdminTextInput
               style={styles.modalFieldInput}
               value={newLessonTitle}
               onChangeText={setNewLessonTitle}
@@ -1582,13 +1588,13 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={styles.modalScrollContent}
           >
-            <TextInput
+            <AdminTextInput
               style={styles.scriptInput}
               value={scriptDraft}
               onChangeText={setScriptDraft}
               placeholder="Enter intro / voiceover script for this series…"
               placeholderTextColor="#52525b"
-              multiline
+              allowMultiline
               textAlignVertical="top"
               editable={scriptEditable}
             />

@@ -40,8 +40,14 @@ import {
   syncCelebrateScreensWithAudioExposure,
 } from '../lib/lessonEditor'
 import {
+  canEditLessonStructure,
+  confirmAdminLiveSeriesSave,
+  shouldConfirmAdminLiveSeriesSave,
+} from '../lib/confirmAdminLiveSeriesSave'
+import {
   isLessonStructureFrozen,
   normalizeSeriesStatus,
+  seriesStatusLabel,
   type LessonSeriesStatus,
 } from '../lib/lessonSeriesStatus'
 import supabase from '../lib/supabase'
@@ -506,14 +512,12 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
     void load()
   }, [load])
 
-  const lessonContentEditable = useMemo(() => {
-    if (role === 'professor') {
-      /** Only professor **draft** series; admin_draft is preview-only. */
-      return seriesStatus === 'draft'
-    }
-    if (role === 'admin') return !isLessonStructureFrozen(seriesStatus)
-    return false
-  }, [role, seriesStatus])
+  const lessonContentEditable = useMemo(
+    () => canEditLessonStructure(role ?? undefined, seriesStatus),
+    [role, seriesStatus],
+  )
+
+  const adminLiveSeriesEdit = role === 'admin' && isLessonStructureFrozen(seriesStatus)
 
   const professorAdminDraftPreview = role === 'professor' && seriesStatus === 'admin_draft'
 
@@ -526,6 +530,10 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
     if (!lessonContentEditable) {
       Alert.alert('View only', 'This lesson cannot be edited while the series is in this status.')
       return false
+    }
+    if (shouldConfirmAdminLiveSeriesSave(role ?? undefined, seriesStatus)) {
+      const proceed = await confirmAdminLiveSeriesSave(seriesStatus, 'lesson')
+      if (!proceed) return false
     }
     setSaving(true)
     setError('')
@@ -638,7 +646,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
     } finally {
       setSaving(false)
     }
-  }, [row, draft, rawJson, rawJsonMode, clearUnsaved, lessonContentEditable, role])
+  }, [row, draft, rawJson, rawJsonMode, clearUnsaved, lessonContentEditable, role, seriesStatus])
 
   const onPreventRemoveLesson = useCallback(
     ({ data }: { data: { action: Parameters<typeof navigation.dispatch>[0] } }) => {
@@ -865,6 +873,12 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
                   ? 'Admin draft — preview only. JSON is read-only; you can edit lessons in series you own while the series is in Draft.'
                   : 'This series is view-only — switch back when the series is in draft (professor) or before audio complete (admin).'}
               </Text>
+            ) : adminLiveSeriesEdit ? (
+              <Text style={styles.viewOnlyBanner}>
+                {seriesStatus === 'published'
+                  ? 'Published — you can edit as admin. Saving will ask you to confirm because this series is live for learners.'
+                  : `${seriesStatusLabel(seriesStatus)} — you can edit as admin. Saving will ask you to confirm because learners may already see this series.`}
+              </Text>
             ) : null}
             <Text style={styles.meta}>id: {row.id} (locked)</Text>
             <AdminSectionHeader label="Full lesson content (JSON)" emphasis="gold" />
@@ -1000,6 +1014,12 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
             {professorAdminDraftPreview
               ? 'Admin draft — preview only. Swipe between lessons to review; edit only in your own series while it is in Draft.'
               : 'View only — open this lesson to review screens; editing unlocks when the series allows it.'}
+          </Text>
+        ) : adminLiveSeriesEdit ? (
+          <Text style={styles.viewOnlyBanner}>
+            {seriesStatus === 'published'
+              ? 'Published — you can edit as admin. Saving will ask you to confirm because this series is live for learners.'
+              : `${seriesStatusLabel(seriesStatus)} — you can edit as admin. Saving will ask you to confirm because learners may already see this series.`}
           </Text>
         ) : null}
         <View style={styles.sectionBlock}>

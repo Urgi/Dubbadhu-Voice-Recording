@@ -1,5 +1,10 @@
 import { getExpoPublicGeminiKey } from './expoPublicEnv'
 import supabase from './supabase'
+import { slugSegment } from './voiceUpload'
+import {
+  WORD_DISCRIMINATION_SCENE_GEMINI_ASPECT,
+  wordDiscriminationScenePromptSuffix,
+} from './wordDiscriminationSceneSpec'
 
 /** Image model that returns `inlineData` image parts when `responseModalities` includes IMAGE. */
 const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image'
@@ -18,6 +23,7 @@ function buildImagePrompt(userDescription: string): string {
   return [
     'Generate one single image for a language-learning multiple-choice quiz.',
     'Clear, realistic or clean illustration; suitable for learners; no text, letters, numbers, or watermarks in the image.',
+    wordDiscriminationScenePromptSuffix(),
     'Subject and scene:',
     d,
   ].join(' ')
@@ -64,6 +70,9 @@ async function requestGeminiImage(apiKey: string, prompt: string): Promise<
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
           responseModalities: ['TEXT', 'IMAGE'],
+          imageConfig: {
+            aspectRatio: WORD_DISCRIMINATION_SCENE_GEMINI_ASPECT,
+          },
         },
       }),
     })
@@ -127,12 +136,18 @@ export async function generateWordDiscriminationImageDraft(
   return { mimeType, base64, dataUrl }
 }
 
+/** Safe storage file base name (no extension, no folder). */
+export function wordDiscriminationImageStorageBaseName(raw: string): string {
+  return slugSegment(raw.trim(), 80) || 'image'
+}
+
 /**
  * Upload a previously generated draft image to public `word-comparison-images` storage.
  * This is the "insert" step (storage.objects) and should only happen after user confirmation.
  */
 export async function uploadWordDiscriminationImageDraft(
   draft: Pick<WordDiscriminationImageDraft, 'mimeType' | 'base64'>,
+  storageBaseName: string,
 ): Promise<{ publicUrl: string } | { error: string }> {
   let bytes: Uint8Array
   try {
@@ -144,10 +159,15 @@ export async function uploadWordDiscriminationImageDraft(
     return { error: 'Decoded image was empty.' }
   }
 
+  const base = wordDiscriminationImageStorageBaseName(storageBaseName)
+  if (!base) {
+    return { error: 'Enter a file name (letters, numbers, underscores).' }
+  }
+
   const mime = draft.mimeType.trim().toLowerCase()
   const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'png'
   const contentType = ext === 'jpg' ? 'image/jpeg' : 'image/png'
-  const path = `ai-generated/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`
+  const path = `${base}.${ext}`
 
   const { error: upErr } = await supabase.storage
     .from(WORD_COMPARISON_IMAGES_BUCKET)
@@ -176,8 +196,12 @@ export async function uploadWordDiscriminationImageDraft(
  */
 export async function generateAndUploadWordDiscriminationImage(
   userDescription: string,
+  storageBaseName?: string,
 ): Promise<{ publicUrl: string } | { error: string }> {
   const draft = await generateWordDiscriminationImageDraft(userDescription)
   if ('error' in draft) return draft
-  return await uploadWordDiscriminationImageDraft(draft)
+  const base =
+    storageBaseName?.trim() ||
+    wordDiscriminationImageStorageBaseName(userDescription)
+  return await uploadWordDiscriminationImageDraft(draft, base)
 }

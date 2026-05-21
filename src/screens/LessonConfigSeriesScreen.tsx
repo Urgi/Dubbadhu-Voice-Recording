@@ -33,6 +33,10 @@ import {
 } from '../lib/lessonEditor'
 import { useAuth } from '../context/AuthContext'
 import {
+  confirmAdminLiveSeriesSave,
+  shouldConfirmAdminLiveSeriesSave,
+} from '../lib/confirmAdminLiveSeriesSave'
+import {
   isLessonStructureFrozen,
   isProfessorLessonEditingAllowed,
   legacyFlagsFromSeriesStatus,
@@ -196,7 +200,9 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       return 'Available after admin approves curriculum (pending words appear in the voice queue).'
     }
     if (seriesStatus === 'published') {
-      return 'Published — this series status is locked.'
+      return isAdmin
+        ? 'Published — live in production. You can edit lessons and series fields; each save asks you to confirm.'
+        : 'Published — this series is locked.'
     }
     if (seriesStatus === 'testing') {
       return 'Testing — learner dev builds can list this series on Speak; production shows it only after you publish below.'
@@ -216,7 +222,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       return 'Audio complete — run npm run series:pull in the Dubbadhu app repo to import waveforms and move this series to Testing.'
     }
     return 'When all batch words are recorded or approved, an admin can tap Mark audio complete below.'
-  }, [lessonSeriesRowExists, seriesStatus, vaProgress])
+  }, [isAdmin, lessonSeriesRowExists, seriesStatus, vaProgress])
 
   const structureFrozen = useMemo(() => {
     if (isProfessor) return !isProfessorLessonEditingAllowed(seriesStatus)
@@ -224,10 +230,9 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   }, [isProfessor, seriesStatus])
 
   const scriptEditable = useMemo(() => {
-    if (seriesStatus === 'published') return false
     if (isProfessor) return seriesStatus === 'draft'
     if (isAdmin) return true
-    return true
+    return seriesStatus !== 'published'
   }, [isAdmin, isProfessor, seriesStatus])
 
   /** Open script modal to read; editing is still gated by scriptEditable. */
@@ -475,6 +480,10 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
 
   const saveScript = useCallback(async () => {
     if (!scriptEditable) return
+    if (shouldConfirmAdminLiveSeriesSave(role ?? undefined, seriesStatus)) {
+      const proceed = await confirmAdminLiveSeriesSave(seriesStatus, 'series script')
+      if (!proceed) return
+    }
     const id = seriesId.trim()
     if (!id) {
       Alert.alert('Could not save script', 'Missing series id.')
@@ -544,10 +553,14 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     setLessonSeriesRowExists(true)
     setSeriesStatus(isAdmin ? 'admin_draft' : 'draft')
     setScriptModalOpen(false)
-  }, [seriesId, scriptDraft, seriesTitle, isAdmin, scriptEditable])
+  }, [seriesId, scriptDraft, seriesTitle, isAdmin, scriptEditable, role, seriesStatus])
 
   const persistSpeakListCoverFile = useCallback(
     async (localUri: string) => {
+      if (shouldConfirmAdminLiveSeriesSave(role ?? undefined, seriesStatus)) {
+        const proceed = await confirmAdminLiveSeriesSave(seriesStatus, 'series cover')
+        if (!proceed) return
+      }
       setCoverUploading(true)
       const up = await uploadSeriesListCoverImage(localUri, seriesId)
       if ('error' in up) {
@@ -581,7 +594,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       setListCoverPreviewNonce((n) => n + 1)
       Alert.alert('Cover saved', 'Learner app will show this on the locked “Coming up” strip after it refreshes the catalog.')
     },
-    [seriesId],
+    [role, seriesId, seriesStatus],
   )
 
   const pickSpeakListCover = useCallback(async () => {
@@ -625,6 +638,10 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
 
   const clearSpeakListCover = useCallback(async () => {
     if (!lessonSeriesRowExists || !scriptEditable) return
+    if (shouldConfirmAdminLiveSeriesSave(role ?? undefined, seriesStatus)) {
+      const proceed = await confirmAdminLiveSeriesSave(seriesStatus, 'series cover')
+      if (!proceed) return
+    }
     setCoverUploading(true)
     const { error: dbErr } = await supabase
       .from('lesson_series')
@@ -637,11 +654,15 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     }
     setListCoverUrl(null)
     setListCoverPreviewNonce((n) => n + 1)
-  }, [lessonSeriesRowExists, scriptEditable, seriesId])
+  }, [lessonSeriesRowExists, role, scriptEditable, seriesId, seriesStatus])
 
   const persistIntroVideoUrl = useCallback(
     async (next: string | null) => {
       if (!lessonSeriesRowExists || !scriptEditable) return
+      if (shouldConfirmAdminLiveSeriesSave(role ?? undefined, seriesStatus)) {
+        const proceed = await confirmAdminLiveSeriesSave(seriesStatus, 'series intro video')
+        if (!proceed) return
+      }
       setIntroVideoSaving(true)
       const { error: dbErr } = await supabase
         .from('lesson_series')
@@ -654,7 +675,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       }
       setIntroVideoUrl(next?.trim() ? next.trim() : null)
     },
-    [lessonSeriesRowExists, scriptEditable, seriesId],
+    [lessonSeriesRowExists, role, scriptEditable, seriesId, seriesStatus],
   )
 
   const persistSeriesStatus = useCallback(

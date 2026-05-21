@@ -45,9 +45,11 @@ import {
   normalizeWordDiscriminationContentForEdit,
   normalizeQuizOptionRowForEditor,
 } from '../../lib/lessonEditor'
+import { WORD_DISCRIMINATION_SCENE_PREVIEW_ASPECT } from '../../lib/wordDiscriminationSceneSpec'
 import {
   generateWordDiscriminationImageDraft,
   uploadWordDiscriminationImageDraft,
+  wordDiscriminationImageStorageBaseName,
   type WordDiscriminationImageDraft,
 } from '../../lib/geminiWordDiscriminationImage'
 import { getExpoPublicGeminiKey } from '../../lib/expoPublicEnv'
@@ -831,6 +833,8 @@ function WordDiscriminationSceneImageField({
   const [rawListCount, setRawListCount] = useState(0)
   const [geminiBusy, setGeminiBusy] = useState(false)
   const [geminiDraft, setGeminiDraft] = useState<WordDiscriminationImageDraft | null>(null)
+  const [uploadNaming, setUploadNaming] = useState(false)
+  const [uploadFileName, setUploadFileName] = useState('')
 
   const applyScenePatch = useCallback(
     (patch: Record<string, unknown>) => {
@@ -904,8 +908,16 @@ function WordDiscriminationSceneImageField({
     if (requestOpen) {
       setRequestDraft(String(imageRequestDescription ?? '').trim())
       setGeminiDraft(null)
+      setUploadNaming(false)
+      setUploadFileName('')
     }
   }, [requestOpen, imageRequestDescription])
+
+  const suggestUploadFileName = useCallback(() => {
+    const fromPrompt = wordDiscriminationImageStorageBaseName(requestDraft.trim())
+    if (fromPrompt !== 'image') return fromPrompt
+    return ''
+  }, [requestDraft])
 
   const filteredFiles = useMemo(() => {
     const q = filterQ.trim().toLowerCase()
@@ -1106,11 +1118,17 @@ function WordDiscriminationSceneImageField({
         }}
       >
         <Pressable style={styles.quizCorrectOverlay} onPress={() => !geminiBusy && setRequestOpen(false)}>
-          <Pressable style={styles.quizCorrectSheet} onPress={() => {}}>
+          <Pressable style={[styles.quizCorrectSheet, { maxHeight: '90%' }]} onPress={() => {}}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+              contentContainerStyle={{ paddingBottom: 8 }}
+            >
             <Text style={styles.personTitle}>Request new image</Text>
             <Text style={styles.hint}>
               1–2 sentences for your team: what to add in Storage. Learners see this text until an image is set. You can
               also generate a draft with Gemini (same API key as document word extraction) and upload it to this bucket.
+              Drafts use a 4:3 landscape frame centered like the learner discrimination screen.
             </Text>
             <AdminTextInput
               style={[styles.input, { minHeight: 88, textAlignVertical: 'top' }]}
@@ -1150,6 +1168,8 @@ function WordDiscriminationSceneImageField({
                     return
                   }
                   setGeminiDraft(out)
+                  setUploadNaming(false)
+                  setUploadFileName('')
                 })()
               }}
             >
@@ -1160,7 +1180,9 @@ function WordDiscriminationSceneImageField({
 
             {geminiDraft ? (
               <View style={{ marginTop: 10 }}>
-                <Text style={[styles.hint, { marginBottom: 8 }]}>Preview (not uploaded yet)</Text>
+                <Text style={[styles.hint, { marginBottom: 8 }]}>
+                  {uploadNaming ? 'Name this file, then upload' : 'Preview (not uploaded yet)'}
+                </Text>
                 <View
                   style={{
                     borderRadius: 12,
@@ -1172,39 +1194,92 @@ function WordDiscriminationSceneImageField({
                 >
                   <Image
                     source={{ uri: geminiDraft.dataUrl }}
-                    style={{ width: '100%', height: 180 }}
-                    resizeMode="cover"
+                    style={{ width: '100%', aspectRatio: WORD_DISCRIMINATION_SCENE_PREVIEW_ASPECT }}
+                    resizeMode="contain"
                   />
                 </View>
 
-                <Pressable
-                  style={[styles.addBtn, { marginTop: 10, opacity: geminiBusy ? 0.45 : 1 }]}
-                  disabled={geminiBusy}
-                  onPress={() => {
-                    if (geminiBusy || !geminiDraft) return
-                    void (async () => {
-                      setGeminiBusy(true)
-                      const up = await uploadWordDiscriminationImageDraft(geminiDraft)
-                      setGeminiBusy(false)
-                      if ('error' in up) {
-                        Alert.alert('Could not upload image', up.error)
-                        return
-                      }
-                      applyScenePatch({ image: up.publicUrl, imageRequestDescription: '', imageContext: '' })
-                      setRequestOpen(false)
-                    })()
-                  }}
-                >
-                  <Text style={styles.addBtnText}>Use this image (upload)</Text>
-                </Pressable>
+                {uploadNaming ? (
+                  <>
+                    <Text style={[styles.label, { marginTop: 12 }]}>File name</Text>
+                    <Text style={styles.hint}>
+                      Saved in word-comparison-images (letters, numbers, underscores). Extension is added
+                      automatically.
+                    </Text>
+                    <AdminTextInput
+                      style={styles.input}
+                      value={uploadFileName}
+                      onChangeText={setUploadFileName}
+                      placeholder="e.g. oromo_student"
+                      placeholderTextColor="#52525b"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      editable={!geminiBusy}
+                    />
+                    <Pressable
+                      style={[
+                        styles.addBtn,
+                        {
+                          marginTop: 10,
+                          opacity:
+                            geminiBusy || !wordDiscriminationImageStorageBaseName(uploadFileName) ? 0.45 : 1,
+                        },
+                      ]}
+                      disabled={geminiBusy || !wordDiscriminationImageStorageBaseName(uploadFileName)}
+                      onPress={() => {
+                        if (geminiBusy || !geminiDraft) return
+                        const base = wordDiscriminationImageStorageBaseName(uploadFileName)
+                        if (!base) return
+                        void (async () => {
+                          setGeminiBusy(true)
+                          const up = await uploadWordDiscriminationImageDraft(geminiDraft, base)
+                          setGeminiBusy(false)
+                          if ('error' in up) {
+                            Alert.alert('Could not upload image', up.error)
+                            return
+                          }
+                          applyScenePatch({ image: up.publicUrl, imageRequestDescription: '', imageContext: '' })
+                          setRequestOpen(false)
+                        })()
+                      }}
+                    >
+                      <Text style={styles.addBtnText}>Upload</Text>
+                    </Pressable>
+                    <Pressable
+                      style={[styles.removeBtn, { marginTop: 6 }]}
+                      disabled={geminiBusy}
+                      onPress={() => setUploadNaming(false)}
+                    >
+                      <Text style={styles.removeBtnText}>Back to preview</Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <>
+                    <Pressable
+                      style={[styles.addBtn, { marginTop: 10, opacity: geminiBusy ? 0.45 : 1 }]}
+                      disabled={geminiBusy}
+                      onPress={() => {
+                        if (geminiBusy || !geminiDraft) return
+                        setUploadFileName(suggestUploadFileName())
+                        setUploadNaming(true)
+                      }}
+                    >
+                      <Text style={styles.addBtnText}>Use this image (upload)</Text>
+                    </Pressable>
 
-                <Pressable
-                  style={[styles.removeBtn, { marginTop: 6 }]}
-                  disabled={geminiBusy}
-                  onPress={() => setGeminiDraft(null)}
-                >
-                  <Text style={styles.removeBtnText}>Discard draft</Text>
-                </Pressable>
+                    <Pressable
+                      style={[styles.removeBtn, { marginTop: 6 }]}
+                      disabled={geminiBusy}
+                      onPress={() => {
+                        setGeminiDraft(null)
+                        setUploadNaming(false)
+                        setUploadFileName('')
+                      }}
+                    >
+                      <Text style={styles.removeBtnText}>Discard draft</Text>
+                    </Pressable>
+                  </>
+                )}
               </View>
             ) : null}
             <Pressable
@@ -1226,6 +1301,7 @@ function WordDiscriminationSceneImageField({
             >
               <Text style={styles.removeBtnText}>Cancel</Text>
             </Pressable>
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>

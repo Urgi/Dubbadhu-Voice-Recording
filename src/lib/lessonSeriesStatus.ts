@@ -67,7 +67,11 @@ export function seriesStatusLabel(st: LessonSeriesStatus): string {
   }
 }
 
-/** Admin: structure locked after audio complete / shipped. */
+/**
+ * Lesson structure locked after audio complete / shipped (reorder, add/delete lessons).
+ * Admins may still edit lesson JSON and series metadata with a save confirmation — see
+ * `confirmAdminLiveSeriesSave`.
+ */
 export function isLessonStructureFrozen(st: LessonSeriesStatus): boolean {
   return st === 'complete' || st === 'testing' || st === 'published'
 }

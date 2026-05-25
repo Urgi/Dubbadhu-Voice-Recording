@@ -143,6 +143,17 @@ export default function AdminHomeScreen({ navigation }: Props) {
 
       <Pressable
         style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+        onPress={() => navigation.navigate('AdminPracticeSuggestions')}
+      >
+        <Text style={styles.tileTitle}>Practice Suggestions</Text>
+        <Text style={styles.recordedLine}>
+          Curate “From the community” on Practice (7 per day, tied to Word of the Day)
+        </Text>
+        <Text style={styles.tileHint}>Select sentences that use today’s WOTD — learners see your picks first</Text>
+      </Pressable>
+
+      <Pressable
+        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
         onPress={() => navigation.navigate('AdminAnalytics')}
       >
         <Text style={styles.tileTitle}>Analytics</Text>

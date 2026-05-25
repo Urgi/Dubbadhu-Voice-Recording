@@ -14,7 +14,8 @@ import { trim as nativeTrim } from 'react-native-video-trim'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
 import supabase from '../lib/supabase'
-import { uploadVoiceM4a, voiceStoragePaths } from '../lib/voiceUpload'
+import { formatQubeeLetterDisplay } from '../lib/qubeeLetters'
+import { qubeeAudioStoragePath, uploadVoiceM4a, voiceStoragePaths } from '../lib/voiceUpload'
 import type { RecordingWord, RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'Recording'>
@@ -192,7 +193,7 @@ function TrimWaveEditor({
 }
 
 export default function RecordingScreen({ navigation, route }: Props) {
-  const { words: initialWords, mergeIntoSession, seriesSession } = route.params
+  const { words: initialWords, mergeIntoSession, seriesSession, recordingTable = 'words' } = route.params
   const audio = useAudioRecorder()
 
   const initialTotalRef = useRef(initialWords.length)
@@ -269,7 +270,8 @@ export default function RecordingScreen({ navigation, route }: Props) {
     setRecordingSlot(null)
   }, [audio])
 
-  const bothReady = Boolean(slowUri && fastUri)
+  const isSingleTake = recordingTable === 'qubee_letters'
+  const bothReady = isSingleTake ? Boolean(slowUri) : Boolean(slowUri && fastUri)
 
   const titleCase = useCallback((s: string) => {
     return String(s ?? '')
@@ -519,27 +521,40 @@ export default function RecordingScreen({ navigation, route }: Props) {
   )
 
   const uploadCurrentWord = useCallback(async () => {
-    if (!current || !slowUri || !fastUri) return
+    if (!current || !slowUri || (!isSingleTake && !fastUri)) return
     setUploading(true)
     try {
-      const paths = voiceStoragePaths(current.id, current.series)
-      const [slowUrl, fastUrl] = await Promise.all([
-        uploadVoiceM4a(slowUri, paths.slow),
-        uploadVoiceM4a(fastUri, paths.fast),
-      ])
-
       const recordedAt = new Date().toISOString()
-      const { error } = await supabase
-        .from('words')
-        .update({
-          slow_audio_url: slowUrl,
-          fast_audio_url: fastUrl,
-          status: 'recorded',
-          recorded_at: recordedAt,
-        })
-        .eq('id', current.id)
+      let slowUrl = ''
+      let fastUrl: string | null = null
 
-      if (error) throw new Error(error.message)
+      if (isSingleTake) {
+        slowUrl = await uploadVoiceM4a(slowUri, qubeeAudioStoragePath(current.id))
+        const payload = {
+          audio_url: slowUrl,
+          status: 'recorded' as const,
+          recorded_at: recordedAt,
+          updated_at: recordedAt,
+        }
+        const { error } = await supabase.from('qubee_letters').update(payload).eq('id', current.id)
+        if (error) throw new Error(error.message)
+      } else {
+        const paths = voiceStoragePaths(current.id, current.series)
+        ;[slowUrl, fastUrl] = await Promise.all([
+          uploadVoiceM4a(slowUri, paths.slow),
+          uploadVoiceM4a(fastUri!, paths.fast),
+        ])
+        const { error } = await supabase
+          .from('words')
+          .update({
+            slow_audio_url: slowUrl,
+            fast_audio_url: fastUrl,
+            status: 'recorded',
+            recorded_at: recordedAt,
+          })
+          .eq('id', current.id)
+        if (error) throw new Error(error.message)
+      }
 
       const merged: RecordingWord = {
         ...current,
@@ -580,6 +595,8 @@ export default function RecordingScreen({ navigation, route }: Props) {
     queue.length,
     sessionRecorded,
     slowUri,
+    recordingTable,
+    isSingleTake,
   ])
 
   const skipWord = useCallback(async () => {
@@ -740,13 +757,13 @@ export default function RecordingScreen({ navigation, route }: Props) {
             {current?.series ? ` · ${current.series}` : ''}
           </Text>
           <Text style={styles.seriesSessionLeft}>
-            {queue.length} {queue.length === 1 ? 'Word' : 'Words'} Left
+            {queue.length} {queue.length === 1 ? (isSingleTake ? 'Letter' : 'Word') : isSingleTake ? 'Letters' : 'Words'} Left
           </Text>
         </View>
       ) : null}
       <View style={styles.topMeta}>
         <Text style={styles.progressText}>
-          Word {wordNum} of {totalWords}
+          {isSingleTake ? 'Letter' : 'Word'} {wordNum} of {totalWords}
           {skippedCount > 0 ? ` · ${skippedCount} skipped` : ''}
         </Text>
         <View style={styles.track}>
@@ -754,22 +771,39 @@ export default function RecordingScreen({ navigation, route }: Props) {
         </View>
       </View>
 
-      <View style={styles.wordRow}>
-        <Text style={styles.wordText} numberOfLines={2}>
-          {current.word}
-        </Text>
+      <View style={[styles.wordRow, isSingleTake && styles.wordRowQubee]}>
+        <View style={styles.wordTextCol}>
+          {isSingleTake && current.qubeeLetter ? (
+            <>
+              <Text style={styles.qubeeRecordHint}>Record the letter and example word in one clip</Text>
+              <Text style={styles.qubeeLetterHero}>
+                {formatQubeeLetterDisplay(current.qubeeLetter)}
+              </Text>
+              <Text style={styles.qubeeExampleWord} numberOfLines={2}>
+                {current.word}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.wordText} numberOfLines={2}>
+              {current.word}
+            </Text>
+          )}
+        </View>
         <Pressable
-          style={[styles.wordRerecordPill, (!slowUri && !fastUri) && styles.wordRerecordPillDisabled]}
+          style={[
+            styles.wordRerecordPill,
+            (isSingleTake ? !slowUri : !slowUri && !fastUri) && styles.wordRerecordPillDisabled,
+          ]}
           onPress={() => void clearSlots()}
-          disabled={!slowUri && !fastUri}
+          disabled={isSingleTake ? !slowUri : !slowUri && !fastUri}
         >
           <Text style={styles.wordRerecordPillText}>Re-record</Text>
         </Pressable>
       </View>
       {/* Status pill removed from this screen; re-record is now handled by the word-level action pill. */}
 
-      {slotCard('slow', 'Slow')}
-      {slotCard('fast', 'Fast')}
+      {slotCard('slow', isSingleTake ? 'Pronunciation' : 'Slow')}
+      {!isSingleTake ? slotCard('fast', 'Fast') : null}
 
       <Pressable
         style={[styles.nextBtn, (!bothReady || uploading) && styles.nextBtnDisabled]}
@@ -779,12 +813,12 @@ export default function RecordingScreen({ navigation, route }: Props) {
         {uploading ? (
           <ActivityIndicator color="#fff" />
         ) : (
-          <Text style={styles.nextBtnText}>Next Word</Text>
+          <Text style={styles.nextBtnText}>{isSingleTake ? 'Next Letter' : 'Next Word'}</Text>
         )}
       </Pressable>
 
       <Pressable style={styles.skipBtn} onPress={() => void skipWord()} disabled={uploading}>
-        <Text style={styles.skipText}>Skip Word</Text>
+        <Text style={styles.skipText}>{isSingleTake ? 'Skip Letter' : 'Skip Word'}</Text>
       </Pressable>
     </View>
   )
@@ -846,6 +880,35 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: ACCENT_ORANGE,
     borderRadius: 4,
+  },
+  wordTextCol: {
+    flex: 1,
+    flexShrink: 1,
+    marginRight: 10,
+  },
+  wordRowQubee: {
+    alignItems: 'flex-start',
+    marginBottom: 14,
+  },
+  qubeeRecordHint: {
+    color: '#a1a1aa',
+    fontSize: 13,
+    fontWeight: '500',
+    marginBottom: 10,
+    lineHeight: 18,
+  },
+  qubeeLetterHero: {
+    color: ACCENT_YELLOW,
+    fontSize: 48,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  qubeeExampleWord: {
+    color: ACCENT_GREEN,
+    fontSize: 28,
+    fontWeight: '700',
+    lineHeight: 34,
   },
   wordText: {
     color: '#ffffff',

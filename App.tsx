@@ -18,6 +18,7 @@ import LessonConfigSeriesScreen from './src/screens/LessonConfigSeriesScreen'
 import LessonConfigDetailScreen from './src/screens/LessonConfigDetailScreen'
 import VoiceActorHomeScreen from './src/screens/VoiceActorHomeScreen'
 import VoiceActorDashboardScreen from './src/screens/VoiceActorDashboardScreen'
+import QubeeLettersHubScreen from './src/screens/QubeeLettersHubScreen'
 import { AuthProvider } from './src/context/AuthContext'
 import type { RootStackParamList } from './src/types'
 
@@ -82,6 +83,11 @@ function AppStack() {
           name="VoiceActorDashboard"
           component={VoiceActorDashboardScreen}
           options={{ title: 'Voice Recording' }}
+        />
+        <Stack.Screen
+          name="QubeeLettersHub"
+          component={QubeeLettersHubScreen}
+          options={{ title: 'Qubee Letters' }}
         />
         <Stack.Screen name="Recording" component={RecordingScreen} options={{ title: 'Recording' }} />
         <Stack.Screen name="Review" component={ReviewScreen} options={{ title: 'Review' }} />

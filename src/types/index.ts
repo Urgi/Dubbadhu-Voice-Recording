@@ -16,6 +16,15 @@ export type RecordingWord = {
   notes: string | null
   recorded_at: string | null
   created_at: string
+  /** Set when recording Qubee alphabet rows (display letter in UI). */
+  qubeeLetter?: string
+}
+
+export type RecordingTable = 'words' | 'qubee_letters'
+
+/** Unified admin audio approval queue item. */
+export type AudioReviewItem = RecordingWord & {
+  reviewSource: RecordingTable
 }
 
 export type AuthRole = 'admin' | 'voice' | 'professor'
@@ -36,7 +45,8 @@ export type RootStackParamList = {
   }
   AdminSeriesList: undefined
   AdminSeriesDetail: { seriesName: string; language: string }
-  AdminAudioReview: undefined
+  AdminAudioReview: { qubeeOnly?: boolean } | undefined
+  QubeeLettersHub: undefined
   /** QA vocabulary quiz illustrations (good/bad + notes for regeneration). */
   AdminVocabIllustrationReview: undefined
   AdminSeriesAudioReview: { seriesName: string; language: string }
@@ -44,6 +54,8 @@ export type RootStackParamList = {
   VoiceActorDashboard: undefined
   Recording: {
     words: RecordingWord[]
+    /** Default `words`; Qubee alphabet uses `qubee_letters`. */
+    recordingTable?: RecordingTable
     /** When re-recording one word from Review, merge back into this list on finish */
     mergeIntoSession?: RecordingWord[]
     /** Voice actor: started from a series card — show series + words-left banner */

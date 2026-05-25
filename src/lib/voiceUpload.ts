@@ -41,3 +41,8 @@ export function voiceStoragePaths(wordId: string, series: string) {
     fast: `${folder}/${wordId}_fast.m4a`,
   }
 }
+
+/** Single clip for Qubee alphabet letters. */
+export function qubeeAudioStoragePath(letterId: string) {
+  return `Qubee/${letterId}.m4a`
+}

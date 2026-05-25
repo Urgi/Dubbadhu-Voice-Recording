@@ -24,11 +24,13 @@ export default function AdminHomeScreen({ navigation }: Props) {
     setError('')
     const [
       unapprovedRes,
+      qubeeUnapprovedRes,
       usersRes,
       seriesTotalRes,
       unapprovedSeriesRes,
     ] = await Promise.all([
       supabase.from('words').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
+      supabase.from('qubee_letters').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
       supabase.from('users').select('id', { count: 'exact', head: true }),
       supabase.from('lesson_series').select('id', { count: 'exact', head: true }),
       supabase
@@ -38,11 +40,16 @@ export default function AdminHomeScreen({ navigation }: Props) {
     ])
 
     const errs: string[] = []
-    if (unapprovedRes.error) {
-      errs.push(unapprovedRes.error.message)
-      setUnapprovedCount(null)
+    const wordPending = unapprovedRes.error ? null : (unapprovedRes.count ?? 0)
+    const qubeePending = qubeeUnapprovedRes.error ? null : (qubeeUnapprovedRes.count ?? 0)
+    if (unapprovedRes.error) errs.push(unapprovedRes.error.message)
+    if (qubeeUnapprovedRes.error) errs.push(`qubee_letters: ${qubeeUnapprovedRes.error.message}`)
+    if (wordPending != null && qubeePending != null) {
+      setUnapprovedCount(wordPending + qubeePending)
+    } else if (wordPending != null) {
+      setUnapprovedCount(wordPending)
     } else {
-      setUnapprovedCount(unapprovedRes.count ?? 0)
+      setUnapprovedCount(null)
     }
     if (usersRes.error) {
       errs.push(`users: ${usersRes.error.message}`)
@@ -144,6 +151,15 @@ export default function AdminHomeScreen({ navigation }: Props) {
           <Text style={styles.recordedCount}>{usersTotal ?? '—'}</Text>
         </Text>
         <Text style={styles.tileHint}>Tap for dashboards and AI summary of last 100 events</Text>
+      </Pressable>
+
+      <Pressable
+        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+        onPress={() => navigation.navigate('QubeeLettersHub')}
+      >
+        <Text style={styles.tileTitle}>Qubee Letters</Text>
+        <Text style={styles.recordedLine}>Alphabet recordings + approval queue</Text>
+        <Text style={styles.tileHint}>One audio clip per letter — same approve / re-record flow as vocabulary</Text>
       </Pressable>
 
       <Pressable

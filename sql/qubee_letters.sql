@@ -1,0 +1,3 @@
+-- Pair with:
+--   Dubbadhu/supabase/migrations/20260522120000_qubee_letters.sql
+--   Dubbadhu/supabase/migrations/20260522130000_qubee_letters_single_audio.sql (if an older qubee_letters shape was applied)

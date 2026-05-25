@@ -2,15 +2,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { useRemoteAudioUrl } from '../hooks/useRemoteAudioUrl'
+import { approveQubeeLetterRecording } from '../lib/approveQubeeLetterRecording'
 import { approveWordRecording } from '../lib/approveWordRecording'
+import {
+  normalizeQubeeRows,
+  qubeeRowToRecordingWord,
+  sortQubeeRowsByAppOrder,
+} from '../lib/qubeeLetters'
 import supabase from '../lib/supabase'
 import { normalizeRecordingWords } from '../lib/wordStatus'
-import type { RecordingWord, RootStackParamList } from '../types'
+import type { AudioReviewItem, RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminAudioReview'>
 
-export default function AdminAudioReviewScreen({ navigation }: Props) {
-  const [queue, setQueue] = useState<RecordingWord[]>([])
+export default function AdminAudioReviewScreen({ navigation, route }: Props) {
+  const qubeeOnly = route.params?.qubeeOnly === true
+  const [queue, setQueue] = useState<AudioReviewItem[]>([])
   const [index, setIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -24,27 +31,61 @@ export default function AdminAudioReviewScreen({ navigation }: Props) {
 
   const loadQueue = useCallback(async () => {
     setError('')
-    // Queue = only `recorded` (submitted audio, not approved yet), with at least one clip.
-    const { data, error: fetchError } = await supabase
-      .from('words')
+    const items: AudioReviewItem[] = []
+
+    if (!qubeeOnly) {
+      const { data, error: fetchError } = await supabase
+        .from('words')
+        .select('*')
+        .eq('status', 'recorded')
+        .or('slow_audio_url.not.is.null,fast_audio_url.not.is.null')
+        .order('series', { ascending: true })
+        .order('word', { ascending: true })
+
+      if (fetchError) {
+        setError(fetchError.message)
+        setQueue([])
+        return
+      }
+      const rows = normalizeRecordingWords(data ?? []).filter(
+        (w) =>
+          w.status === 'recorded' && Boolean(w.slow_audio_url?.trim() || w.fast_audio_url?.trim()),
+      )
+      items.push(...rows.map((w) => ({ ...w, reviewSource: 'words' as const })))
+    }
+
+    const { data: qData, error: qError } = await supabase
+      .from('qubee_letters')
       .select('*')
       .eq('status', 'recorded')
-      .or('slow_audio_url.not.is.null,fast_audio_url.not.is.null')
-      .order('series', { ascending: true })
-      .order('word', { ascending: true })
+      .not('audio_url', 'is', null)
 
-    if (fetchError) {
-      setError(fetchError.message)
+    if (qError) {
+      setError(qError.message)
       setQueue([])
       return
     }
-    const rows = normalizeRecordingWords(data ?? []).filter(
-      (w) =>
-        w.status === 'recorded' && Boolean(w.slow_audio_url?.trim() || w.fast_audio_url?.trim()),
-    )
-    setQueue(rows)
+
+    const qRows = sortQubeeRowsByAppOrder(
+      normalizeQubeeRows(qData ?? []).filter(
+        (r) => r.status === 'recorded' && Boolean(r.audio_url?.trim()),
+      ),
+    ).map((r) => {
+        const w = qubeeRowToRecordingWord(r)
+        return { ...w, reviewSource: 'qubee_letters' as const }
+      })
+    items.push(...qRows)
+
+    items.sort((a, b) => {
+      const sa = a.reviewSource === 'qubee_letters' ? `Qubee ${a.qubeeLetter ?? ''}` : a.series
+      const sb = b.reviewSource === 'qubee_letters' ? `Qubee ${b.qubeeLetter ?? ''}` : b.series
+      if (sa !== sb) return sa.localeCompare(sb)
+      return a.word.localeCompare(b.word)
+    })
+
+    setQueue(items)
     setIndex(0)
-  }, [])
+  }, [qubeeOnly])
 
   const titleCase = useCallback((s: string) => {
     return String(s ?? '')
@@ -56,8 +97,10 @@ export default function AdminAudioReviewScreen({ navigation }: Props) {
   }, [])
 
   useEffect(() => {
-    navigation.setOptions({ title: 'Audio Approval Queue' })
-  }, [navigation])
+    navigation.setOptions({
+      title: qubeeOnly ? 'Qubee Audio Approval' : 'Audio Approval Queue',
+    })
+  }, [navigation, qubeeOnly])
 
   useEffect(() => {
     let active = true
@@ -90,7 +133,10 @@ export default function AdminAudioReviewScreen({ navigation }: Props) {
   const approveAndNext = useCallback(async () => {
     if (!current || saving) return
     setSaving(true)
-    const { error: updateError } = await approveWordRecording(current.id)
+    const { error: updateError } =
+      current.reviewSource === 'qubee_letters'
+        ? await approveQubeeLetterRecording(current.id)
+        : await approveWordRecording(current.id)
     setSaving(false)
     if (updateError) {
       setError(updateError.message)
@@ -110,9 +156,14 @@ export default function AdminAudioReviewScreen({ navigation }: Props) {
     setSaving(true)
     const noteLine = `[${new Date().toISOString().slice(0, 10)}] Re-record requested`
     const nextNotes = current.notes?.trim() ? `${current.notes.trim()}\n${noteLine}` : noteLine
+    const table = current.reviewSource === 'qubee_letters' ? 'qubee_letters' : 'words'
     const { error: updateError } = await supabase
-      .from('words')
-      .update({ status: 'rerecord_requested', notes: nextNotes })
+      .from(table)
+      .update({
+        status: 'rerecord_requested',
+        notes: nextNotes,
+        ...(table === 'qubee_letters' ? { updated_at: new Date().toISOString() } : {}),
+      })
       .eq('id', current.id)
     setSaving(false)
     if (updateError) {
@@ -193,28 +244,44 @@ export default function AdminAudioReviewScreen({ navigation }: Props) {
       <Text style={styles.progress}>{progressLabel}</Text>
       <Text style={styles.word}>{current.word}</Text>
       <Text style={styles.meta}>
-        {current.series} · {titleCase(current.language)}
+        {current.reviewSource === 'qubee_letters'
+          ? `Qubee · Letter ${current.qubeeLetter ?? '—'}`
+          : `${current.series} · ${titleCase(current.language)}`}
       </Text>
 
       <View style={styles.playRow}>
-        <Pressable
-          style={styles.playBtn}
-          onPress={() => void playUrl(current.slow_audio_url, `${current.id}-slow`)}
-          disabled={!current.slow_audio_url}
-        >
-          <Text style={styles.playBtnText}>
-            {playingId === `${current.id}-slow` ? 'Stop slow' : 'Play slow'}
-          </Text>
-        </Pressable>
-        <Pressable
-          style={styles.playBtn}
-          onPress={() => void playUrl(current.fast_audio_url, `${current.id}-fast`)}
-          disabled={!current.fast_audio_url}
-        >
-          <Text style={styles.playBtnText}>
-            {playingId === `${current.id}-fast` ? 'Stop fast' : 'Play fast'}
-          </Text>
-        </Pressable>
+        {current.reviewSource === 'qubee_letters' ? (
+          <Pressable
+            style={styles.playBtn}
+            onPress={() => void playUrl(current.slow_audio_url, `${current.id}-audio`)}
+            disabled={!current.slow_audio_url}
+          >
+            <Text style={styles.playBtnText}>
+              {playingId === `${current.id}-audio` ? 'Stop' : 'Play pronunciation'}
+            </Text>
+          </Pressable>
+        ) : (
+          <>
+            <Pressable
+              style={styles.playBtn}
+              onPress={() => void playUrl(current.slow_audio_url, `${current.id}-slow`)}
+              disabled={!current.slow_audio_url}
+            >
+              <Text style={styles.playBtnText}>
+                {playingId === `${current.id}-slow` ? 'Stop slow' : 'Play slow'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.playBtn}
+              onPress={() => void playUrl(current.fast_audio_url, `${current.id}-fast`)}
+              disabled={!current.fast_audio_url}
+            >
+              <Text style={styles.playBtnText}>
+                {playingId === `${current.id}-fast` ? 'Stop fast' : 'Play fast'}
+              </Text>
+            </Pressable>
+          </>
+        )}
       </View>
 
       <View style={styles.navRow}>

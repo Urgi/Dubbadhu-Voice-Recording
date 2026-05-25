@@ -42,6 +42,15 @@ export default function VoiceActorHomeScreen({ navigation }: Props) {
 
       <Pressable
         style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+        onPress={() => navigation.navigate('QubeeLettersHub')}
+      >
+        <Text style={styles.tileTitle}>Qubee Letters</Text>
+        <Text style={styles.recordedLine}>Alphabet — one recording per example word</Text>
+        <Text style={styles.tileHint}>One pronunciation clip per letter; admin approves before learners hear audio</Text>
+      </Pressable>
+
+      <Pressable
+        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
         onPress={() => navigation.navigate('AdminVocabIllustrationReview')}
       >
         <Text style={styles.tileTitle}>Vocab Center</Text>

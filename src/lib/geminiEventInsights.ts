@@ -53,23 +53,50 @@ export async function runGeminiAnalyticsInsights(events: unknown[]): Promise<Gem
     }
   }
 
-  const payload = JSON.stringify(events, null, 2)
-  const prompt = `You are a product analyst for a language-learning app (Dubbadhu).
+  const truncatedEvents = events
+  const payload = JSON.stringify(truncatedEvents, null, 2)
+  const prompt = `You are a Senior Mobile Product Growth Manager specializing in language-learning acquisition and user retention for the app "Dubbadhu" (an Afaan Oromo learning platform).
 
-Below is JSON: the last ${events.length} analytics events. Each item may include event_name, properties (JSON metadata), user_id, created_at.
+Your task is to analyze a raw JSON payload containing the last ${truncatedEvents.length} telemetry events from our users. Identify where users are gaining momentum and where they are getting stuck in the onboarding and learning funnel.
 
-Tasks:
-1. Summarize dominant event types and any patterns in properties (e.g. categories).
-2. Note anything unusual, sparse data, or risks.
-3. Give 3–5 concise, actionable recommendations for the team.
+Context (typical event families in this product — use only what appears in the payload):
+- Onboarding & activation: signup_started, signup_completed, activation_complete, app_opened
+- Lessons: lesson_started, lesson_completed, lesson_screen_viewed, lesson_exited
+- Practice / Dubbadhu tab: sentence_submitted, token_limit_* , tab_changed
+- Vocab: vocab_viewed, vocab_quiz_started, vocab_quiz_completed, vocab_quiz_abandoned
+- Monetization: subscription_viewed, premium_viewed, premium_purchased, subscription_cancel_intent
+- Community & engagement: community_* , session_end
 
-Keep the answer readable with short headings. Do not repeat the raw JSON.
+Focus your analysis heavily on early lifecycle milestones:
+- **Activation Velocity**: Are users successfully initiating and completing their very first lesson? Look for gaps between lesson_started and lesson_completed, time-to-first-completion, and drop-off after lesson_screen_viewed or lesson_exited without completion.
+- **Habit Formation**: Are there patterns showing users returning (repeat app_opened / session_end), recurring practice (sentence_submitted), vocab review, or multi-day engagement?
 
---- EVENTS JSON ---
-${payload}`
+When comparing funnels, segment mentally by user_id where possible. Call out sparse or missing properties (null/empty metadata) that block diagnosis.
+
+--- RAW TELEMETRY DATA ---
+\`\`\`json
+${payload}
+\`\`\`
+
+--- RESPONSE STRUCTURE ---
+Provide your analysis strictly adhering to the following Markdown layout. Keep insights punchy, direct, and hyper-focused on mobile growth mechanics.
+
+## 📊 Core Engagement Patterns
+* Provide 2-3 concise bullets on what the dominant events tell us about current user behavior (e.g., features getting heavy use vs. neglected areas).
+
+## ⚠️ Funnel Friction & Drop-offs
+* Identify specific bottlenecks or tracking anomalies.
+* Look closely at completion rates (e.g., did they start a lesson or practice module but fail to fire a completed event?). Note if any metadata properties are consistently sparse or missing.
+
+## 🚀 Strategic Growth Recommendations
+* **Recommendation 1 (Onboarding/Activation)**: [1-2 sentences on a tactical product change to get users to their first completed lesson faster]
+* **Recommendation 2 (Retention/Engagement)**: [1-2 sentences on how to incentivize daily habit formation or practice returns]
+* **Recommendation 3 (Telemetry/Tracking)**: [1-2 sentences on any critical event properties or logs we need to add to improve our data visibility]
+
+Do not repeat or print out raw blocks of the JSON payload. Keep your response highly scannable.`
 
   const text = await generateText(prompt)
-  if (text) return { ok: true, text, sourceLabel: `analytics_events (${events.length} rows)` }
+  if (text) return { ok: true, text, sourceLabel: `analytics_events (${truncatedEvents.length} rows)` }
   return { ok: false, error: 'No response from Gemini (empty or blocked). Check API key and model access.' }
 }
 

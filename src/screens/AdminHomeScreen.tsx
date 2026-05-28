@@ -4,6 +4,8 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import type { StackScreenProps } from '@react-navigation/stack'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
 import { useAuth } from '../context/AuthContext'
+import { fetchOpenCommunityBoardReportsCount } from '../lib/communityBoardReports'
+import { fetchPendingDiscussionReviewCount } from '../lib/discussionReviewQueue'
 import supabase from '../lib/supabase'
 import type { RootStackParamList } from '../types'
 
@@ -15,6 +17,8 @@ export default function AdminHomeScreen({ navigation }: Props) {
   const [usersTotal, setUsersTotal] = useState<number | null>(null)
   const [seriesTotal, setSeriesTotal] = useState<number | null>(null)
   const [unapprovedSeriesCount, setUnapprovedSeriesCount] = useState<number | null>(null)
+  const [openDiscussionReports, setOpenDiscussionReports] = useState<number | null>(null)
+  const [pendingDiscussionReviews, setPendingDiscussionReviews] = useState<number | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [initialLoadDone, setInitialLoadDone] = useState(false)
   const [error, setError] = useState('')
@@ -28,6 +32,8 @@ export default function AdminHomeScreen({ navigation }: Props) {
       usersRes,
       seriesTotalRes,
       unapprovedSeriesRes,
+      discussionReportsCount,
+      discussionReviewCount,
     ] = await Promise.all([
       supabase.from('words').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
       supabase.from('qubee_letters').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
@@ -37,6 +43,8 @@ export default function AdminHomeScreen({ navigation }: Props) {
         .from('lesson_series')
         .select('id', { count: 'exact', head: true })
         .or('approved.eq.false,approved.is.null'),
+      fetchOpenCommunityBoardReportsCount(),
+      fetchPendingDiscussionReviewCount(),
     ])
 
     const errs: string[] = []
@@ -69,6 +77,8 @@ export default function AdminHomeScreen({ navigation }: Props) {
     } else {
       setUnapprovedSeriesCount(unapprovedSeriesRes.count ?? 0)
     }
+    setOpenDiscussionReports(discussionReportsCount)
+    setPendingDiscussionReviews(discussionReviewCount)
     setError(errs.join('\n'))
   }, [])
 
@@ -139,6 +149,30 @@ export default function AdminHomeScreen({ navigation }: Props) {
           <Text style={styles.recordedCount}>{unapprovedCount ?? '—'}</Text>
         </Text>
         <Text style={styles.tileHint}>Tap to open Voice Recording (series list)</Text>
+      </Pressable>
+
+      <Pressable
+        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+        onPress={() => navigation.navigate('AdminDiscussionReview')}
+      >
+        <Text style={styles.tileTitle}>Discussion review queue</Text>
+        <Text style={styles.recordedLine}>
+          Pending AI review :{' '}
+          <Text style={styles.recordedCount}>{pendingDiscussionReviews ?? '—'}</Text>
+        </Text>
+        <Text style={styles.tileHint}>Approve or reject posts held before publication</Text>
+      </Pressable>
+
+      <Pressable
+        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+        onPress={() => navigation.navigate('AdminCommunityReports')}
+      >
+        <Text style={styles.tileTitle}>Lesson Discussion Reports</Text>
+        <Text style={styles.recordedLine}>
+          Open reports :{' '}
+          <Text style={styles.recordedCount}>{openDiscussionReports ?? '—'}</Text>
+        </Text>
+        <Text style={styles.tileHint}>Review learner reports · dismiss or remove posts from the board</Text>
       </Pressable>
 
       <Pressable

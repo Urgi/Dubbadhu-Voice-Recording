@@ -38,6 +38,10 @@ export type RootStackParamList = {
   AdminAnalytics: undefined
   /** Curate Practice tab “From the community” picks per WOTD day (max 7). */
   AdminPracticeSuggestions: undefined
+  /** Lesson discussion post reports from the learner app. */
+  AdminCommunityReports: undefined
+  /** AI moderation queue — approve or reject held discussion posts. */
+  AdminDiscussionReview: undefined
   LessonConfig: undefined
   LessonConfigSeries: { seriesId: string }
   LessonConfigDetail: {

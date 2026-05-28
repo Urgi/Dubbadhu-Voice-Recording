@@ -9,6 +9,8 @@ import ProfessorHomeScreen from './src/screens/ProfessorHomeScreen'
 import AdminHomeScreen from './src/screens/AdminHomeScreen'
 import AdminAnalyticsScreen from './src/screens/AdminAnalyticsScreen'
 import AdminPracticeSuggestionsScreen from './src/screens/AdminPracticeSuggestionsScreen'
+import AdminCommunityReportsScreen from './src/screens/AdminCommunityReportsScreen'
+import AdminDiscussionReviewScreen from './src/screens/AdminDiscussionReviewScreen'
 import AdminSeriesListScreen from './src/screens/AdminSeriesListScreen'
 import AdminSeriesDetailScreen from './src/screens/AdminSeriesDetailScreen'
 import AdminAudioReviewScreen from './src/screens/AdminAudioReviewScreen'
@@ -70,6 +72,16 @@ function AppStack() {
           name="AdminPracticeSuggestions"
           component={AdminPracticeSuggestionsScreen}
           options={{ title: 'Practice Suggestions' }}
+        />
+        <Stack.Screen
+          name="AdminCommunityReports"
+          component={AdminCommunityReportsScreen}
+          options={{ title: 'Discussion Reports' }}
+        />
+        <Stack.Screen
+          name="AdminDiscussionReview"
+          component={AdminDiscussionReviewScreen}
+          options={{ title: 'Discussion review queue' }}
         />
         <Stack.Screen name="AdminSeriesList" component={AdminSeriesListScreen} options={{ title: 'Voice Recording' }} />
         <Stack.Screen name="AdminSeriesDetail" component={AdminSeriesDetailScreen} />

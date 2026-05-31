@@ -532,7 +532,7 @@ function pickAllowedKeys(obj: Record<string, unknown>, allowed: Set<string>): Re
  * - Dialogue translations: hidden by default in `DialogueScreen.js` (learner can tap Show).
  * - Discrimination streak (legacy 2-word mode): `Dubbadhu/features/LessonTab/LessonModules/WordDiscriminationQuizScreen.js`
  */
-export const MATCH_DEFAULT_SUBTITLE_LINE = 'Tap left, then right'
+export const MATCH_DEFAULT_SUBTITLE_LINE = 'Tap a word, then its meaning'
 export const DISCRIMINATION_LEGACY_DEFAULT_STREAK_TARGET = 5
 
 /** Drop placeholder titles; keep only real overrides (matches learner `exposureTitleForDisplay`). */

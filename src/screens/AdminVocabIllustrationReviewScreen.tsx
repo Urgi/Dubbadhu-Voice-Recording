@@ -44,9 +44,18 @@ type WordRow = {
   series: string | null
   status: string
   vocab_text_approved: boolean
+  slow_audio_url: string | null
+  fast_audio_url: string | null
+  audio_ref: string | null
 }
 
-type FilterKey = 'all' | 'has_image' | 'no_image' | 'picture_friendly' | 'not_picture_friendly'
+type FilterKey =
+  | 'all'
+  | 'has_image'
+  | 'no_image'
+  | 'picture_friendly'
+  | 'not_picture_friendly'
+  | 'no_learner_audio'
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -54,7 +63,21 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'no_image', label: 'No image' },
   { key: 'picture_friendly', label: 'PictureFriendly' },
   { key: 'not_picture_friendly', label: 'Not picture-friendly' },
+  { key: 'no_learner_audio', label: 'Vocab w/ no audio' },
 ]
+
+function isHttpAudioUrl(value: string | null | undefined): boolean {
+  const v = String(value ?? '').trim()
+  return v.startsWith('https://') || v.startsWith('http://')
+}
+
+/** Matches learner app: playable when slow/fast storage URLs exist (or audio_ref is a remote URL). */
+function vocabRowHasLearnerPlayableAudio(r: Pick<WordRow, 'slow_audio_url' | 'fast_audio_url' | 'audio_ref'>): boolean {
+  if (isHttpAudioUrl(r.fast_audio_url) || isHttpAudioUrl(r.slow_audio_url)) return true
+  const ref = String(r.audio_ref ?? '').trim()
+  if (!ref || /^vocab-/i.test(ref)) return false
+  return isHttpAudioUrl(ref)
+}
 
 function escapeForILikeExact(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
@@ -202,7 +225,7 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
     const { data, error: e } = await supabase
       .from('words')
       .select(
-        'id, word, translation, category, part_of_speech, example, illustration_url, picture_friendly, series, status, vocab_text_approved',
+        'id, word, translation, category, part_of_speech, example, illustration_url, picture_friendly, series, status, vocab_text_approved, slow_audio_url, fast_audio_url, audio_ref',
       )
       .order('word', { ascending: true })
       .limit(5000)
@@ -231,6 +254,15 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
         vocab_text_approved: Boolean(
           (r as { vocab_text_approved?: unknown }).vocab_text_approved ?? true,
         ),
+        slow_audio_url: (r as { slow_audio_url?: unknown }).slow_audio_url
+          ? String((r as { slow_audio_url?: unknown }).slow_audio_url).trim()
+          : null,
+        fast_audio_url: (r as { fast_audio_url?: unknown }).fast_audio_url
+          ? String((r as { fast_audio_url?: unknown }).fast_audio_url).trim()
+          : null,
+        audio_ref: (r as { audio_ref?: unknown }).audio_ref
+          ? String((r as { audio_ref?: unknown }).audio_ref).trim()
+          : null,
       }))
       .filter((r) => r.id && r.word)
     setRows(out)
@@ -285,6 +317,8 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
           return friendly
         case 'not_picture_friendly':
           return !friendly
+        case 'no_learner_audio':
+          return isVocabularyRow(r) && !vocabRowHasLearnerPlayableAudio(r)
         default:
           return true
       }
@@ -964,6 +998,11 @@ export default function AdminVocabIllustrationReviewScreen({ navigation }: Props
                 <Text style={styles.textReviewBadgeText}>Awaiting text review</Text>
               </View>
             ) : null}
+            {isVocabularyRow(r) && !vocabRowHasLearnerPlayableAudio(r) ? (
+              <View style={styles.noAudioBadge}>
+                <Text style={styles.noAudioBadgeText}>Vocab w/ no audio</Text>
+              </View>
+            ) : null}
             <Text style={styles.metaSmall}>id {r.id}</Text>
           </View>
         </View>
@@ -1426,6 +1465,17 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(251,146,60,0.45)',
   },
   textReviewBadgeText: { color: '#fdba74', fontSize: 11, fontWeight: '800' },
+  noAudioBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: 'rgba(148,163,184,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.35)',
+  },
+  noAudioBadgeText: { color: '#cbd5e1', fontSize: 11, fontWeight: '800' },
   listContent: { padding: 16, paddingBottom: 40, gap: 16 },
   card: {
     backgroundColor: '#0b1220',

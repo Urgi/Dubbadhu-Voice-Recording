@@ -19,6 +19,7 @@ export default function AdminHomeScreen({ navigation }: Props) {
   const [unapprovedSeriesCount, setUnapprovedSeriesCount] = useState<number | null>(null)
   const [openDiscussionReports, setOpenDiscussionReports] = useState<number | null>(null)
   const [pendingDiscussionReviews, setPendingDiscussionReviews] = useState<number | null>(null)
+  const [freeAccessCount, setFreeAccessCount] = useState<number | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [initialLoadDone, setInitialLoadDone] = useState(false)
   const [error, setError] = useState('')
@@ -34,6 +35,7 @@ export default function AdminHomeScreen({ navigation }: Props) {
       unapprovedSeriesRes,
       discussionReportsCount,
       discussionReviewCount,
+      freeAccessRes,
     ] = await Promise.all([
       supabase.from('words').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
       supabase.from('qubee_letters').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
@@ -45,6 +47,11 @@ export default function AdminHomeScreen({ navigation }: Props) {
         .or('approved.eq.false,approved.is.null'),
       fetchOpenCommunityBoardReportsCount(),
       fetchPendingDiscussionReviewCount(),
+      supabase
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .eq('isPremium', true)
+        .is('premium_product_id', null),
     ])
 
     const errs: string[] = []
@@ -79,6 +86,12 @@ export default function AdminHomeScreen({ navigation }: Props) {
     }
     setOpenDiscussionReports(discussionReportsCount)
     setPendingDiscussionReviews(discussionReviewCount)
+    if (freeAccessRes?.error) {
+      errs.push(`free access: ${freeAccessRes.error.message}`)
+      setFreeAccessCount(null)
+    } else {
+      setFreeAccessCount(freeAccessRes?.count ?? 0)
+    }
     setError(errs.join('\n'))
   }, [])
 
@@ -184,6 +197,20 @@ export default function AdminHomeScreen({ navigation }: Props) {
           Curate “From the community” on Practice (7 per day, tied to Word of the Day)
         </Text>
         <Text style={styles.tileHint}>Select sentences that use today’s WOTD — learners see your picks first</Text>
+      </Pressable>
+
+      <Pressable
+        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+        onPress={() => navigation.navigate('AdminFreeAccess')}
+      >
+        <Text style={styles.tileTitle}>Free access</Text>
+        <Text style={styles.recordedLine}>
+          Complimentary Premium :{' '}
+          <Text style={styles.recordedCount}>{freeAccessCount ?? '—'}</Text>
+        </Text>
+        <Text style={styles.tileHint}>
+          isPremium true, no product id · search by phone · alert if store ppid exists
+        </Text>
       </Pressable>
 
       <Pressable

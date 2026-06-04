@@ -50,8 +50,8 @@ export default function AdminHomeScreen({ navigation }: Props) {
       supabase
         .from('users')
         .select('id', { count: 'exact', head: true })
-        .eq('isPremium', true)
-        .is('premium_product_id', null),
+        .eq('premium_source', 'complimentary')
+        .eq('isPremium', true),
     ])
 
     const errs: string[] = []

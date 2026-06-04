@@ -1,4 +1,5 @@
 import supabase from './supabase'
+import { getVocabBatchSecret } from './expoPublicEnv'
 
 export type FreeAccessUserRow = {
   id: string
@@ -7,18 +8,8 @@ export type FreeAccessUserRow = {
   last_name: string | null
   isPremium: boolean
   premium_product_id: string | null
+  premium_source: string | null
   created_at: string
-}
-
-/** Complimentary premium: `isPremium` without a store product mirror. */
-export function isFreeAccessRow(row: {
-  isPremium?: boolean | null
-  premium_product_id?: string | null
-}): boolean {
-  const premium =
-    row.isPremium === true || row.isPremium === 1 || String(row.isPremium) === 'true'
-  const ppid = row.premium_product_id
-  return premium && (ppid == null || String(ppid).trim() === '')
 }
 
 /** Search candidates for `users.phone` (E.164 and common US variants). */
@@ -48,13 +39,30 @@ export async function fetchFreeAccessUsers(limit = 80): Promise<{
 }> {
   const { data, error } = await supabase
     .from('users')
-    .select('id, phone, first_name, last_name, isPremium, premium_product_id, created_at')
+    .select(
+      'id, phone, first_name, last_name, isPremium, premium_product_id, premium_source, created_at',
+    )
+    .eq('premium_source', 'complimentary')
     .eq('isPremium', true)
-    .is('premium_product_id', null)
-    .order('created_at', { ascending: false })
+    .order('premium_granted_at', { ascending: false })
     .limit(limit)
 
-  if (error) return { data: null, error: error.message }
+  if (error) {
+    if (/premium_granted_at|premium_source/i.test(error.message)) {
+      const fallback = await supabase
+        .from('users')
+        .select(
+          'id, phone, first_name, last_name, isPremium, premium_product_id, premium_source, created_at',
+        )
+        .eq('isPremium', true)
+        .is('premium_product_id', null)
+        .order('created_at', { ascending: false })
+        .limit(limit)
+      if (fallback.error) return { data: null, error: fallback.error.message }
+      return { data: (fallback.data ?? []) as FreeAccessUserRow[], error: null }
+    }
+    return { data: null, error: error.message }
+  }
   return { data: (data ?? []) as FreeAccessUserRow[], error: null }
 }
 
@@ -66,7 +74,9 @@ export async function findUserByPhone(phoneInput: string): Promise<{
   for (const phone of variants) {
     const { data, error } = await supabase
       .from('users')
-      .select('id, phone, first_name, last_name, isPremium, premium_product_id, created_at')
+      .select(
+        'id, phone, first_name, last_name, isPremium, premium_product_id, premium_source, created_at',
+      )
       .eq('phone', phone)
       .maybeSingle()
     if (error) return { user: null, error: error.message }
@@ -75,70 +85,101 @@ export async function findUserByPhone(phoneInput: string): Promise<{
   return { user: null, error: null }
 }
 
-export type GrantFreeAccessResult =
+type GrantApiResult =
   | { ok: true }
   | { ok: false; error: string }
   | { ok: false; needsConfirm: true; user: FreeAccessUserRow; message: string }
 
-/**
- * Complimentary access: `isPremium` true, clear RevenueCat mirror fields (null ppid).
- */
-export async function grantFreeAccess(
-  userId: string,
-  options: { forceClearProductId?: boolean } = {},
-): Promise<GrantFreeAccessResult> {
-  const { data: row, error: fetchErr } = await supabase
-    .from('users')
-    .select('id, phone, first_name, last_name, isPremium, premium_product_id, created_at')
-    .eq('id', userId)
-    .maybeSingle()
+async function invokeAdminGrantPremium(body: Record<string, unknown>): Promise<GrantApiResult> {
+  const secret = getVocabBatchSecret()
+  if (!secret) {
+    return { ok: false, error: 'Missing EXPO_PUBLIC_VOCAB_BATCH_SECRET (or VOCAB_BATCH_SECRET) in admin .env' }
+  }
 
-  if (fetchErr) return { ok: false, error: fetchErr.message }
-  if (!row) return { ok: false, error: 'User not found' }
+  const { data, error } = await supabase.functions.invoke('admin-grant-premium', {
+    body,
+    headers: { 'x-admin-premium-secret': secret },
+  })
 
-  const user = row as FreeAccessUserRow
-  const existingPpid =
-    user.premium_product_id != null && String(user.premium_product_id).trim() !== ''
+  if (error) {
+    return { ok: false, error: error.message || 'invoke_failed' }
+  }
 
-  if (existingPpid && !options.forceClearProductId) {
+  const payload = data as {
+    ok?: boolean
+    needs_confirm?: boolean
+    message?: string
+    error?: string
+    user_id?: string
+  }
+
+  if (payload?.needs_confirm) {
     return {
       ok: false,
       needsConfirm: true,
-      user,
-      message:
-        `This user has a store product id (${user.premium_product_id}). ` +
-        'Free access clears premium_product_id so the learner app will not client-downgrade them. Continue?',
+      user: {
+        id: payload.user_id ?? '',
+        phone: null,
+        first_name: null,
+        last_name: null,
+        isPremium: true,
+        premium_product_id: null,
+        premium_source: 'store',
+        created_at: '',
+      },
+      message: payload.message ?? 'User has a store product id.',
     }
   }
 
-  if (isFreeAccessRow(user)) {
+  if (payload?.error) {
+    return { ok: false, error: payload.error }
+  }
+
+  if (payload?.ok) {
     return { ok: true }
   }
 
-  const { error: updateErr } = await supabase
-    .from('users')
-    .update({
-      isPremium: true,
-      premium_product_id: null,
-      premium_will_renew: null,
-      premium_expires_at: null,
-    })
-    .eq('id', userId)
+  return { ok: false, error: 'unknown_response' }
+}
 
-  if (updateErr) return { ok: false, error: updateErr.message }
-  return { ok: true }
+export async function grantFreeAccess(
+  userId: string,
+  options: { forceClearProductId?: boolean; grantedBy?: string } = {},
+): Promise<GrantApiResult> {
+  const result = await invokeAdminGrantPremium({
+    action: 'grant',
+    user_id: userId,
+    granted_by: options.grantedBy ?? 'admin_app',
+    force: options.forceClearProductId === true,
+  })
+
+  if (!result.ok && 'needsConfirm' in result && result.needsConfirm) {
+    const { data: row } = await supabase
+      .from('users')
+      .select(
+        'id, phone, first_name, last_name, isPremium, premium_product_id, premium_source, created_at',
+      )
+      .eq('id', userId)
+      .maybeSingle()
+    if (row) {
+      return {
+        ok: false,
+        needsConfirm: true,
+        user: row as FreeAccessUserRow,
+        message: result.message,
+      }
+    }
+  }
+
+  return result
 }
 
 export async function revokeFreeAccess(userId: string): Promise<{ ok: boolean; error: string | null }> {
-  const { error } = await supabase
-    .from('users')
-    .update({
-      isPremium: false,
-      premium_product_id: null,
-      premium_will_renew: null,
-      premium_expires_at: null,
-    })
-    .eq('id', userId)
-  if (error) return { ok: false, error: error.message }
-  return { ok: true, error: null }
+  const result = await invokeAdminGrantPremium({
+    action: 'revoke',
+    user_id: userId,
+    granted_by: 'admin_app',
+  })
+  if (result.ok) return { ok: true, error: null }
+  return { ok: false, error: 'error' in result ? result.error : 'revoke_failed' }
 }

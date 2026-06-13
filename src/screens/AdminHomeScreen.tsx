@@ -30,6 +30,7 @@ export default function AdminHomeScreen({ navigation }: Props) {
     const [
       unapprovedRes,
       qubeeUnapprovedRes,
+      fidelUnapprovedRes,
       usersRes,
       seriesTotalRes,
       unapprovedSeriesRes,
@@ -39,6 +40,7 @@ export default function AdminHomeScreen({ navigation }: Props) {
     ] = await Promise.all([
       supabase.from('words').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
       supabase.from('qubee_letters').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
+      supabase.from('fidel_letters').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
       supabase.from('users').select('id', { count: 'exact', head: true }),
       supabase.from('lesson_series').select('id', { count: 'exact', head: true }),
       supabase
@@ -57,12 +59,13 @@ export default function AdminHomeScreen({ navigation }: Props) {
     const errs: string[] = []
     const wordPending = unapprovedRes.error ? null : (unapprovedRes.count ?? 0)
     const qubeePending = qubeeUnapprovedRes.error ? null : (qubeeUnapprovedRes.count ?? 0)
+    const fidelPending = fidelUnapprovedRes.error ? null : (fidelUnapprovedRes.count ?? 0)
     if (unapprovedRes.error) errs.push(unapprovedRes.error.message)
     if (qubeeUnapprovedRes.error) errs.push(`qubee_letters: ${qubeeUnapprovedRes.error.message}`)
-    if (wordPending != null && qubeePending != null) {
-      setUnapprovedCount(wordPending + qubeePending)
-    } else if (wordPending != null) {
-      setUnapprovedCount(wordPending)
+    if (fidelUnapprovedRes.error) errs.push(`fidel_letters: ${fidelUnapprovedRes.error.message}`)
+    const pendingParts = [wordPending, qubeePending, fidelPending].filter((n) => n != null) as number[]
+    if (pendingParts.length > 0) {
+      setUnapprovedCount(pendingParts.reduce((sum, n) => sum + n, 0))
     } else {
       setUnapprovedCount(null)
     }
@@ -232,6 +235,15 @@ export default function AdminHomeScreen({ navigation }: Props) {
         <Text style={styles.tileTitle}>Qubee Letters</Text>
         <Text style={styles.recordedLine}>Alphabet recordings + approval queue</Text>
         <Text style={styles.tileHint}>One audio clip per letter — same approve / re-record flow as vocabulary</Text>
+      </Pressable>
+
+      <Pressable
+        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+        onPress={() => navigation.navigate('FidelLettersHub')}
+      >
+        <Text style={styles.tileTitle}>Fidel Letters</Text>
+        <Text style={styles.recordedLine}>Ge&apos;ez syllable recordings + approval queue</Text>
+        <Text style={styles.tileHint}>Approve Emenet&apos;s syllable clips — learners hear them in Fidel Quiz</Text>
       </Pressable>
 
       <Pressable

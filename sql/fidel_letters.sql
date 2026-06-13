@@ -1,0 +1,2 @@
+-- Mirror of Dubbadhu/supabase/migrations/20260610140000_fidel_letters.sql
+-- Amharic Fidel syllable audio for learner quiz + alphabet playback.

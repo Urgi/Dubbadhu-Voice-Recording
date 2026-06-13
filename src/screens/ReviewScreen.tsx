@@ -2,24 +2,41 @@ import { useLayoutEffect, useState } from 'react'
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { useRemoteAudioUrl } from '../hooks/useRemoteAudioUrl'
+import { useAuth } from '../context/AuthContext'
 import type { RecordingWord, RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'Review'>
 
+function doneRouteForTable(
+  recordingTable: RootStackParamList['Review']['recordingTable'],
+): keyof RootStackParamList {
+  if (recordingTable === 'fidel_letters') return 'FidelLettersHub'
+  if (recordingTable === 'qubee_letters') return 'QubeeLettersHub'
+  return 'VoiceActorHome'
+}
+
 export default function ReviewScreen({ navigation, route }: Props) {
-  const { recordedWords } = route.params
+  const { recordedWords, recordingTable } = route.params
+  const { role } = useAuth()
   const [submitted, setSubmitted] = useState(false)
-  const { playUrl, stop, playingId } = useRemoteAudioUrl()
+  const { playUrl, playingId } = useRemoteAudioUrl()
 
   useLayoutEffect(() => {
     navigation.setOptions({ title: 'Review & Submit' })
   }, [navigation])
 
-  const onReRecord = (item: RecordingWord) => {
-    void stop()
-    navigation.replace('Recording', {
-      words: [item],
-      mergeIntoSession: recordedWords,
+  const onDone = () => {
+    if (recordingTable === 'fidel_letters' && role === 'fidel') {
+      navigation.reset({
+        index: 1,
+        routes: [{ name: 'FidelRecorderHome' }, { name: 'FidelLettersHub' }],
+      })
+      return
+    }
+    const routeName = doneRouteForTable(recordingTable)
+    navigation.reset({
+      index: 0,
+      routes: [{ name: routeName }],
     })
   }
 
@@ -30,6 +47,9 @@ export default function ReviewScreen({ navigation, route }: Props) {
   const renderItem = ({ item }: { item: RecordingWord }) => (
     <View style={styles.row}>
       <View style={styles.rowMain}>
+        {item.fidelSymbol ? (
+          <Text style={styles.fidelSymbol}>{item.fidelSymbol}</Text>
+        ) : null}
         <Text style={styles.word}>{item.word}</Text>
         <Text style={styles.series}>{item.series}</Text>
         <View style={styles.actions}>
@@ -38,19 +58,29 @@ export default function ReviewScreen({ navigation, route }: Props) {
             onPress={() => void playUrl(item.slow_audio_url, `${item.id}-slow`)}
           >
             <Text style={styles.pillBtnText}>
-              {playingId === `${item.id}-slow` ? 'Stop slow' : 'Play slow'}
+              {playingId === `${item.id}-slow` ? 'Stop' : 'Play'}
             </Text>
           </Pressable>
-          <Pressable
-            style={styles.pillBtn}
-            onPress={() => void playUrl(item.fast_audio_url, `${item.id}-fast`)}
-          >
-            <Text style={styles.pillBtnText}>
-              {playingId === `${item.id}-fast` ? 'Stop fast' : 'Play fast'}
-            </Text>
-          </Pressable>
+          {!recordingTable || recordingTable === 'words' ? (
+            <Pressable
+              style={styles.pillBtn}
+              onPress={() => void playUrl(item.fast_audio_url, `${item.id}-fast`)}
+            >
+              <Text style={styles.pillBtnText}>
+                {playingId === `${item.id}-fast` ? 'Stop fast' : 'Play fast'}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
-        <Pressable onPress={() => onReRecord(item)}>
+        <Pressable
+          onPress={() =>
+            navigation.replace('Recording', {
+              words: [item],
+              mergeIntoSession: recordedWords,
+              recordingTable,
+            })
+          }
+        >
           <Text style={styles.reRecord}>Re-record</Text>
         </Pressable>
       </View>
@@ -63,16 +93,14 @@ export default function ReviewScreen({ navigation, route }: Props) {
         <Text style={styles.successTitle}>
           {recordedWords.length} recordings submitted! Great work.
         </Text>
-        <Pressable
-          style={styles.doneBtn}
-          onPress={() => {
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'VoiceActorHome' }],
-            })
-          }}
-        >
-          <Text style={styles.doneBtnText}>Back to studio</Text>
+        <Pressable style={styles.doneBtn} onPress={onDone}>
+          <Text style={styles.doneBtnText}>
+            {recordingTable === 'fidel_letters'
+              ? 'Back to Fidel letters'
+              : recordingTable === 'qubee_letters'
+                ? 'Back to Qubee letters'
+                : 'Back to studio'}
+          </Text>
         </Pressable>
       </View>
     )
@@ -123,6 +151,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   rowMain: {},
+  fidelSymbol: {
+    color: '#ffffff',
+    fontSize: 32,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
   word: {
     color: '#ffffff',
     fontSize: 18,

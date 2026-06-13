@@ -13,9 +13,10 @@ import Slider from '@react-native-community/slider'
 import { trim as nativeTrim } from 'react-native-video-trim'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
+import { useAuth } from '../context/AuthContext'
 import supabase from '../lib/supabase'
 import { formatQubeeLetterDisplay } from '../lib/qubeeLetters'
-import { qubeeAudioStoragePath, uploadVoiceM4a, voiceStoragePaths } from '../lib/voiceUpload'
+import { fidelAudioStoragePath, qubeeAudioStoragePath, uploadVoiceM4a, voiceStoragePaths } from '../lib/voiceUpload'
 import type { RecordingWord, RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'Recording'>
@@ -194,7 +195,15 @@ function TrimWaveEditor({
 
 export default function RecordingScreen({ navigation, route }: Props) {
   const { words: initialWords, mergeIntoSession, seriesSession, recordingTable = 'words' } = route.params
+  const { role } = useAuth()
   const audio = useAudioRecorder()
+
+  useEffect(() => {
+    if (recordingTable === 'fidel_letters' && role !== 'fidel') {
+      Alert.alert('Not allowed', 'Only the Fidel recorder can upload Fidel syllable audio.')
+      navigation.goBack()
+    }
+  }, [navigation, recordingTable, role])
 
   const initialTotalRef = useRef(initialWords.length)
   const [queue, setQueue] = useState<RecordingWord[]>(() => [...initialWords])
@@ -270,7 +279,8 @@ export default function RecordingScreen({ navigation, route }: Props) {
     setRecordingSlot(null)
   }, [audio])
 
-  const isSingleTake = recordingTable === 'qubee_letters'
+  const isSingleTake = recordingTable === 'qubee_letters' || recordingTable === 'fidel_letters'
+  const isFidelTake = recordingTable === 'fidel_letters'
   const bothReady = isSingleTake ? Boolean(slowUri) : Boolean(slowUri && fastUri)
 
   const titleCase = useCallback((s: string) => {
@@ -529,14 +539,18 @@ export default function RecordingScreen({ navigation, route }: Props) {
       let fastUrl: string | null = null
 
       if (isSingleTake) {
-        slowUrl = await uploadVoiceM4a(slowUri, qubeeAudioStoragePath(current.id))
+        const storagePath = isFidelTake
+          ? fidelAudioStoragePath(current.id)
+          : qubeeAudioStoragePath(current.id)
+        slowUrl = await uploadVoiceM4a(slowUri, storagePath)
         const payload = {
           audio_url: slowUrl,
           status: 'recorded' as const,
           recorded_at: recordedAt,
           updated_at: recordedAt,
         }
-        const { error } = await supabase.from('qubee_letters').update(payload).eq('id', current.id)
+        const table = isFidelTake ? 'fidel_letters' : 'qubee_letters'
+        const { error } = await supabase.from(table).update(payload).eq('id', current.id)
         if (error) throw new Error(error.message)
       } else {
         const paths = voiceStoragePaths(current.id, current.series)
@@ -566,13 +580,13 @@ export default function RecordingScreen({ navigation, route }: Props) {
 
       if (mergeIntoSession != null) {
         const next = mergeIntoSession.map((w) => (w.id === merged.id ? merged : w))
-        navigation.navigate('Review', { recordedWords: next })
+        navigation.navigate('Review', { recordedWords: next, recordingTable })
         return
       }
 
       const nextSession = [...sessionRecorded, merged]
       if (queue.length <= 1) {
-        navigation.navigate('Review', { recordedWords: nextSession })
+        navigation.navigate('Review', { recordedWords: nextSession, recordingTable })
       } else {
         setSessionRecorded(nextSession)
         setQueue((q) => q.slice(1))
@@ -783,6 +797,12 @@ export default function RecordingScreen({ navigation, route }: Props) {
                 {current.word}
               </Text>
             </>
+          ) : isFidelTake && current.fidelSymbol ? (
+            <>
+              <Text style={styles.qubeeRecordHint}>Record this syllable sound only</Text>
+              <Text style={styles.fidelSymbolHero}>{current.fidelSymbol}</Text>
+              <Text style={styles.fidelSoundHint}>{current.word}</Text>
+            </>
           ) : (
             <Text style={styles.wordText} numberOfLines={2}>
               {current.word}
@@ -909,6 +929,18 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '700',
     lineHeight: 34,
+  },
+  fidelSymbolHero: {
+    color: '#ffffff',
+    fontSize: 56,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  fidelSoundHint: {
+    color: ACCENT_GREEN,
+    fontSize: 32,
+    fontWeight: '700',
+    lineHeight: 38,
   },
   wordText: {
     color: '#ffffff',

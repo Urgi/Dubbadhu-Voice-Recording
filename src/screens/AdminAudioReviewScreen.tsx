@@ -2,8 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { useRemoteAudioUrl } from '../hooks/useRemoteAudioUrl'
+import { approveFidelLetterRecording } from '../lib/approveFidelLetterRecording'
 import { approveQubeeLetterRecording } from '../lib/approveQubeeLetterRecording'
 import { approveWordRecording } from '../lib/approveWordRecording'
+import {
+  fidelRowToRecordingWord,
+  normalizeFidelRows,
+  sortFidelRowsByChartOrder,
+} from '../lib/fidelLetters'
 import {
   normalizeQubeeRows,
   qubeeRowToRecordingWord,
@@ -17,6 +23,7 @@ type Props = StackScreenProps<RootStackParamList, 'AdminAudioReview'>
 
 export default function AdminAudioReviewScreen({ navigation, route }: Props) {
   const qubeeOnly = route.params?.qubeeOnly === true
+  const fidelOnly = route.params?.fidelOnly === true
   const [queue, setQueue] = useState<AudioReviewItem[]>([])
   const [index, setIndex] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -33,7 +40,7 @@ export default function AdminAudioReviewScreen({ navigation, route }: Props) {
     setError('')
     const items: AudioReviewItem[] = []
 
-    if (!qubeeOnly) {
+    if (!qubeeOnly && !fidelOnly) {
       const { data, error: fetchError } = await supabase
         .from('words')
         .select('*')
@@ -66,26 +73,57 @@ export default function AdminAudioReviewScreen({ navigation, route }: Props) {
       return
     }
 
-    const qRows = sortQubeeRowsByAppOrder(
-      normalizeQubeeRows(qData ?? []).filter(
-        (r) => r.status === 'recorded' && Boolean(r.audio_url?.trim()),
-      ),
-    ).map((r) => {
+    if (!fidelOnly) {
+      const qRows = sortQubeeRowsByAppOrder(
+        normalizeQubeeRows(qData ?? []).filter(
+          (r) => r.status === 'recorded' && Boolean(r.audio_url?.trim()),
+        ),
+      ).map((r) => {
         const w = qubeeRowToRecordingWord(r)
         return { ...w, reviewSource: 'qubee_letters' as const }
       })
-    items.push(...qRows)
+      items.push(...qRows)
+    }
+
+    const { data: fData, error: fError } = await supabase
+      .from('fidel_letters')
+      .select('*')
+      .eq('status', 'recorded')
+      .not('audio_url', 'is', null)
+
+    if (fError) {
+      setError(fError.message)
+      setQueue([])
+      return
+    }
+
+    if (!qubeeOnly) {
+      const fRows = sortFidelRowsByChartOrder(
+        normalizeFidelRows(fData ?? []).filter(
+          (r) => r.status === 'recorded' && Boolean(r.audio_url?.trim()),
+        ),
+      ).map((r) => {
+        const w = fidelRowToRecordingWord(r)
+        return { ...w, reviewSource: 'fidel_letters' as const }
+      })
+      items.push(...fRows)
+    }
 
     items.sort((a, b) => {
-      const sa = a.reviewSource === 'qubee_letters' ? `Qubee ${a.qubeeLetter ?? ''}` : a.series
-      const sb = b.reviewSource === 'qubee_letters' ? `Qubee ${b.qubeeLetter ?? ''}` : b.series
+      const label = (item: AudioReviewItem) => {
+        if (item.reviewSource === 'qubee_letters') return `Qubee ${item.qubeeLetter ?? ''}`
+        if (item.reviewSource === 'fidel_letters') return `Fidel ${item.fidelSymbol ?? ''}`
+        return item.series
+      }
+      const sa = label(a)
+      const sb = label(b)
       if (sa !== sb) return sa.localeCompare(sb)
       return a.word.localeCompare(b.word)
     })
 
     setQueue(items)
     setIndex(0)
-  }, [qubeeOnly])
+  }, [fidelOnly, qubeeOnly])
 
   const titleCase = useCallback((s: string) => {
     return String(s ?? '')
@@ -98,9 +136,13 @@ export default function AdminAudioReviewScreen({ navigation, route }: Props) {
 
   useEffect(() => {
     navigation.setOptions({
-      title: qubeeOnly ? 'Qubee Audio Approval' : 'Audio Approval Queue',
+      title: fidelOnly
+        ? 'Fidel Audio Approval'
+        : qubeeOnly
+          ? 'Qubee Audio Approval'
+          : 'Audio Approval Queue',
     })
-  }, [navigation, qubeeOnly])
+  }, [fidelOnly, navigation, qubeeOnly])
 
   useEffect(() => {
     let active = true
@@ -134,9 +176,11 @@ export default function AdminAudioReviewScreen({ navigation, route }: Props) {
     if (!current || saving) return
     setSaving(true)
     const { error: updateError } =
-      current.reviewSource === 'qubee_letters'
-        ? await approveQubeeLetterRecording(current.id)
-        : await approveWordRecording(current.id)
+      current.reviewSource === 'fidel_letters'
+        ? await approveFidelLetterRecording(current.id)
+        : current.reviewSource === 'qubee_letters'
+          ? await approveQubeeLetterRecording(current.id)
+          : await approveWordRecording(current.id)
     setSaving(false)
     if (updateError) {
       setError(updateError.message)
@@ -156,13 +200,20 @@ export default function AdminAudioReviewScreen({ navigation, route }: Props) {
     setSaving(true)
     const noteLine = `[${new Date().toISOString().slice(0, 10)}] Re-record requested`
     const nextNotes = current.notes?.trim() ? `${current.notes.trim()}\n${noteLine}` : noteLine
-    const table = current.reviewSource === 'qubee_letters' ? 'qubee_letters' : 'words'
+    const table =
+      current.reviewSource === 'fidel_letters'
+        ? 'fidel_letters'
+        : current.reviewSource === 'qubee_letters'
+          ? 'qubee_letters'
+          : 'words'
     const { error: updateError } = await supabase
       .from(table)
       .update({
         status: 'rerecord_requested',
         notes: nextNotes,
-        ...(table === 'qubee_letters' ? { updated_at: new Date().toISOString() } : {}),
+        ...(table === 'qubee_letters' || table === 'fidel_letters'
+          ? { updated_at: new Date().toISOString() }
+          : {}),
       })
       .eq('id', current.id)
     setSaving(false)
@@ -244,13 +295,15 @@ export default function AdminAudioReviewScreen({ navigation, route }: Props) {
       <Text style={styles.progress}>{progressLabel}</Text>
       <Text style={styles.word}>{current.word}</Text>
       <Text style={styles.meta}>
-        {current.reviewSource === 'qubee_letters'
-          ? `Qubee · Letter ${current.qubeeLetter ?? '—'}`
-          : `${current.series} · ${titleCase(current.language)}`}
+        {current.reviewSource === 'fidel_letters'
+          ? `Fidel · ${current.fidelSymbol ?? '—'} (${current.word})`
+          : current.reviewSource === 'qubee_letters'
+            ? `Qubee · Letter ${current.qubeeLetter ?? '—'}`
+            : `${current.series} · ${titleCase(current.language)}`}
       </Text>
 
       <View style={styles.playRow}>
-        {current.reviewSource === 'qubee_letters' ? (
+        {current.reviewSource === 'qubee_letters' || current.reviewSource === 'fidel_letters' ? (
           <Pressable
             style={styles.playBtn}
             onPress={() => void playUrl(current.slow_audio_url, `${current.id}-audio`)}

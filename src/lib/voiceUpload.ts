@@ -46,3 +46,8 @@ export function voiceStoragePaths(wordId: string, series: string) {
 export function qubeeAudioStoragePath(letterId: string) {
   return `Qubee/${letterId}.m4a`
 }
+
+/** Single clip for Amharic Fidel syllables. */
+export function fidelAudioStoragePath(letterId: string) {
+  return `Fidel/${letterId}.m4a`
+}

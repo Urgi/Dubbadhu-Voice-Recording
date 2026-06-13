@@ -3,13 +3,16 @@ import { Pressable, StyleSheet, Text, View } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import type { RootStackParamList } from '../types'
 import { useAuth } from '../context/AuthContext'
+import {
+  ADMIN_PIN,
+  FIDEL_RECORDER_PIN,
+  PROFESSOR_PIN,
+  VOICE_PIN,
+} from '../config/internalPins'
 
 type Props = StackScreenProps<RootStackParamList, 'Login'>
 
 const PIN_LENGTH = 4
-const ADMIN_PIN = '5139'
-const VOICE_PIN = '3142'
-const PROFESSOR_PIN = '4126'
 
 const KEYPAD_ROWS: (string | null)[][] = [
   ['1', '2', '3'],
@@ -44,6 +47,13 @@ export default function LoginScreen({ navigation }: Props) {
         setError('')
         setPin('')
         navigation.reset({ index: 0, routes: [{ name: 'ProfessorHome' }] })
+        return
+      }
+      if (fullPin === FIDEL_RECORDER_PIN) {
+        setRole('fidel')
+        setError('')
+        setPin('')
+        navigation.reset({ index: 0, routes: [{ name: 'FidelRecorderHome' }] })
         return
       }
       setError('Incorrect PIN')

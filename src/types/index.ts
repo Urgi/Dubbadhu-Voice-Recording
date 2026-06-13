@@ -18,16 +18,18 @@ export type RecordingWord = {
   created_at: string
   /** Set when recording Qubee alphabet rows (display letter in UI). */
   qubeeLetter?: string
+  /** Set when recording Fidel syllable rows (Ge'ez symbol in UI). */
+  fidelSymbol?: string
 }
 
-export type RecordingTable = 'words' | 'qubee_letters'
+export type RecordingTable = 'words' | 'qubee_letters' | 'fidel_letters'
 
 /** Unified admin audio approval queue item. */
 export type AudioReviewItem = RecordingWord & {
   reviewSource: RecordingTable
 }
 
-export type AuthRole = 'admin' | 'voice' | 'professor'
+export type AuthRole = 'admin' | 'voice' | 'professor' | 'fidel'
 
 export type RootStackParamList = {
   Login: undefined
@@ -53,8 +55,10 @@ export type RootStackParamList = {
   }
   AdminSeriesList: undefined
   AdminSeriesDetail: { seriesName: string; language: string }
-  AdminAudioReview: { qubeeOnly?: boolean } | undefined
+  AdminAudioReview: { qubeeOnly?: boolean; fidelOnly?: boolean } | undefined
   QubeeLettersHub: undefined
+  FidelRecorderHome: undefined
+  FidelLettersHub: undefined
   /** QA vocabulary quiz illustrations (good/bad + notes for regeneration). */
   AdminVocabIllustrationReview: undefined
   AdminSeriesAudioReview: { seriesName: string; language: string }
@@ -69,5 +73,5 @@ export type RootStackParamList = {
     /** Voice actor: started from a series card — show series + words-left banner */
     seriesSession?: { series: string; language: string }
   }
-  Review: { recordedWords: RecordingWord[] }
+  Review: { recordedWords: RecordingWord[]; recordingTable?: RecordingTable }
 }

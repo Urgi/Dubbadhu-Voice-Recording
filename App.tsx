@@ -23,6 +23,8 @@ import LessonConfigDetailScreen from './src/screens/LessonConfigDetailScreen'
 import VoiceActorHomeScreen from './src/screens/VoiceActorHomeScreen'
 import VoiceActorDashboardScreen from './src/screens/VoiceActorDashboardScreen'
 import QubeeLettersHubScreen from './src/screens/QubeeLettersHubScreen'
+import FidelRecorderHomeScreen from './src/screens/FidelRecorderHomeScreen'
+import FidelLettersHubScreen from './src/screens/FidelLettersHubScreen'
 import { AuthProvider } from './src/context/AuthContext'
 import type { RootStackParamList } from './src/types'
 
@@ -112,6 +114,16 @@ function AppStack() {
           name="QubeeLettersHub"
           component={QubeeLettersHubScreen}
           options={{ title: 'Qubee Letters' }}
+        />
+        <Stack.Screen
+          name="FidelRecorderHome"
+          component={FidelRecorderHomeScreen}
+          options={{ title: 'Fidel Recording' }}
+        />
+        <Stack.Screen
+          name="FidelLettersHub"
+          component={FidelLettersHubScreen}
+          options={{ title: 'Fidel Letters' }}
         />
         <Stack.Screen name="Recording" component={RecordingScreen} options={{ title: 'Recording' }} />
         <Stack.Screen name="Review" component={ReviewScreen} options={{ title: 'Review' }} />

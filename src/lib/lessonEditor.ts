@@ -311,9 +311,10 @@ export function mapDialogueSide(input: Record<string, unknown> | undefined): Rec
   const linesSrc = input?.lines
   let lines: string[] = []
   if (Array.isArray(linesSrc)) {
-    lines = linesSrc.map((x) => String(x ?? '').trim())
+    // Preserve spaces while typing — trim only at validation/save, not on every normalize.
+    lines = linesSrc.map((x) => String(x ?? ''))
   } else if (typeof linesSrc === 'string') {
-    lines = linesSrc.split(/\r?\n/).map((s) => s.trim())
+    lines = linesSrc.split(/\r?\n/).map((s) => String(s ?? ''))
   }
   if (lines.length === 0) lines = ['']
   const transSrc = input?.translations

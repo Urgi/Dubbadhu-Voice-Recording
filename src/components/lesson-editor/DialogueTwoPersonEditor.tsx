@@ -337,7 +337,7 @@ export function DialogueTwoPersonEditor({
       <Text style={styles.hint}>
         {readOnly
           ? 'Learners see translations only after they tap Show on the device.'
-          : 'Person 1 speaks first in the app. Under “Next line”, pick who speaks, then enter line + translation (both required). Learners see translations only after they tap Show on the device.'}
+          : 'Person 1 speaks first in the app. Under “Next line”, pick who speaks, then enter line + translation (both required). Afaan lines appear fully bold in the app; wrap specific words in *asterisks* to emphasize only those words. Learners see translations only after they tap Show on the device.'}
       </Text>
       <Text style={styles.sectionTitle}>Names</Text>
       <Text style={styles.fieldLabel}>Person 1</Text>

@@ -2000,6 +2000,8 @@ export function LessonScreenEditModal({
   const [draft, setDraft] = useState<LessonScreen | null>(null)
   const [jsonFallback, setJsonFallback] = useState('')
   const [jsonError, setJsonError] = useState('')
+  const [screenSaveBusy, setScreenSaveBusy] = useState(false)
+  const modalScrollRef = useRef<ScrollView>(null)
   /** Which quiz question index is showing the “correct answer” picker (`null` = closed). */
   const [quizCorrectModalQ, setQuizCorrectModalQ] = useState<number | null>(null)
   /** Accordion: only one quiz question body expanded at a time. */
@@ -2019,6 +2021,17 @@ export function LessonScreenEditModal({
   const primaryScreenSaveRef = useRef<(() => void) | null>(null)
   const registerPrimaryScreenSave = useCallback((fn: () => void) => {
     primaryScreenSaveRef.current = fn
+  }, [])
+
+  /** Professors often scroll past the top error line — alert + scroll so save failures are visible. */
+  const reportScreenSaveError = useCallback((message: string) => {
+    const msg = message.trim()
+    if (!msg) return
+    setJsonError(msg)
+    requestAnimationFrame(() => {
+      modalScrollRef.current?.scrollToEnd({ animated: true })
+    })
+    Alert.alert('Could not save screen', msg)
   }, [])
 
   /**
@@ -2258,7 +2271,7 @@ export function LessonScreenEditModal({
     const fn = translationConflictResolveRef.current
     translationConflictResolveRef.current = null
     fn?.(choice)
-    if (choice === 'cancel') setTranslationConflict(null)
+    setTranslationConflict(null)
   }, [])
 
   useEffect(() => {
@@ -2301,7 +2314,7 @@ export function LessonScreenEditModal({
           { type: 'audioExposure', content } as LessonScreen,
         ])
         if (gaps.length > 0) {
-          setJsonError(formatAudioExposureDraftGapsForLessonSave(gaps))
+          reportScreenSaveError(formatAudioExposureDraftGapsForLessonSave(gaps))
           return
         }
       }
@@ -2320,7 +2333,7 @@ export function LessonScreenEditModal({
         { type: 'audioExposure', content } as LessonScreen,
       ])
       if (gaps.length > 0) {
-        setJsonError(formatAudioExposureDraftGapsForLessonSave(gaps))
+        reportScreenSaveError(formatAudioExposureDraftGapsForLessonSave(gaps))
         return
       }
     }
@@ -2991,8 +3004,12 @@ export function LessonScreenEditModal({
         if (!Array.isArray(words)) words = []
         primaryScreenSaveRef.current = () => {
           void (async () => {
-            if (audioExposureBankSaveBusyRef.current) return
+            if (audioExposureBankSaveBusyRef.current) {
+              Alert.alert('Save in progress', 'Please wait for the current save to finish.')
+              return
+            }
             audioExposureBankSaveBusyRef.current = true
+            setScreenSaveBusy(true)
             try {
               setJsonError('')
               const current = draftRef.current
@@ -3002,7 +3019,7 @@ export function LessonScreenEditModal({
               )
               const ws = (c2.words as Record<string, unknown>[] | undefined) ?? []
               if (!Array.isArray(ws) || ws.length < 1) {
-                setJsonError(
+                reportScreenSaveError(
                   allowJsonEditing
                     ? 'Audio exposure needs at least one word. Add a word or use Apply JSON & close.'
                     : 'Audio exposure needs at least one word. Add a word first.',
@@ -3023,7 +3040,7 @@ export function LessonScreenEditModal({
                 { type: 'audioExposure', content: { ...c2, words: resolvedWords } } as LessonScreen,
               ])
               if (gaps.length > 0) {
-                setJsonError(formatAudioExposureDraftGapsForLessonSave(gaps))
+                reportScreenSaveError(formatAudioExposureDraftGapsForLessonSave(gaps))
                 return
               }
               setTranslationConflict(null)
@@ -3031,9 +3048,10 @@ export function LessonScreenEditModal({
             } catch (e) {
               setTranslationConflict(null)
               const msg = e instanceof Error ? e.message : String(e)
-              setJsonError(msg)
+              reportScreenSaveError(msg)
             } finally {
               audioExposureBankSaveBusyRef.current = false
+              setScreenSaveBusy(false)
             }
           })()
         }
@@ -3075,7 +3093,6 @@ export function LessonScreenEditModal({
                         const nx: Record<string, unknown> = { ...prev, word: t }
                         delete nx.oromo
                         delete nx.english
-                        delete nx.translation
                         return nx
                       })
                       return { ...cur, words: next }
@@ -3816,6 +3833,7 @@ export function LessonScreenEditModal({
           ) : (
           <Pressable
             onPress={() => {
+              if (screenSaveBusy) return
               if (STRUCTURED_SCREEN_TYPES_FOR_HEADER_SAVE.has(draft.type)) {
                 primaryScreenSaveRef.current?.()
                 return
@@ -3823,13 +3841,15 @@ export function LessonScreenEditModal({
               if (allowJsonEditing) applyJsonFallback()
             }}
             hitSlop={8}
-            style={styles.modalHeaderSave}
+            style={[styles.modalHeaderSave, screenSaveBusy && styles.modalHeaderSaveDisabled]}
+            disabled={screenSaveBusy}
           >
-            <Text style={styles.modalHeaderSaveText}>Save</Text>
+            <Text style={styles.modalHeaderSaveText}>{screenSaveBusy ? 'Saving…' : 'Save'}</Text>
           </Pressable>
           )}
         </View>
         <ScrollView
+          ref={modalScrollRef}
           style={styles.modalScroll}
           contentContainerStyle={styles.modalScrollContent}
           keyboardShouldPersistTaps="always"
@@ -3843,12 +3863,18 @@ export function LessonScreenEditModal({
                   ? 'Preview only — same fields as admins see; changes are not saved.'
                   : allowJsonEditing
                   ? 'Adjust inputs below to modify/create screen.'
+                  : draft.type === 'audioExposure'
+                  ? 'Sample learner UI is shown below the word list so you can match fields to what students see.'
                   : 'Sample learner UI is shown above the form so you can match fields to what students see.'}
               </Text>
             </View>
           )}
-          {!allowJsonEditing ? <LessonScreenLearnerPreview screenType={draft.type} /> : null}
-          {!allowJsonEditing && jsonError ? <Text style={styles.jsonErr}>{jsonError}</Text> : null}
+          {!allowJsonEditing && draft.type !== 'audioExposure' ? (
+            <LessonScreenLearnerPreview screenType={draft.type} />
+          ) : null}
+          {!allowJsonEditing && jsonError && draft.type !== 'audioExposure' ? (
+            <Text style={styles.jsonErr}>{jsonError}</Text>
+          ) : null}
           <View pointerEvents={isReadOnly ? 'none' : 'auto'} collapsable={false}>
           {hasStructured ? (
             structuredForm(isReadOnly)
@@ -3860,6 +3886,17 @@ export function LessonScreenEditModal({
             </Text>
           )}
           </View>
+          {!allowJsonEditing && draft.type === 'audioExposure' ? (
+            <View style={styles.previewBelowForm}>
+              <LessonScreenLearnerPreview screenType={draft.type} />
+            </View>
+          ) : null}
+          {!allowJsonEditing && jsonError ? (
+            <View style={styles.saveErrorBanner}>
+              <Text style={styles.saveErrorBannerTitle}>Could not save</Text>
+              <Text style={styles.saveErrorBannerText}>{jsonError}</Text>
+            </View>
+          ) : null}
           {allowJsonEditing ? (
             <>
               <Text style={styles.advancedLabel}>Screen content (JSON)</Text>
@@ -4323,6 +4360,31 @@ const styles = StyleSheet.create({
     fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
   },
   jsonErr: { color: '#f87171', marginBottom: 8 },
+  saveErrorBanner: {
+    marginTop: 16,
+    padding: 14,
+    borderRadius: 10,
+    backgroundColor: 'rgba(248, 113, 113, 0.12)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(248, 113, 113, 0.45)',
+  },
+  saveErrorBannerTitle: {
+    color: '#fca5a5',
+    fontWeight: '700',
+    fontSize: 14,
+    marginBottom: 6,
+  },
+  saveErrorBannerText: {
+    color: '#fecaca',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  previewBelowForm: {
+    marginTop: 20,
+  },
+  modalHeaderSaveDisabled: {
+    opacity: 0.45,
+  },
   applyJsonBtn: {
     marginTop: 12,
     backgroundColor: '#7c3aed',

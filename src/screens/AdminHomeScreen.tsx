@@ -225,7 +225,7 @@ export default function AdminHomeScreen({ navigation }: Props) {
           Total Users :{' '}
           <Text style={styles.recordedCount}>{usersTotal ?? '—'}</Text>
         </Text>
-        <Text style={styles.tileHint}>Tap for dashboards and AI summary of last 100 events</Text>
+        <Text style={styles.tileHint}>Tap for dashboards and AI summary (up to 10k events)</Text>
       </Pressable>
 
       <Pressable

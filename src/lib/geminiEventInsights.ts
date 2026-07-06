@@ -1,5 +1,9 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import { formatReliability24hSummaryForPrompt, type Reliability24hSummary } from './analyticsHealthEvents'
 import { getExpoPublicGeminiKey } from './expoPublicEnv'
+
+/** Max analytics_events rows sent to Gemini (paginated fetch in admin). */
+export const ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT = 10_000
 
 /** Try stable models first; older model IDs may be retired for some API keys. */
 const MODELS = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'] as const
@@ -97,6 +101,76 @@ Do not repeat or print out raw blocks of the JSON payload. Keep your response hi
 
   const text = await generateText(prompt)
   if (text) return { ok: true, text, sourceLabel: `analytics_events (${truncatedEvents.length} rows)` }
+  return { ok: false, error: 'No response from Gemini (empty or blocked). Check API key and model access.' }
+}
+
+const ANALYTICS_CONTEXT_NOTE = `Context (typical event families in Dubbadhu learner app — use only what appears in the payload):
+- Reliability: component_error (React ErrorBoundary), *_error, *_failed, lesson_remote_load_failed, unknown_screen_type
+- Onboarding: signup_completed, activation_complete, app_opened
+- Lessons: lesson_started, lesson_completed, lesson_screen_viewed, lesson_exited
+- Practice: sentence_submitted, practice_feedback_error, token_limit_*
+- Monetization: subscription_viewed, paywall_viewed, premium_purchased
+Native OS crashes before JS runs are NOT in this table unless captured elsewhere.`
+
+/**
+ * Answer an admin-authored question using analytics_events rows as context.
+ */
+export async function runGeminiAnalyticsQuestion(
+  events: unknown[],
+  userQuestion: string,
+  options: { reliabilitySummary24h?: Reliability24hSummary | null } = {},
+): Promise<GeminiAnalyticsResult> {
+  const key = getExpoPublicGeminiKey().trim()
+  if (!key) {
+    return { ok: false, error: 'Set EXPO_PUBLIC_GEMINI_API_KEY in .env and restart Expo.' }
+  }
+
+  const question = (userQuestion || '').trim()
+  if (!question) {
+    return { ok: false, error: 'Type a question first.' }
+  }
+
+  if (events.length === 0) {
+    return {
+      ok: false,
+      error:
+        'No analytics events loaded. Allow SELECT on analytics_events for your Supabase anon key (check RLS), then pull to refresh.',
+    }
+  }
+
+  const payload = JSON.stringify(events, null, 2)
+  const reliabilityBlock = options.reliabilitySummary24h
+    ? formatReliability24hSummaryForPrompt(options.reliabilitySummary24h)
+    : ''
+
+  const prompt = `You are a senior mobile product analyst for "Dubbadhu" (Afaan Oromo learning app). Answer the admin's question using ONLY the telemetry below. If the data is insufficient, say what is missing and what to check next.
+
+${ANALYTICS_CONTEXT_NOTE}
+
+--- ADMIN QUESTION ---
+${question}
+
+${reliabilityBlock ? `--- LAST 24H RELIABILITY SUMMARY ---\n${reliabilityBlock}\n` : ''}
+--- RAW TELEMETRY (newest events, JSON) ---
+\`\`\`json
+${payload}
+\`\`\`
+
+--- RESPONSE RULES ---
+- Be direct and scannable (short paragraphs or bullets).
+- Cite event_name counts, user_id prefixes, lesson_id, or timestamps when relevant.
+- For crashes/hiccups, prioritize component_error and other reliability events.
+- Do not dump large JSON blocks in your answer.
+- If asked about something not in the payload, say so clearly.`
+
+  const text = await generateText(prompt)
+  if (text) {
+    return {
+      ok: true,
+      text,
+      sourceLabel: `analytics_events (${events.length} rows) + your question`,
+    }
+  }
   return { ok: false, error: 'No response from Gemini (empty or blocked). Check API key and model access.' }
 }
 

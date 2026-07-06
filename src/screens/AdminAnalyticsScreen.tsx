@@ -8,11 +8,22 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native'
 import Svg, { Circle } from 'react-native-svg'
 import type { StackScreenProps } from '@react-navigation/stack'
-import { runGeminiAnalyticsInsights } from '../lib/geminiEventInsights'
+import {
+  summarizeReliabilityEvents24h,
+  type Reliability24hSummary,
+  type ReliabilityEventRow,
+} from '../lib/analyticsHealthEvents'
+import { fetchRecentAnalyticsEventsForGemini } from '../lib/analyticsEventsQuery'
+import {
+  ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT,
+  runGeminiAnalyticsInsights,
+  runGeminiAnalyticsQuestion,
+} from '../lib/geminiEventInsights'
 import supabase from '../lib/supabase'
 import type { RootStackParamList } from '../types'
 
@@ -141,6 +152,12 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
   const [insightsSource, setInsightsSource] = useState('')
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
+  const [reliability24h, setReliability24h] = useState<Reliability24hSummary | null>(null)
+  const [askQuestion, setAskQuestion] = useState('')
+  const [askAnswer, setAskAnswer] = useState('')
+  const [askSource, setAskSource] = useState('')
+  const [askLoading, setAskLoading] = useState(false)
+  const [askError, setAskError] = useState('')
   const [retentionRange, setRetentionRange] = useState<RetentionRange>('30d')
 
   const load = useCallback(async () => {
@@ -214,19 +231,28 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
       )
     }
 
-    const evRes = await supabase
+    const evRes = await fetchRecentAnalyticsEventsForGemini(supabase)
+    if (evRes.error) errs.push(`analytics_events: ${evRes.error}`)
+    else setEvents(evRes.data)
+
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const ev24Res = await supabase
       .from('analytics_events')
       .select('id, user_id, event_name, properties, created_at')
+      .gte('created_at', since24h)
       .order('created_at', { ascending: false })
-      .limit(100)
-    if (evRes.error) errs.push(`analytics_events: ${evRes.error.message}`)
-    else
-      setEvents(
-        (evRes.data as AnalyticsEventRow[] | null)?.map((e) => ({
+      .limit(500)
+    if (ev24Res.error) {
+      errs.push(`analytics_events (24h): ${ev24Res.error.message}`)
+      setReliability24h(null)
+    } else {
+      const rows =
+        (ev24Res.data as ReliabilityEventRow[] | null)?.map((e) => ({
           ...e,
           properties: (e.properties as Record<string, unknown> | null) ?? null,
-        })) ?? [],
-      )
+        })) ?? []
+      setReliability24h(summarizeReliabilityEvents24h(rows))
+    }
 
     setLoadErrors(errs)
   }, [])
@@ -297,6 +323,35 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
     }
   }, [events])
 
+  const onAskAnalytics = useCallback(async () => {
+    setAskError('')
+    setAskAnswer('')
+    setAskSource('')
+    setAskLoading(true)
+    try {
+      const out = await runGeminiAnalyticsQuestion(events, askQuestion, {
+        reliabilitySummary24h: reliability24h,
+      })
+      if (out.ok) {
+        setAskAnswer(out.text)
+        setAskSource(out.sourceLabel)
+      } else {
+        setAskError(out.error)
+      }
+    } catch (e) {
+      setAskError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAskLoading(false)
+    }
+  }, [events, askQuestion, reliability24h])
+
+  const onHealthInfo = useCallback(() => {
+    Alert.alert(
+      'App health (24h)',
+      'Counts component_error and other reliability events from analytics_events in the last 24 hours (up to 500 rows). This is JS telemetry from ErrorBoundary and trackError — not native crash reports from Xcode or Sentry.',
+    )
+  }, [])
+
   const onRetentionInfo = useCallback(() => {
     Alert.alert(
       'Cohort retention',
@@ -346,6 +401,57 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
             {activePctOfTotal != null ? `${activePctOfTotal}% of total` : '—'}
           </Text>
         </View>
+      </View>
+
+      <Text style={styles.sectionLabel}>App health · 24h</Text>
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Crashes & reliability</Text>
+          <Pressable onPress={onHealthInfo} style={styles.infoBtn} hitSlop={8} accessibilityLabel="Health info">
+            <Text style={styles.infoBtnText}>i</Text>
+          </Pressable>
+        </View>
+        {reliability24h == null ? (
+          <Text style={styles.muted}>Could not load 24h events.</Text>
+        ) : reliability24h.total === 0 ? (
+          <Text style={styles.healthOk}>No errors or crashes logged in the last 24 hours.</Text>
+        ) : (
+          <>
+            <View style={styles.metricRow}>
+              <View style={styles.healthStat}>
+                <Text style={styles.healthStatValue}>{reliability24h.total}</Text>
+                <Text style={styles.healthStatLabel}>Events</Text>
+              </View>
+              <View style={styles.healthStat}>
+                <Text style={styles.healthStatValue}>{reliability24h.uniqueUsers}</Text>
+                <Text style={styles.healthStatLabel}>Users affected</Text>
+              </View>
+            </View>
+            {reliability24h.byEventName.map((row) => (
+              <View key={row.event_name} style={styles.healthCountRow}>
+                <Text style={styles.healthEventName}>{row.event_name}</Text>
+                <Text style={styles.healthEventCount}>{row.count}</Text>
+              </View>
+            ))}
+            {reliability24h.recent.length > 0 ? (
+              <>
+                <Text style={styles.healthRecentTitle}>Recent</Text>
+                {reliability24h.recent.map((row, i) => (
+                  <View key={`${row.created_at}-${row.event_name}-${i}`} style={styles.healthRecentRow}>
+                    <Text style={styles.healthRecentMeta}>
+                      {row.created_at.replace('T', ' ').slice(0, 19)} ·{' '}
+                      {row.user_id ? row.user_id.slice(0, 8) : 'anon'}
+                    </Text>
+                    <Text style={styles.healthRecentEvent}>{row.event_name}</Text>
+                    <Text style={styles.healthRecentDetail} numberOfLines={2}>
+                      {row.detail}
+                    </Text>
+                  </View>
+                ))}
+              </>
+            ) : null}
+          </>
+        )}
       </View>
 
       <Text style={styles.sectionLabel}>Retention</Text>
@@ -431,7 +537,46 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
         )}
       </View>
 
-      <Text style={styles.sectionLabel}>AI Insights</Text>
+      <Text style={styles.sectionLabel}>Ask analytics</Text>
+      <View style={styles.card}>
+        <Text style={styles.askHint}>
+          Ask a question; Gemini uses up to {ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT.toLocaleString()} of the
+          newest events loaded below ({events.length.toLocaleString()} now) plus the 24h reliability summary.
+        </Text>
+        <TextInput
+          style={styles.askInput}
+          placeholder="e.g. Any component_error spikes after build 97? Who exited lesson 1 early?"
+          placeholderTextColor="#666"
+          value={askQuestion}
+          onChangeText={setAskQuestion}
+          multiline
+          editable={!askLoading}
+        />
+        <Pressable
+          onPress={() => {
+            void onAskAnalytics()
+          }}
+          disabled={askLoading || !askQuestion.trim()}
+          style={({ pressed }) => [
+            styles.aiBtn,
+            styles.askBtn,
+            pressed && styles.aiBtnPressed,
+            (askLoading || !askQuestion.trim()) && styles.disabled,
+          ]}
+        >
+          <Text style={styles.aiBtnText}>{askLoading ? 'Asking Gemini…' : 'Ask Gemini'}</Text>
+        </Pressable>
+        {askError ? <Text style={styles.errorText}>{askError}</Text> : null}
+        {askAnswer ? (
+          <View style={styles.insightsCardInline}>
+            <Text style={styles.insightsTitle}>Answer</Text>
+            {askSource ? <Text style={styles.insightsMeta}>Source: {askSource}</Text> : null}
+            <Text style={styles.insightsBody}>{askAnswer}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <Text style={styles.sectionLabel}>AI summary</Text>
       <Pressable
         onPress={() => {
           void onGemini()
@@ -450,11 +595,14 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
           {insightsLoading
             ? 'Asking Gemini…'
             : events.length > 0
-              ? 'Gemini: insights on last 100 events'
+              ? `Gemini: insights on ${events.length.toLocaleString()} events`
               : 'Gemini: insights (need analytics events)'}
         </Text>
       </Pressable>
-      <Text style={styles.aiSub}>Uses the last 100 rows from analytics_events only.</Text>
+      <Text style={styles.aiSub}>
+        Newest rows from analytics_events (up to {ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT.toLocaleString()} when
+        available).
+      </Text>
       {events.length === 0 ? (
         <Text style={styles.mutedSmall}>Allow SELECT on analytics_events for the anon key, then pull to refresh.</Text>
       ) : null}
@@ -628,4 +776,66 @@ const styles = StyleSheet.create({
   insightsTitle: { color: '#93c5fd', fontWeight: '700', marginBottom: 6 },
   insightsMeta: { color: '#6b7280', fontSize: 12, marginBottom: 10 },
   insightsBody: { color: '#e5e7eb', fontSize: 14, lineHeight: 22 },
+  insightsCardInline: {
+    backgroundColor: '#0c1118',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#1e3a5f',
+    padding: 14,
+    marginTop: 12,
+  },
+  healthOk: { color: '#30d158', fontSize: 14, lineHeight: 20 },
+  healthStat: {
+    flex: 1,
+    backgroundColor: '#2a2a2a',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
+  healthStatValue: { fontSize: 22, fontWeight: '700', color: '#fff' },
+  healthStatLabel: { fontSize: 10, color: '#888', marginTop: 2 },
+  healthCountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#2a2a2a',
+  },
+  healthEventName: { color: '#fca5a5', fontSize: 13, flex: 1, marginRight: 8 },
+  healthEventCount: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  healthRecentTitle: {
+    marginTop: 12,
+    marginBottom: 6,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+    color: '#666',
+    textTransform: 'uppercase',
+  },
+  healthRecentRow: {
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#2a2a2a',
+  },
+  healthRecentMeta: { color: '#666', fontSize: 10, marginBottom: 2 },
+  healthRecentEvent: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  healthRecentDetail: { color: '#a1a1aa', fontSize: 12, marginTop: 2, lineHeight: 16 },
+  askHint: { color: '#888', fontSize: 12, lineHeight: 17, marginBottom: 10 },
+  askInput: {
+    backgroundColor: '#2a2a2a',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#3a3a3c',
+    color: '#fff',
+    fontSize: 14,
+    lineHeight: 20,
+    minHeight: 88,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    textAlignVertical: 'top',
+    marginBottom: 10,
+  },
+  askBtn: { marginTop: 0 },
 })

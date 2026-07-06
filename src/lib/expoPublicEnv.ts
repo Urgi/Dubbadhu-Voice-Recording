@@ -30,9 +30,12 @@ export function getExpoPublicSupabaseAnonKey(): string {
 }
 
 export function getExpoPublicGeminiKey(): string {
+  const extra = Constants.expoConfig?.extra as Extra
   return (
     process.env.EXPO_PUBLIC_GEMINI_API_KEY ||
-    fromExtra(Constants.expoConfig?.extra as Extra, 'EXPO_PUBLIC_GEMINI_API_KEY') ||
+    fromExtra(extra, 'EXPO_PUBLIC_GEMINI_API_KEY') ||
+    process.env.GEMINI_API_KEY ||
+    fromExtra(extra, 'GEMINI_API_KEY') ||
     ''
   )
 }

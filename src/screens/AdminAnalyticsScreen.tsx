@@ -29,6 +29,7 @@ import {
 } from '../lib/geminiEventInsights'
 import supabase from '../lib/supabase'
 import type { RootStackParamList } from '../types'
+import GeminiMarkdownText from '../components/GeminiMarkdownText'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminAnalytics'>
 
@@ -163,6 +164,7 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
   const [askError, setAskError] = useState('')
   const [retentionRange, setRetentionRange] = useState<RetentionRange>('30d')
   const scrollRef = useRef<ScrollView>(null)
+  const askSectionY = useRef(0)
 
   const load = useCallback(async () => {
     const errs: string[] = []
@@ -348,6 +350,15 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
       setAskLoading(false)
     }
   }, [events, askQuestion, reliability24h])
+
+  const scrollAskIntoView = useCallback(() => {
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, askSectionY.current - 16),
+        animated: true,
+      })
+    }, 120)
+  }, [])
 
   const onHealthInfo = useCallback(() => {
     Alert.alert(
@@ -549,7 +560,12 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
       </View>
 
       <Text style={styles.sectionLabel}>Ask analytics</Text>
-      <View style={styles.card}>
+      <View
+        style={styles.card}
+        onLayout={(event) => {
+          askSectionY.current = event.nativeEvent.layout.y
+        }}
+      >
         <Text style={styles.askHint}>
           Ask a question; Gemini uses up to {ANALYTICS_GEMINI_PROMPT_EVENT_LIMIT.toLocaleString()} of the newest
           events loaded below ({events.length.toLocaleString()} now, up to{' '}
@@ -563,9 +579,7 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
           onChangeText={setAskQuestion}
           multiline
           editable={!askLoading}
-          onFocus={() => {
-            setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120)
-          }}
+          onFocus={scrollAskIntoView}
         />
         <Pressable
           onPress={() => {
@@ -586,7 +600,7 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
           <View style={styles.insightsCardInline}>
             <Text style={styles.insightsTitle}>Answer</Text>
             {askSource ? <Text style={styles.insightsMeta}>Source: {askSource}</Text> : null}
-            <Text style={styles.insightsBody}>{askAnswer}</Text>
+            <GeminiMarkdownText text={askAnswer} />
           </View>
         ) : null}
       </View>
@@ -627,7 +641,7 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
         <View style={styles.insightsCard}>
           <Text style={styles.insightsTitle}>Gemini summary</Text>
           {insightsSource ? <Text style={styles.insightsMeta}>Source: {insightsSource}</Text> : null}
-          <Text style={styles.insightsBody}>{insights}</Text>
+          <GeminiMarkdownText text={insights} />
         </View>
       ) : null}
     </ScrollView>

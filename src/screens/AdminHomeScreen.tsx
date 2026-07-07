@@ -11,6 +11,52 @@ import type { RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminHome'>
 
+type HubTile = {
+  title: string
+  lines: string[]
+  hint: string
+  onPress: () => void
+}
+
+function HubSection({
+  title,
+  subtitle,
+  badge,
+  tiles,
+}: {
+  title: string
+  subtitle: string
+  badge?: string | null
+  tiles: HubTile[]
+}) {
+  return (
+    <View style={styles.hubSection}>
+      <View style={styles.hubHeader}>
+        <View style={styles.hubHeaderText}>
+          <Text style={styles.hubTitle}>{title}</Text>
+          <Text style={styles.hubSubtitle}>{subtitle}</Text>
+        </View>
+        {badge ? <Text style={styles.hubBadge}>{badge}</Text> : null}
+      </View>
+      {tiles.map((tile) => (
+        <Pressable
+          key={tile.title}
+          style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+          onPress={tile.onPress}
+        >
+          <Text style={styles.tileTitle}>{tile.title}</Text>
+          {tile.lines.map((line) => (
+            <Text key={line} style={styles.recordedLine}>
+              {line}
+            </Text>
+          ))}
+          <Text style={styles.tileHint}>{tile.hint}</Text>
+        </Pressable>
+      ))}
+    </View>
+  )
+}
+
 export default function AdminHomeScreen({ navigation }: Props) {
   const { setRole } = useAuth()
   const [unapprovedCount, setUnapprovedCount] = useState<number | null>(null)
@@ -146,6 +192,15 @@ export default function AdminHomeScreen({ navigation }: Props) {
     )
   }
 
+  const assetBadge =
+    unapprovedCount != null || unapprovedSeriesCount != null
+      ? `${(unapprovedCount ?? 0) + (unapprovedSeriesCount ?? 0)} pending`
+      : null
+  const moderationBadge =
+    openDiscussionReports != null || pendingDiscussionReviews != null
+      ? `${(pendingDiscussionReviews ?? 0) + (openDiscussionReports ?? 0)} open`
+      : null
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       {refreshing ? (
@@ -155,121 +210,92 @@ export default function AdminHomeScreen({ navigation }: Props) {
       ) : null}
       {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
 
-      <Pressable
-        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-        onPress={() => navigation.navigate('AdminSeriesList')}
-      >
-        <Text style={styles.tileTitle}>Voice Recording</Text>
-        <Text style={styles.recordedLine}>
-          Approval Requests :{' '}
-          <Text style={styles.recordedCount}>{unapprovedCount ?? '—'}</Text>
-        </Text>
-        <Text style={styles.tileHint}>Tap to open Voice Recording (series list)</Text>
-      </Pressable>
+      <HubSection
+        title="Asset Management"
+        subtitle="Lessons, audio, vocab, and media that ship to learners"
+        badge={assetBadge}
+        tiles={[
+          {
+            title: 'Series Config',
+            lines: [
+              `Total Series : ${seriesTotal ?? '—'}`,
+              `Unapproved Series : ${unapprovedSeriesCount ?? '—'}`,
+            ],
+            hint: 'Edit lesson JSON, series metadata, and publish status',
+            onPress: () => navigation.navigate('LessonConfig'),
+          },
+          {
+            title: 'Voice Recording',
+            lines: [`Approval Requests : ${unapprovedCount ?? '—'}`],
+            hint: 'Vocabulary audio by series — record, review, approve',
+            onPress: () => navigation.navigate('AdminSeriesList'),
+          },
+          {
+            title: 'Vocab Center',
+            lines: ['Edit words + translations · generate/select pictures'],
+            hint: 'Lexical assets and illustration review for the Vocab tab',
+            onPress: () => navigation.navigate('AdminVocabIllustrationReview'),
+          },
+          {
+            title: 'Qubee Letters',
+            lines: ['Alphabet recordings + approval queue'],
+            hint: 'One audio clip per Oromo letter',
+            onPress: () => navigation.navigate('QubeeLettersHub'),
+          },
+          {
+            title: 'Fidel Letters',
+            lines: ["Ge'ez syllable recordings + approval queue"],
+            hint: 'Approve syllable clips used in Fidel Quiz',
+            onPress: () => navigation.navigate('FidelLettersHub'),
+          },
+        ]}
+      />
 
-      <Pressable
-        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-        onPress={() => navigation.navigate('AdminDiscussionReview')}
-      >
-        <Text style={styles.tileTitle}>Discussion review queue</Text>
-        <Text style={styles.recordedLine}>
-          Pending AI review :{' '}
-          <Text style={styles.recordedCount}>{pendingDiscussionReviews ?? '—'}</Text>
-        </Text>
-        <Text style={styles.tileHint}>Approve or reject posts held before publication</Text>
-      </Pressable>
+      <HubSection
+        title="Content Moderation"
+        subtitle="Community posts, reports, and curated learner sentences"
+        badge={moderationBadge}
+        tiles={[
+          {
+            title: 'Discussion review queue',
+            lines: [`Pending AI review : ${pendingDiscussionReviews ?? '—'}`],
+            hint: 'Approve or reject posts held before publication',
+            onPress: () => navigation.navigate('AdminDiscussionReview'),
+          },
+          {
+            title: 'Lesson Discussion Reports',
+            lines: [`Open reports : ${openDiscussionReports ?? '—'}`],
+            hint: 'Dismiss or remove learner-flagged board posts',
+            onPress: () => navigation.navigate('AdminCommunityReports'),
+          },
+          {
+            title: 'Practice Suggestions',
+            lines: ['Curate “From the community” on Practice (7 per day, tied to Word of the Day)'],
+            hint: 'Pick sentences that use today’s WOTD — learners see your picks first',
+            onPress: () => navigation.navigate('AdminPracticeSuggestions'),
+          },
+        ]}
+      />
 
-      <Pressable
-        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-        onPress={() => navigation.navigate('AdminCommunityReports')}
-      >
-        <Text style={styles.tileTitle}>Lesson Discussion Reports</Text>
-        <Text style={styles.recordedLine}>
-          Open reports :{' '}
-          <Text style={styles.recordedCount}>{openDiscussionReports ?? '—'}</Text>
-        </Text>
-        <Text style={styles.tileHint}>Review learner reports · dismiss or remove posts from the board</Text>
-      </Pressable>
-
-      <Pressable
-        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-        onPress={() => navigation.navigate('AdminPracticeSuggestions')}
-      >
-        <Text style={styles.tileTitle}>Practice Suggestions</Text>
-        <Text style={styles.recordedLine}>
-          Curate “From the community” on Practice (7 per day, tied to Word of the Day)
-        </Text>
-        <Text style={styles.tileHint}>Select sentences that use today’s WOTD — learners see your picks first</Text>
-      </Pressable>
-
-      <Pressable
-        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-        onPress={() => navigation.navigate('AdminFreeAccess')}
-      >
-        <Text style={styles.tileTitle}>Free access</Text>
-        <Text style={styles.recordedLine}>
-          Complimentary Premium :{' '}
-          <Text style={styles.recordedCount}>{freeAccessCount ?? '—'}</Text>
-        </Text>
-        <Text style={styles.tileHint}>
-          isPremium true, no product id · search by phone · alert if store ppid exists
-        </Text>
-      </Pressable>
-
-      <Pressable
-        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-        onPress={() => navigation.navigate('AdminAnalytics')}
-      >
-        <Text style={styles.tileTitle}>Analytics</Text>
-        <Text style={styles.recordedLine}>
-          Total Users :{' '}
-          <Text style={styles.recordedCount}>{usersTotal ?? '—'}</Text>
-        </Text>
-        <Text style={styles.tileHint}>Tap for dashboards and AI summary (up to 10k events)</Text>
-      </Pressable>
-
-      <Pressable
-        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-        onPress={() => navigation.navigate('QubeeLettersHub')}
-      >
-        <Text style={styles.tileTitle}>Qubee Letters</Text>
-        <Text style={styles.recordedLine}>Alphabet recordings + approval queue</Text>
-        <Text style={styles.tileHint}>One audio clip per letter — same approve / re-record flow as vocabulary</Text>
-      </Pressable>
-
-      <Pressable
-        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-        onPress={() => navigation.navigate('FidelLettersHub')}
-      >
-        <Text style={styles.tileTitle}>Fidel Letters</Text>
-        <Text style={styles.recordedLine}>Ge&apos;ez syllable recordings + approval queue</Text>
-        <Text style={styles.tileHint}>Approve Emenet&apos;s syllable clips — learners hear them in Fidel Quiz</Text>
-      </Pressable>
-
-      <Pressable
-        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-        onPress={() => navigation.navigate('AdminVocabIllustrationReview')}
-      >
-        <Text style={styles.tileTitle}>Vocab Center</Text>
-        <Text style={styles.recordedLine}>Edit words + translations · generate/select pictures</Text>
-        <Text style={styles.tileHint}>Admin can toggle PictureFriendly (gates image generation)</Text>
-      </Pressable>
-
-      <Pressable
-        style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-        onPress={() => navigation.navigate('LessonConfig')}
-      >
-        <Text style={styles.tileTitle}>Series Config</Text>
-        <Text style={styles.recordedLine}>
-          Total Series :{' '}
-          <Text style={styles.recordedCount}>{seriesTotal ?? '—'}</Text>
-        </Text>
-        <Text style={[styles.recordedLine, styles.metricLineFollow]}>
-          Unapproved Series :{' '}
-          <Text style={styles.recordedCount}>{unapprovedSeriesCount ?? '—'}</Text>
-        </Text>
-        <Text style={styles.tileHint}>Tap here to change lesson and series data</Text>
-      </Pressable>
+      <HubSection
+        title="Analytics"
+        subtitle="Product health, user insights, and support lookups"
+        badge={usersTotal != null ? `${usersTotal} users` : null}
+        tiles={[
+          {
+            title: 'Analytics',
+            lines: [`Total Users : ${usersTotal ?? '—'}`],
+            hint: 'Dashboards, retention, waitlist, and Gemini Q&A (up to 10k events)',
+            onPress: () => navigation.navigate('AdminAnalytics'),
+          },
+          {
+            title: 'Free access',
+            lines: [`Complimentary Premium : ${freeAccessCount ?? '—'}`],
+            hint: 'Audit complimentary Premium grants · search by phone',
+            onPress: () => navigation.navigate('AdminFreeAccess'),
+          },
+        ]}
+      />
     </ScrollView>
   )
 }
@@ -282,7 +308,7 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
     paddingBottom: 40,
-    gap: 14,
+    gap: 8,
   },
   centered: {
     flex: 1,
@@ -309,6 +335,40 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     fontSize: 14,
   },
+  hubSection: {
+    marginBottom: 18,
+    gap: 10,
+  },
+  hubHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 4,
+  },
+  hubHeaderText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  hubTitle: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  },
+  hubSubtitle: {
+    color: '#8e8e93',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  hubBadge: {
+    color: '#fbbf24',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
   tile: {
     backgroundColor: '#1c1c1e',
     borderRadius: 18,
@@ -324,20 +384,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
   },
-  /** Subtitle row: white body; count uses `recordedCount` (gold). */
   recordedLine: {
     color: '#ffffff',
     fontSize: 15,
     fontWeight: '400',
     marginTop: 10,
     lineHeight: 20,
-  },
-  recordedCount: {
-    color: '#fbbf24',
-    fontWeight: '700',
-  },
-  metricLineFollow: {
-    marginTop: 6,
   },
   tileHint: {
     color: '#8e8e93',

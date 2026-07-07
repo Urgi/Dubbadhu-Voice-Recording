@@ -237,7 +237,7 @@ export function defaultScreen(type: ScreenType): LessonScreen {
     case 'audioExposure':
       return {
         type,
-        content: { words: [{ word: '', word_id: '' }] },
+        content: { saidBy: '', words: [{ word: '', word_id: '' }] },
       }
     case 'CelebrateScreen':
       return { type, content: { message: 'Nice work.' } }
@@ -685,6 +685,9 @@ export function newDraftTokenId(): string {
 /** Ensure every audio-exposure word has `draftTokenId` (for cross-screen links while editing). */
 export function normalizeAudioExposureContentForEdit(content: Record<string, unknown>): Record<string, unknown> {
   const out = { ...content }
+  const saidBy = String(out.saidBy ?? '').trim()
+  if (saidBy) out.saidBy = saidBy
+  else delete out.saidBy
   const wordsRaw = out.words
   if (!Array.isArray(wordsRaw)) return out
   out.words = wordsRaw.map((w) => {
@@ -929,7 +932,7 @@ export function sanitizeScreenContentForPersistence(
       return sp
     }
     case 'audioExposure': {
-      const base = pickAllowedKeys(content, new Set(['title', 'words']))
+      const base = pickAllowedKeys(content, new Set(['title', 'saidBy', 'words']))
       const words = base.words
       if (!Array.isArray(words)) return base
       base.words = words
@@ -943,6 +946,9 @@ export function sanitizeScreenContentForPersistence(
       const titNorm = normalizeAudioExposureTitleForPersistence(b.title)
       if (titNorm === undefined) delete b.title
       else b.title = titNorm
+      const saidBy = String(b.saidBy ?? '').trim()
+      if (!saidBy) delete b.saidBy
+      else b.saidBy = saidBy
       return base
     }
     case 'CelebrateScreen': {

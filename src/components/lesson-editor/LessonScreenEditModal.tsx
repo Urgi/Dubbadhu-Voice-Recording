@@ -3057,6 +3057,14 @@ export function LessonScreenEditModal({
         }
         return (
           <View style={styles.form}>
+            <Field
+              label="Said by (speaker name)"
+              value={String(c.saidBy ?? '')}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, saidBy: t }))}
+            />
+            <Text style={styles.hint}>
+              Shown under the English gloss in the learner app (e.g. Hawwii). Leave blank to hide.
+            </Text>
             {words.length === 0 ? (
               <Text style={styles.hint}>
                 {allowJsonEditing

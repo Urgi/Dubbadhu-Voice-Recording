@@ -57,6 +57,8 @@ export type AudioExposureWord = {
 };
 export type AudioExposureContent = {
   title?: string;
+  /** Speaker name for "Said by:" attribution in the learner app (e.g. Hawwii). */
+  saidBy?: string;
   subtitle?: string;
   words: AudioExposureWord[];
   autoPlayNext?: boolean;

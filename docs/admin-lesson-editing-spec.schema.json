@@ -151,6 +151,7 @@
       "required": ["words"],
       "properties": {
         "title": { "type": "string" },
+        "saidBy": { "type": "string" },
         "words": {
           "type": "array",
           "minItems": 1,

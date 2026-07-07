@@ -165,6 +165,7 @@ Audio-first vocab. Dubbadhu supports **text-only mode** if `audioRef` is missing
 
 **content**
 - `title`: `string` (optional) — real headline override only. Do not store bare `Listen First` / `Listen & Learn` (learner treats those as defaults). Prefer `Listen First: Foo` → persist `Foo` only.
+- `saidBy`: `string` (optional) — speaker name shown as **Said by:** under the English gloss (e.g. `Hawwii`). Omit or leave empty to hide in the learner app.
 - **`words`**: array (>= 1). Each item is either:
   - **Lean (preferred when linked to `public.words`)**: `word_id` (UUID), optional `word` (Afaan display string for JSON size), optional `draftTokenId` (editor / speaking links). URLs and `oromo`/`english` are filled at runtime in the learner app.
   - **Legacy / text-only**: `oromo` + `english`, optional `audioRef` / `fastAudioRef` / `slowAudioRef`, etc.

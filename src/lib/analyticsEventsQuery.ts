@@ -33,11 +33,11 @@ export async function fetchRecentAnalyticsEventsForGemini(
 
   while (rows.length < cap) {
     const pageSize = Math.min(FETCH_PAGE_SIZE, cap - rows.length)
-    const { data, error } = await client
-      .from('analytics_events')
-      .select('id, user_id, event_name, properties, created_at')
-      .order('created_at', { ascending: false })
-      .range(offset, offset + pageSize - 1)
+    const { data, error } = await client.rpc('admin_fetch_analytics_events', {
+      p_since: null,
+      p_limit: pageSize,
+      p_offset: offset,
+    })
 
     if (error) {
       return { data: rows, error: error.message }

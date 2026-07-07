@@ -169,46 +169,28 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
   const load = useCallback(async () => {
     const errs: string[] = []
 
-    const usersRes = await supabase.from('users').select('id', { count: 'exact', head: true })
+    const usersRes = await supabase.rpc('admin_users_total_count')
     if (usersRes.error) errs.push(`users: ${usersRes.error.message}`)
-    else setUsersTotal(usersRes.count ?? 0)
+    else setUsersTotal(Number(usersRes.data ?? 0))
 
     const weekAgoIso = new Date(Date.now() - 7 * 86400000).toISOString()
-    const usersWeekRes = await supabase
-      .from('users')
-      .select('id', { count: 'exact', head: true })
-      .gte('created_at', weekAgoIso)
+    const usersWeekRes = await supabase.rpc('admin_users_count_since', { p_since: weekAgoIso })
     if (usersWeekRes.error) {
       errs.push(`users (week): ${usersWeekRes.error.message}`)
       setUsersThisWeek(null)
-    } else setUsersThisWeek(usersWeekRes.count ?? 0)
+    } else setUsersThisWeek(Number(usersWeekRes.data ?? 0))
 
-    const startToday = new Date()
-    startToday.setUTCHours(0, 0, 0, 0)
-    const evToday = await supabase
-      .from('analytics_events')
-      .select('user_id')
-      .gte('created_at', startToday.toISOString())
-      .limit(5000)
+    const evToday = await supabase.rpc('admin_count_active_users_today')
     if (evToday.error) {
       if (!evToday.error.message.includes('does not exist')) {
         errs.push(`analytics_events (today): ${evToday.error.message}`)
       }
       setActiveToday(null)
     } else {
-      const ids = new Set<string>()
-      for (const row of evToday.data ?? []) {
-        const uid = (row as { user_id?: string | null }).user_id
-        if (uid) ids.add(uid)
-      }
-      setActiveToday(ids.size)
+      setActiveToday(Number(evToday.data ?? 0))
     }
 
-    const retRes = await supabase
-      .from('retention_cohorts')
-      .select('*')
-      .order('cohort_date', { ascending: false })
-      .limit(500)
+    const retRes = await supabase.rpc('admin_get_retention_cohorts', { p_limit: 500 })
     if (retRes.error) errs.push(`retention_cohorts: ${retRes.error.message}`)
     else
       setRetention(
@@ -222,18 +204,14 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
         })) ?? [],
       )
 
-    const wlRes = await supabase.from('waitlist_signups').select('language')
+    const wlRes = await supabase.rpc('admin_waitlist_by_language')
     if (wlRes.error) errs.push(`waitlist_signups: ${wlRes.error.message}`)
     else {
-      const m = new Map<string, number>()
-      for (const row of wlRes.data ?? []) {
-        const lang = String((row as { language?: string }).language || 'Unknown').trim() || 'Unknown'
-        m.set(lang, (m.get(lang) ?? 0) + 1)
-      }
       setWaitlistByLang(
-        Array.from(m.entries())
-          .map(([language, count]) => ({ language, count }))
-          .sort((a, b) => b.count - a.count),
+        (wlRes.data as { language?: string; signup_count?: number }[] | null)?.map((row) => ({
+          language: String(row.language || 'Unknown').trim() || 'Unknown',
+          count: Number(row.signup_count ?? 0),
+        })) ?? [],
       )
     }
 
@@ -242,12 +220,11 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
     else setEvents(evRes.data)
 
     const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-    const ev24Res = await supabase
-      .from('analytics_events')
-      .select('id, user_id, event_name, properties, created_at')
-      .gte('created_at', since24h)
-      .order('created_at', { ascending: false })
-      .limit(500)
+    const ev24Res = await supabase.rpc('admin_fetch_analytics_events', {
+      p_since: since24h,
+      p_limit: 500,
+      p_offset: 0,
+    })
     if (ev24Res.error) {
       errs.push(`analytics_events (24h): ${ev24Res.error.message}`)
       setReliability24h(null)

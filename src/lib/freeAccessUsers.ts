@@ -37,32 +37,8 @@ export async function fetchFreeAccessUsers(limit = 80): Promise<{
   data: FreeAccessUserRow[] | null
   error: string | null
 }> {
-  const { data, error } = await supabase
-    .from('users')
-    .select(
-      'id, phone, first_name, last_name, isPremium, premium_product_id, premium_source, created_at',
-    )
-    .eq('premium_source', 'complimentary')
-    .eq('isPremium', true)
-    .order('premium_granted_at', { ascending: false })
-    .limit(limit)
-
-  if (error) {
-    if (/premium_granted_at|premium_source/i.test(error.message)) {
-      const fallback = await supabase
-        .from('users')
-        .select(
-          'id, phone, first_name, last_name, isPremium, premium_product_id, premium_source, created_at',
-        )
-        .eq('isPremium', true)
-        .is('premium_product_id', null)
-        .order('created_at', { ascending: false })
-        .limit(limit)
-      if (fallback.error) return { data: null, error: fallback.error.message }
-      return { data: (fallback.data ?? []) as FreeAccessUserRow[], error: null }
-    }
-    return { data: null, error: error.message }
-  }
+  const { data, error } = await supabase.rpc('admin_list_complimentary_users', { p_limit: limit })
+  if (error) return { data: null, error: error.message }
   return { data: (data ?? []) as FreeAccessUserRow[], error: null }
 }
 
@@ -70,19 +46,12 @@ export async function findUserByPhone(phoneInput: string): Promise<{
   user: FreeAccessUserRow | null
   error: string | null
 }> {
-  const variants = phoneLookupVariants(phoneInput)
-  for (const phone of variants) {
-    const { data, error } = await supabase
-      .from('users')
-      .select(
-        'id, phone, first_name, last_name, isPremium, premium_product_id, premium_source, created_at',
-      )
-      .eq('phone', phone)
-      .maybeSingle()
-    if (error) return { user: null, error: error.message }
-    if (data) return { user: data as FreeAccessUserRow, error: null }
-  }
-  return { user: null, error: null }
+  const { data, error } = await supabase.rpc('admin_find_user_by_phone', {
+    p_phone: phoneInput.trim(),
+  })
+  if (error) return { user: null, error: error.message }
+  const row = Array.isArray(data) ? data[0] : data
+  return { user: (row as FreeAccessUserRow | undefined) ?? null, error: null }
 }
 
 type GrantApiResult =
@@ -154,13 +123,8 @@ export async function grantFreeAccess(
   })
 
   if (!result.ok && 'needsConfirm' in result && result.needsConfirm) {
-    const { data: row } = await supabase
-      .from('users')
-      .select(
-        'id, phone, first_name, last_name, isPremium, premium_product_id, premium_source, created_at',
-      )
-      .eq('id', userId)
-      .maybeSingle()
+    const { data: found } = await supabase.rpc('admin_find_user_by_id', { p_user_id: userId })
+    const row = Array.isArray(found) ? found[0] : found
     if (row) {
       return {
         ok: false,

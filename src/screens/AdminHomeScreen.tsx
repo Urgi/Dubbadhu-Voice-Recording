@@ -87,7 +87,7 @@ export default function AdminHomeScreen({ navigation }: Props) {
       supabase.from('words').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
       supabase.from('qubee_letters').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
       supabase.from('fidel_letters').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
-      supabase.from('users').select('id', { count: 'exact', head: true }),
+      supabase.rpc('admin_users_total_count'),
       supabase.from('lesson_series').select('id', { count: 'exact', head: true }),
       supabase
         .from('lesson_series')
@@ -95,11 +95,7 @@ export default function AdminHomeScreen({ navigation }: Props) {
         .or('approved.eq.false,approved.is.null'),
       fetchOpenCommunityBoardReportsCount(),
       fetchPendingDiscussionReviewCount(),
-      supabase
-        .from('users')
-        .select('id', { count: 'exact', head: true })
-        .eq('premium_source', 'complimentary')
-        .eq('isPremium', true),
+      supabase.rpc('admin_complimentary_users_count'),
     ])
 
     const errs: string[] = []
@@ -119,7 +115,7 @@ export default function AdminHomeScreen({ navigation }: Props) {
       errs.push(`users: ${usersRes.error.message}`)
       setUsersTotal(null)
     } else {
-      setUsersTotal(usersRes.count ?? 0)
+      setUsersTotal(Number(usersRes.data ?? 0))
     }
     if (seriesTotalRes.error) {
       errs.push(`lesson_series (total): ${seriesTotalRes.error.message}`)
@@ -139,7 +135,7 @@ export default function AdminHomeScreen({ navigation }: Props) {
       errs.push(`free access: ${freeAccessRes.error.message}`)
       setFreeAccessCount(null)
     } else {
-      setFreeAccessCount(freeAccessRes?.count ?? 0)
+      setFreeAccessCount(Number(freeAccessRes?.data ?? 0))
     }
     setError(errs.join('\n'))
   }, [])

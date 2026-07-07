@@ -1,8 +1,10 @@
 import { useFocusEffect } from '@react-navigation/native'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -21,6 +23,7 @@ import {
 import { fetchRecentAnalyticsEventsForGemini } from '../lib/analyticsEventsQuery'
 import {
   ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT,
+  ANALYTICS_GEMINI_PROMPT_EVENT_LIMIT,
   runGeminiAnalyticsInsights,
   runGeminiAnalyticsQuestion,
 } from '../lib/geminiEventInsights'
@@ -159,6 +162,7 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
   const [askLoading, setAskLoading] = useState(false)
   const [askError, setAskError] = useState('')
   const [retentionRange, setRetentionRange] = useState<RetentionRange>('30d')
+  const scrollRef = useRef<ScrollView>(null)
 
   const load = useCallback(async () => {
     const errs: string[] = []
@@ -368,10 +372,17 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
   }
 
   return (
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+    >
     <ScrollView
+      ref={scrollRef}
       style={styles.screen}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ORANGE} />}
     >
       {loadErrors.length > 0 ? (
@@ -540,8 +551,9 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
       <Text style={styles.sectionLabel}>Ask analytics</Text>
       <View style={styles.card}>
         <Text style={styles.askHint}>
-          Ask a question; Gemini uses up to {ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT.toLocaleString()} of the
-          newest events loaded below ({events.length.toLocaleString()} now) plus the 24h reliability summary.
+          Ask a question; Gemini uses up to {ANALYTICS_GEMINI_PROMPT_EVENT_LIMIT.toLocaleString()} of the newest
+          events loaded below ({events.length.toLocaleString()} now, up to{' '}
+          {ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT.toLocaleString()}) plus the 24h reliability summary.
         </Text>
         <TextInput
           style={styles.askInput}
@@ -551,6 +563,9 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
           onChangeText={setAskQuestion}
           multiline
           editable={!askLoading}
+          onFocus={() => {
+            setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120)
+          }}
         />
         <Pressable
           onPress={() => {
@@ -616,12 +631,13 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
         </View>
       ) : null}
     </ScrollView>
+    </KeyboardAvoidingView>
   )
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: SCREEN_BG },
-  content: { paddingHorizontal: 14, paddingTop: 4, paddingBottom: 48 },
+  content: { paddingHorizontal: 14, paddingTop: 4, paddingBottom: 120 },
   centered: {
     flex: 1,
     backgroundColor: SCREEN_BG,
@@ -828,12 +844,13 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#3a3a3c',
-    color: '#fff',
-    fontSize: 14,
-    lineHeight: 20,
-    minHeight: 88,
+    color: '#ffffff',
+    fontSize: 15,
+    lineHeight: 22,
+    minHeight: 96,
+    maxHeight: 160,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
     textAlignVertical: 'top',
     marginBottom: 10,
   },

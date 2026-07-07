@@ -2,8 +2,11 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
 import { formatReliability24hSummaryForPrompt, type Reliability24hSummary } from './analyticsHealthEvents'
 import { getExpoPublicGeminiKey } from './expoPublicEnv'
 
-/** Max analytics_events rows sent to Gemini (paginated fetch in admin). */
+/** Max analytics_events rows fetched for admin UI context. */
 export const ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT = 10_000
+
+/** Max rows serialized into a Gemini prompt (full JSON payloads get huge fast). */
+export const ANALYTICS_GEMINI_PROMPT_EVENT_LIMIT = 2_000
 
 /** Try stable models first; older model IDs may be retired for some API keys. */
 const MODELS = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'] as const
@@ -12,11 +15,24 @@ export type GeminiAnalyticsOk = { ok: true; text: string; sourceLabel: string }
 export type GeminiAnalyticsErr = { ok: false; error: string }
 export type GeminiAnalyticsResult = GeminiAnalyticsOk | GeminiAnalyticsErr
 
-async function generateText(prompt: string): Promise<string | null> {
+function eventsForGeminiPrompt(events: unknown[]): { rows: unknown[]; truncationNote: string } {
+  if (events.length <= ANALYTICS_GEMINI_PROMPT_EVENT_LIMIT) {
+    return { rows: events, truncationNote: '' }
+  }
+  return {
+    rows: events.slice(0, ANALYTICS_GEMINI_PROMPT_EVENT_LIMIT),
+    truncationNote: `Note: ${events.length.toLocaleString()} events were loaded; this prompt includes the ${ANALYTICS_GEMINI_PROMPT_EVENT_LIMIT.toLocaleString()} newest rows only.\n\n`,
+  }
+}
+
+async function generateText(prompt: string): Promise<{ text: string } | { error: string }> {
   const key = getExpoPublicGeminiKey().trim()
-  if (!key) return null
+  if (!key) {
+    return { error: 'Set EXPO_PUBLIC_GEMINI_API_KEY in .env and restart Expo.' }
+  }
 
   const genAI = new GoogleGenerativeAI(key)
+  let lastError = 'No response from Gemini (empty or blocked). Check API key and model access.'
 
   for (const modelName of MODELS) {
     try {
@@ -34,12 +50,14 @@ async function generateText(prompt: string): Promise<string | null> {
             .join('')
         }
       }
-      if (text?.trim()) return text.trim()
-    } catch {
-      if (modelName === MODELS[MODELS.length - 1]) return null
+      if (text?.trim()) return { text: text.trim() }
+      lastError = `Model ${modelName} returned an empty response (safety filter or oversized prompt).`
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err)
+      if (modelName === MODELS[MODELS.length - 1]) return { error: lastError }
     }
   }
-  return null
+  return { error: lastError }
 }
 
 /** Insights use `analytics_events` rows only (no aggregated daily summary). */
@@ -57,11 +75,11 @@ export async function runGeminiAnalyticsInsights(events: unknown[]): Promise<Gem
     }
   }
 
-  const truncatedEvents = events
-  const payload = JSON.stringify(truncatedEvents, null, 2)
+  const { rows: promptEvents, truncationNote } = eventsForGeminiPrompt(events)
+  const payload = JSON.stringify(promptEvents, null, 2)
   const prompt = `You are a Senior Mobile Product Growth Manager specializing in language-learning acquisition and user retention for the app "Dubbadhu" (an Afaan Oromo learning platform).
 
-Your task is to analyze a raw JSON payload containing the last ${truncatedEvents.length} telemetry events from our users. Identify where users are gaining momentum and where they are getting stuck in the onboarding and learning funnel.
+${truncationNote}Your task is to analyze a raw JSON payload containing the last ${promptEvents.length} telemetry events from our users. Identify where users are gaining momentum and where they are getting stuck in the onboarding and learning funnel.
 
 Context (typical event families in this product — use only what appears in the payload):
 - Onboarding & activation: signup_started, signup_completed, activation_complete, app_opened
@@ -99,9 +117,11 @@ Provide your analysis strictly adhering to the following Markdown layout. Keep i
 
 Do not repeat or print out raw blocks of the JSON payload. Keep your response highly scannable.`
 
-  const text = await generateText(prompt)
-  if (text) return { ok: true, text, sourceLabel: `analytics_events (${truncatedEvents.length} rows)` }
-  return { ok: false, error: 'No response from Gemini (empty or blocked). Check API key and model access.' }
+  const generated = await generateText(prompt)
+  if ('text' in generated) {
+    return { ok: true, text: generated.text, sourceLabel: `analytics_events (${promptEvents.length} rows)` }
+  }
+  return { ok: false, error: generated.error }
 }
 
 const ANALYTICS_CONTEXT_NOTE = `Context (typical event families in Dubbadhu learner app — use only what appears in the payload):
@@ -138,12 +158,15 @@ export async function runGeminiAnalyticsQuestion(
     }
   }
 
-  const payload = JSON.stringify(events, null, 2)
+  const { rows: promptEvents, truncationNote } = eventsForGeminiPrompt(events)
+  const payload = JSON.stringify(promptEvents, null, 2)
   const reliabilityBlock = options.reliabilitySummary24h
     ? formatReliability24hSummaryForPrompt(options.reliabilitySummary24h)
     : ''
 
   const prompt = `You are a senior mobile product analyst for "Dubbadhu" (Afaan Oromo learning app). Answer the admin's question using ONLY the telemetry below. If the data is insufficient, say what is missing and what to check next.
+
+${truncationNote}
 
 ${ANALYTICS_CONTEXT_NOTE}
 
@@ -163,15 +186,15 @@ ${payload}
 - Do not dump large JSON blocks in your answer.
 - If asked about something not in the payload, say so clearly.`
 
-  const text = await generateText(prompt)
-  if (text) {
+  const generated = await generateText(prompt)
+  if ('text' in generated) {
     return {
       ok: true,
-      text,
-      sourceLabel: `analytics_events (${events.length} rows) + your question`,
+      text: generated.text,
+      sourceLabel: `analytics_events (${promptEvents.length} rows) + your question`,
     }
   }
-  return { ok: false, error: 'No response from Gemini (empty or blocked). Check API key and model access.' }
+  return { ok: false, error: generated.error }
 }
 
 /** @deprecated use runGeminiAnalyticsInsights */

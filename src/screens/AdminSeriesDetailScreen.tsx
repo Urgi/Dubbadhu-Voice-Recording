@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -557,7 +558,7 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
           style={styles.addModalRoot}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <View style={styles.addModalCard}>
+          <Pressable style={styles.addModalCard} onPress={Keyboard.dismiss}>
             <Text style={styles.addModalTitle}>Add words</Text>
             <Text style={styles.lockedLabel}>Series</Text>
             <View style={styles.lockedBox}>
@@ -601,7 +602,10 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
             {addMessage ? <Text style={styles.addOk}>{addMessage}</Text> : null}
             <Pressable
               style={[styles.createBatchBtn, addSubmitting && styles.btnDisabled]}
-              onPress={onCreateBatch}
+              onPress={() => {
+                Keyboard.dismiss()
+                onCreateBatch()
+              }}
               disabled={addSubmitting}
             >
               {addSubmitting ? (
@@ -610,10 +614,16 @@ export default function AdminSeriesDetailScreen({ navigation, route }: Props) {
                 <Text style={styles.createBatchText}>Create Batch</Text>
               )}
             </Pressable>
-            <Pressable style={styles.addCloseBtn} onPress={closeAddModal}>
+            <Pressable
+              style={styles.addCloseBtn}
+              onPress={() => {
+                Keyboard.dismiss()
+                closeAddModal()
+              }}
+            >
               <Text style={styles.addCloseText}>Close</Text>
             </Pressable>
-          </View>
+          </Pressable>
         </KeyboardAvoidingView>
       </Modal>
 

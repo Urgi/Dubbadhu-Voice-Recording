@@ -2515,12 +2515,29 @@ export function LessonScreenEditModal({
         )
       }
       case 'dialogue': {
+        const parseClipSecondInput = (
+          rawIn: string,
+        ):
+          | { action: 'clear' }
+          | { action: 'keep' }
+          | { action: 'set'; value: number | string } => {
+          const raw = String(rawIn ?? '')
+            .trim()
+            .replace(',', '.')
+          if (raw === '') return { action: 'clear' }
+          // Allow in-progress typing like "3." before the fractional digits.
+          if (!/^\d*\.?\d*$/.test(raw)) return { action: 'keep' }
+          if (raw === '.' || raw.endsWith('.')) return { action: 'set', value: raw }
+          const n = Number(raw)
+          if (!Number.isFinite(n) || n < 0) return { action: 'keep' }
+          return { action: 'set', value: n }
+        }
         return (
           <View style={styles.form}>
             <Text style={styles.label}>Dialogue playback clip (optional)</Text>
             <Text style={styles.hint}>
-              Plays the series no-translation video from these seconds. Leave blank to hide the
-              video button on the learner dialogue screen.
+              Plays the series no-translation video from these seconds (decimals OK, e.g. 3.5). Leave
+              blank to hide the video button on the learner dialogue screen.
             </Text>
             <View style={styles.rowSwitch}>
               <View style={{ flex: 1, marginRight: 8 }}>
@@ -2531,16 +2548,14 @@ export function LessonScreenEditModal({
                       ? ''
                       : String(c.fromSecond)
                   }
-                  keyboardType="number-pad"
+                  keyboardType="decimal-pad"
                   onChangeText={(t) =>
                     setContent((cur) => {
                       const next = { ...cur }
-                      const n = Number(String(t).trim())
-                      if (String(t).trim() === '' || !Number.isFinite(n)) {
-                        delete next.fromSecond
-                      } else {
-                        next.fromSecond = n
-                      }
+                      const parsed = parseClipSecondInput(t)
+                      if (parsed.action === 'clear') delete next.fromSecond
+                      else if (parsed.action === 'keep') return cur
+                      else next.fromSecond = parsed.value
                       return next
                     })
                   }
@@ -2552,16 +2567,14 @@ export function LessonScreenEditModal({
                   value={
                     c.toSecond == null || c.toSecond === '' ? '' : String(c.toSecond)
                   }
-                  keyboardType="number-pad"
+                  keyboardType="decimal-pad"
                   onChangeText={(t) =>
                     setContent((cur) => {
                       const next = { ...cur }
-                      const n = Number(String(t).trim())
-                      if (String(t).trim() === '' || !Number.isFinite(n)) {
-                        delete next.toSecond
-                      } else {
-                        next.toSecond = n
-                      }
+                      const parsed = parseClipSecondInput(t)
+                      if (parsed.action === 'clear') delete next.toSecond
+                      else if (parsed.action === 'keep') return cur
+                      else next.toSecond = parsed.value
                       return next
                     })
                   }
@@ -4059,7 +4072,7 @@ function Field(props: {
   multilineCompact?: boolean
   /** @deprecated Use `allowMultiline` */
   multiline?: boolean
-  keyboardType?: 'default' | 'number-pad'
+  keyboardType?: 'default' | 'number-pad' | 'decimal-pad'
   onFocus?: () => void
   editable?: boolean
 }) {

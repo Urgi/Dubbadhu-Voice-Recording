@@ -46,6 +46,8 @@ export type RootStackParamList = {
   AdminCommunityReports: undefined
   /** AI moderation queue — approve or reject held discussion posts. */
   AdminDiscussionReview: undefined
+  /** Home Music catalog (YouTube links + phrases). */
+  AdminSongs: undefined
   LessonConfig: undefined
   LessonConfigSeries: { seriesId: string }
   LessonConfigDetail: {

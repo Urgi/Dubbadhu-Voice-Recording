@@ -354,6 +354,9 @@ export function normalizeDialogueContent(content: Record<string, unknown>): Reco
       person1,
       person2,
     },
+    // Keep optional dialogue playback clip bounds (not part of speaker data).
+    ...(content.fromSecond !== undefined ? { fromSecond: content.fromSecond } : {}),
+    ...(content.toSecond !== undefined ? { toSecond: content.toSecond } : {}),
   }
 }
 

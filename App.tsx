@@ -12,6 +12,7 @@ import AdminFreeAccessScreen from './src/screens/AdminFreeAccessScreen'
 import AdminPracticeSuggestionsScreen from './src/screens/AdminPracticeSuggestionsScreen'
 import AdminCommunityReportsScreen from './src/screens/AdminCommunityReportsScreen'
 import AdminDiscussionReviewScreen from './src/screens/AdminDiscussionReviewScreen'
+import AdminSongsScreen from './src/screens/AdminSongsScreen'
 import AdminSeriesListScreen from './src/screens/AdminSeriesListScreen'
 import AdminSeriesDetailScreen from './src/screens/AdminSeriesDetailScreen'
 import AdminAudioReviewScreen from './src/screens/AdminAudioReviewScreen'
@@ -90,6 +91,11 @@ function AppStack() {
           name="AdminDiscussionReview"
           component={AdminDiscussionReviewScreen}
           options={{ title: 'Discussion review queue' }}
+        />
+        <Stack.Screen
+          name="AdminSongs"
+          component={AdminSongsScreen}
+          options={{ title: 'Songs / Music' }}
         />
         <Stack.Screen name="AdminSeriesList" component={AdminSeriesListScreen} options={{ title: 'Voice Recording' }} />
         <Stack.Screen name="AdminSeriesDetail" component={AdminSeriesDetailScreen} />

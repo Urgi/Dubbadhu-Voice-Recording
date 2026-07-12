@@ -19,40 +19,57 @@ type HubTile = {
 }
 
 function HubSection({
+  sectionKey,
   title,
   subtitle,
   badge,
   tiles,
+  expanded,
+  onToggle,
 }: {
+  sectionKey: string
   title: string
   subtitle: string
   badge?: string | null
   tiles: HubTile[]
+  expanded: boolean
+  onToggle: (key: string) => void
 }) {
   return (
     <View style={styles.hubSection}>
-      <View style={styles.hubHeader}>
+      <Pressable
+        style={({ pressed }) => [styles.hubHeaderButton, pressed && styles.hubHeaderButtonPressed]}
+        onPress={() => onToggle(sectionKey)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        accessibilityLabel={`${title}, ${expanded ? 'collapse' : 'expand'}`}
+      >
         <View style={styles.hubHeaderText}>
-          <Text style={styles.hubTitle}>{title}</Text>
+          <View style={styles.hubTitleRow}>
+            <Text style={styles.hubTitle}>{title}</Text>
+            <Text style={styles.hubChevron}>{expanded ? '▾' : '▸'}</Text>
+          </View>
           <Text style={styles.hubSubtitle}>{subtitle}</Text>
         </View>
         {badge ? <Text style={styles.hubBadge}>{badge}</Text> : null}
-      </View>
-      {tiles.map((tile) => (
-        <Pressable
-          key={tile.title}
-          style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-          onPress={tile.onPress}
-        >
-          <Text style={styles.tileTitle}>{tile.title}</Text>
-          {tile.lines.map((line) => (
-            <Text key={line} style={styles.recordedLine}>
-              {line}
-            </Text>
-          ))}
-          <Text style={styles.tileHint}>{tile.hint}</Text>
-        </Pressable>
-      ))}
+      </Pressable>
+      {expanded
+        ? tiles.map((tile) => (
+            <Pressable
+              key={tile.title}
+              style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
+              onPress={tile.onPress}
+            >
+              <Text style={styles.tileTitle}>{tile.title}</Text>
+              {tile.lines.map((line) => (
+                <Text key={line} style={styles.recordedLine}>
+                  {line}
+                </Text>
+              ))}
+              <Text style={styles.tileHint}>{tile.hint}</Text>
+            </Pressable>
+          ))
+        : null}
     </View>
   )
 }
@@ -69,7 +86,12 @@ export default function AdminHomeScreen({ navigation }: Props) {
   const [refreshing, setRefreshing] = useState(false)
   const [initialLoadDone, setInitialLoadDone] = useState(false)
   const [error, setError] = useState('')
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
   const isFirstFocus = useRef(true)
+
+  const toggleSection = useCallback((key: string) => {
+    setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }))
+  }, [])
 
   const loadCounts = useCallback(async () => {
     setError('')
@@ -207,9 +229,12 @@ export default function AdminHomeScreen({ navigation }: Props) {
       {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
 
       <HubSection
+        sectionKey="assets"
         title="Asset Management"
         subtitle="Lessons, audio, vocab, and media that ship to learners"
         badge={assetBadge}
+        expanded={Boolean(expandedSections.assets)}
+        onToggle={toggleSection}
         tiles={[
           {
             title: 'Series Config',
@@ -244,13 +269,22 @@ export default function AdminHomeScreen({ navigation }: Props) {
             hint: 'Approve syllable clips used in Fidel Quiz',
             onPress: () => navigation.navigate('FidelLettersHub'),
           },
+          {
+            title: 'Songs / Music',
+            lines: ['YouTube catalog for Home → Songs (Oromo + Amharic)'],
+            hint: 'Add, edit, reorder, publish — learner app derives thumbnails',
+            onPress: () => navigation.navigate('AdminSongs'),
+          },
         ]}
       />
 
       <HubSection
+        sectionKey="moderation"
         title="Content Moderation"
         subtitle="Community posts, reports, and curated learner sentences"
         badge={moderationBadge}
+        expanded={Boolean(expandedSections.moderation)}
+        onToggle={toggleSection}
         tiles={[
           {
             title: 'Discussion review queue',
@@ -274,9 +308,12 @@ export default function AdminHomeScreen({ navigation }: Props) {
       />
 
       <HubSection
+        sectionKey="analytics"
         title="Analytics"
         subtitle="Product health, user insights, and support lookups"
         badge={usersTotal != null ? `${usersTotal} users` : null}
+        expanded={Boolean(expandedSections.analytics)}
+        onToggle={toggleSection}
         tiles={[
           {
             title: 'Analytics',
@@ -332,19 +369,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   hubSection: {
-    marginBottom: 18,
+    marginBottom: 14,
     gap: 10,
   },
-  hubHeader: {
+  hubHeaderButton: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 12,
-    marginBottom: 4,
+    backgroundColor: '#141414',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+  },
+  hubHeaderButtonPressed: {
+    opacity: 0.9,
   },
   hubHeaderText: {
     flex: 1,
     minWidth: 0,
+  },
+  hubTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   hubTitle: {
     color: '#ffffff',
@@ -352,6 +402,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1.1,
     textTransform: 'uppercase',
+  },
+  hubChevron: {
+    color: ADMIN_ACCENT_GOLD,
+    fontSize: 14,
+    fontWeight: '700',
   },
   hubSubtitle: {
     color: '#8e8e93',

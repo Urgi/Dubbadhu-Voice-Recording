@@ -171,6 +171,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   /** New key each pick so the crop modal remounts (same `file://` URI twice would otherwise keep stale crop state). */
   const [coverCropSession, setCoverCropSession] = useState(0)
   const [introVideoUrl, setIntroVideoUrl] = useState<string | null>(null)
+  const [introVideoNoTranslationUrl, setIntroVideoNoTranslationUrl] = useState<string | null>(null)
   const [introVideoSaving, setIntroVideoSaving] = useState(false)
   const [videoReviewGaps, setVideoReviewGaps] = useState<VideoReviewGap[]>([])
   const [lessonReorderSaving, setLessonReorderSaving] = useState(false)
@@ -324,7 +325,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     try {
       const { data: seriesRow, error: seriesErr } = await supabase
         .from('lesson_series')
-        .select('title,intro_script,intro_video_url,approved,audio_recorded,series_status,list_cover_url')
+        .select('title,intro_script,intro_video_url,intro_video_no_translation_url,approved,audio_recorded,series_status,list_cover_url')
         .eq('id', seriesId)
         .maybeSingle()
 
@@ -344,6 +345,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
           series_status?: string | null
           list_cover_url?: string | null
           intro_video_url?: string | null
+          intro_video_no_translation_url?: string | null
         }
         if (typeof sr.title === 'string') setSeriesTitle(sr.title)
         setIntroScript(typeof sr.intro_script === 'string' ? sr.intro_script : null)
@@ -356,6 +358,11 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
           const rawV = sr.intro_video_url
           const tv = typeof rawV === 'string' ? rawV.trim() : ''
           setIntroVideoUrl(tv || null)
+        }
+        {
+          const rawNt = sr.intro_video_no_translation_url
+          const tnt = typeof rawNt === 'string' ? rawNt.trim() : ''
+          setIntroVideoNoTranslationUrl(tnt || null)
         }
         const lsRaw = sr.series_status
         if (typeof lsRaw === 'string' && lsRaw.trim()) {
@@ -674,6 +681,34 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
         return
       }
       setIntroVideoUrl(next?.trim() ? next.trim() : null)
+    },
+    [lessonSeriesRowExists, role, scriptEditable, seriesId, seriesStatus],
+  )
+
+  const persistIntroVideoNoTranslationUrl = useCallback(
+    async (next: string | null) => {
+      if (!lessonSeriesRowExists || !scriptEditable) return
+      if (shouldConfirmAdminLiveSeriesSave(role ?? undefined, seriesStatus)) {
+        const proceed = await confirmAdminLiveSeriesSave(
+          seriesStatus,
+          'series no-translation video',
+        )
+        if (!proceed) return
+      }
+      setIntroVideoSaving(true)
+      const { error: dbErr } = await supabase
+        .from('lesson_series')
+        .update({ intro_video_no_translation_url: next })
+        .eq('id', seriesId)
+      setIntroVideoSaving(false)
+      if (dbErr) {
+        Alert.alert(
+          'Could not save no-translation video',
+          withLessonSeriesRlsHint(dbErr.message),
+        )
+        return
+      }
+      setIntroVideoNoTranslationUrl(next?.trim() ? next.trim() : null)
     },
     [lessonSeriesRowExists, role, scriptEditable, seriesId, seriesStatus],
   )
@@ -1105,12 +1140,25 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
         </View>
       ) : null}
       {isAdmin ? (
-        <SeriesIntroVideoBlock
-          introVideoUrl={introVideoUrl}
-          onChangeUrl={(next) => void persistIntroVideoUrl(next)}
-          disabled={!scriptEditable || introVideoSaving || coverUploading}
-          lessonSeriesRowExists={lessonSeriesRowExists}
-        />
+        <>
+          <SeriesIntroVideoBlock
+            sectionLabel="Series intro video (with translation)"
+            hint="English / subtitled intro used on Series Intro and rewatch."
+            introVideoUrl={introVideoUrl}
+            onChangeUrl={(next) => void persistIntroVideoUrl(next)}
+            disabled={!scriptEditable || introVideoSaving || coverUploading}
+            lessonSeriesRowExists={lessonSeriesRowExists}
+          />
+          <SeriesIntroVideoBlock
+            sectionLabel="No-translation video (series asset)"
+            hint="Used by Dialogue Playback and in-lesson review — no English overlays."
+            emptyLabel="No no-translation video selected"
+            introVideoUrl={introVideoNoTranslationUrl}
+            onChangeUrl={(next) => void persistIntroVideoNoTranslationUrl(next)}
+            disabled={!scriptEditable || introVideoSaving || coverUploading}
+            lessonSeriesRowExists={lessonSeriesRowExists}
+          />
+        </>
       ) : null}
       <View style={styles.statusBlock}>
         <AdminSectionHeader label="Status" emphasis="gold" />

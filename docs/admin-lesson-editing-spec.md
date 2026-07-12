@@ -16,7 +16,8 @@ It documents:
 - **`id`**: `text` — `"series1"`…`"seriesN"` (primary key)
 - **`title`**: `text` — shown in UI
 - **`sort_order`**: `int`
-- **`intro_video_url`**: `text | null`
+- **`intro_video_url`**: `text | null` — series intro with translation
+- **`intro_video_no_translation_url`**: `text | null` — series asset without English (dialogue playback / review)
 - **`intro_script`**: `text | null` — optional series-level intro copy (voiceover / narrator script); edited in Lesson Config → series screen
 - **`approved`**: `boolean` — default `false`; set in Lesson Config when the series is ready for release
 - **`audio_recorded`**: `boolean` — default `false`; set in Lesson Config when series audio recording is complete
@@ -146,6 +147,10 @@ Example:
     - **`name`**: `string`
     - **`lines`**: `string[]` (one string per turn for that speaker, in order)
     - `translations`: `(string|null)[]` (optional; parallel to `lines`)
+- **`fromSecond`**: `number` (optional) — start of clip on the series no-translation video
+- **`toSecond`**: `number` (optional) — end of clip; must be greater than `fromSecond`
+
+When both clip seconds are set and the series has a no-translation video, the learner shows a video icon titled **Dialogue Playback Lesson X**.
 
 The learner starts with translations hidden; learners can tap **Show** on the dialogue screen. Do not persist a `showTranslations` flag.
 
@@ -156,7 +161,9 @@ Example:
   "dialogueData": {
     "person1": { "name": "A", "lines": ["Akkam?"], "translations": ["Hello?"] },
     "person2": { "name": "B", "lines": ["Naguma."], "translations": ["I’m good."] }
-  }
+  },
+  "fromSecond": 12,
+  "toSecond": 28
 }
 ```
 
@@ -269,7 +276,11 @@ This one is important: the type is **exactly** `"CelebrateScreen"`.
 - `nextLesson`: `string` (optional; used by some legacy lessons)
 - `nextLessonId`: `string` (optional; used by newer lessons)
 - `learned`: `string[]` (optional)
+- `learned_extra`: `string[]` (optional; admin-only extras merged into `learned`)
 - `xpEarned`: `number` (optional)
+- `communityDiscussionEnabled`: `boolean` (optional; default off — classic celebration)
+- `communityDiscussionPrompt`: `string` (optional; shown when community discussion is on; posts go through `discussion-moderate`)
+- `communityDiscussionAllowedEnglish`: `string` (optional; author note for AI — which English / non-Oromo words or patterns are allowed; not shown to learners)
 
 Minimal safe:
 
@@ -279,6 +290,18 @@ Minimal safe:
   "message": "Nice work.",
   "nextLesson": "lesson9"
 }
+```
+
+With community chat:
+
+```json
+{
+  "message": "Nice work.",
+  "communityDiscussionEnabled": true,
+  "communityDiscussionPrompt": "Say “akkam” to other learners in Afaan Oromo.",
+  "communityDiscussionAllowedEnglish": "English names and “hello” are OK."
+}
+```
 
 ### `animatedConcept`
 Typing animation for a target word + up to 3 bullets.

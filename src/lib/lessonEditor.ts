@@ -838,7 +838,10 @@ export function sanitizeScreenContentForPersistence(
       return base
     }
     case 'dialogue': {
-      const base = pickAllowedKeys(content, new Set(['dialogueData']))
+      const base = pickAllowedKeys(
+        content,
+        new Set(['dialogueData', 'fromSecond', 'toSecond']),
+      )
       const dd = base.dialogueData
       if (dd != null && typeof dd === 'object' && !Array.isArray(dd)) {
         const merged = normalizeDialogueContent(base as Record<string, unknown>)
@@ -852,6 +855,20 @@ export function sanitizeScreenContentForPersistence(
           person1: shape(md.person1),
           person2: shape(md.person2),
         }
+      }
+      const fromSec = Number(base.fromSecond)
+      const toSec = Number(base.toSecond)
+      if (Number.isFinite(fromSec) && fromSec >= 0) base.fromSecond = fromSec
+      else delete base.fromSecond
+      if (Number.isFinite(toSec) && toSec > 0) base.toSecond = toSec
+      else delete base.toSecond
+      if (
+        base.fromSecond != null &&
+        base.toSecond != null &&
+        Number(base.toSecond) <= Number(base.fromSecond)
+      ) {
+        delete base.fromSecond
+        delete base.toSecond
       }
       return base
     }
@@ -952,9 +969,42 @@ export function sanitizeScreenContentForPersistence(
       return base
     }
     case 'CelebrateScreen': {
-      const base = pickAllowedKeys(content, new Set(['learned', 'encouragement', 'summary', 'nextLesson']))
+      const base = pickAllowedKeys(
+        content,
+        new Set([
+          'learned',
+          'learned_extra',
+          'encouragement',
+          'summary',
+          'message',
+          'nextLesson',
+          'communityDiscussionEnabled',
+          'communityDiscussionPrompt',
+          'communityDiscussionAllowedEnglish',
+        ]),
+      )
       const nl = base.nextLesson
       if (nl == null || !String(nl).trim()) delete base.nextLesson
+      const enabled =
+        base.communityDiscussionEnabled === true ||
+        base.communityDiscussionEnabled === 'true' ||
+        base.communityDiscussionEnabled === 1 ||
+        base.communityDiscussionEnabled === '1'
+      if (enabled) {
+        base.communityDiscussionEnabled = true
+        const prompt = String(base.communityDiscussionPrompt ?? '').trim()
+        if (prompt) base.communityDiscussionPrompt = prompt
+        else delete base.communityDiscussionPrompt
+        const allowed = String(base.communityDiscussionAllowedEnglish ?? '').trim()
+        if (allowed) base.communityDiscussionAllowedEnglish = allowed
+        else delete base.communityDiscussionAllowedEnglish
+      } else {
+        delete base.communityDiscussionEnabled
+        delete base.communityDiscussionPrompt
+        delete base.communityDiscussionAllowedEnglish
+      }
+      const msg = base.message
+      if (msg == null || !String(msg).trim()) delete base.message
       return base
     }
     case 'patternPractice': {
@@ -1206,7 +1256,17 @@ export function screenSummary(screen: LessonScreen): string {
     }
     case 'CelebrateScreen': {
       const learned = c.learned
-      if (Array.isArray(learned) && learned.length) return `${learned.length} learned`
+      const communityOn =
+        c.communityDiscussionEnabled === true ||
+        c.communityDiscussionEnabled === 'true' ||
+        c.communityDiscussionEnabled === 1 ||
+        c.communityDiscussionEnabled === '1'
+      const learnedPart =
+        Array.isArray(learned) && learned.length ? `${learned.length} learned` : ''
+      const communityPart = communityOn ? 'community on' : ''
+      if (learnedPart || communityPart) {
+        return [learnedPart, communityPart].filter(Boolean).join(' · ')
+      }
       const s = String(c.summary ?? c.encouragement ?? (c as { message?: unknown }).message ?? '').trim()
       return s.slice(0, 80) || '—'
     }

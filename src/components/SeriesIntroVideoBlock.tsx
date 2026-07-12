@@ -18,10 +18,17 @@ import {
 } from '../lib/videosDubbadhuStorage'
 
 type Props = {
+  /** Public URL currently stored on the series row. */
   introVideoUrl: string | null
   onChangeUrl: (next: string | null) => void
   disabled: boolean
   lessonSeriesRowExists: boolean
+  /** Section heading shown above the picker. */
+  sectionLabel?: string
+  /** Copy when nothing is selected. */
+  emptyLabel?: string
+  /** Optional helper under the section label. */
+  hint?: string
 }
 
 export default function SeriesIntroVideoBlock({
@@ -29,6 +36,9 @@ export default function SeriesIntroVideoBlock({
   onChangeUrl,
   disabled,
   lessonSeriesRowExists,
+  sectionLabel = 'Series intro video',
+  emptyLabel = 'No video selected',
+  hint,
 }: Props) {
   const [browseOpen, setBrowseOpen] = useState(false)
   const [bucketFiles, setBucketFiles] = useState<string[]>([])
@@ -94,9 +104,10 @@ export default function SeriesIntroVideoBlock({
 
   return (
     <View style={styles.block}>
-      <Text style={styles.sectionLabel}>Series intro video</Text>
+      <Text style={styles.sectionLabel}>{sectionLabel}</Text>
+      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
       <Text style={[styles.statusLine, !selectedFileLabel && styles.statusEmpty]}>
-        {selectedFileLabel ?? 'No video selected'}
+        {selectedFileLabel ?? emptyLabel}
       </Text>
 
       <View style={styles.row}>
@@ -192,6 +203,7 @@ const styles = StyleSheet.create({
   },
   secondaryBtnText: { color: '#a1a1aa', fontSize: 13, fontWeight: '600' },
   disabled: { opacity: 0.45 },
+  hint: { color: '#a1a1aa', fontSize: 12, lineHeight: 17, marginBottom: 8 },
   input: {
     backgroundColor: '#1c1c1e',
     borderWidth: StyleSheet.hairlineWidth,

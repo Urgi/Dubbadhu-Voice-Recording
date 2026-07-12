@@ -2516,18 +2516,71 @@ export function LessonScreenEditModal({
       }
       case 'dialogue': {
         return (
-          <DialogueTwoPersonEditor
-            content={c}
-            setContent={setContent}
-            hideFooterSave
-            readOnly={readOnlyMode}
-            onRegisterHeaderSave={registerPrimaryScreenSave}
-            onSave={() => {
-              const d = draftRef.current
-              if (!d) return
-              saveStructured({ ...(d.content as Record<string, unknown>) })
-            }}
-          />
+          <View style={styles.form}>
+            <Text style={styles.label}>Dialogue playback clip (optional)</Text>
+            <Text style={styles.hint}>
+              Plays the series no-translation video from these seconds. Leave blank to hide the
+              video button on the learner dialogue screen.
+            </Text>
+            <View style={styles.rowSwitch}>
+              <View style={{ flex: 1, marginRight: 8 }}>
+                <Field
+                  label="From second"
+                  value={
+                    c.fromSecond == null || c.fromSecond === ''
+                      ? ''
+                      : String(c.fromSecond)
+                  }
+                  keyboardType="number-pad"
+                  onChangeText={(t) =>
+                    setContent((cur) => {
+                      const next = { ...cur }
+                      const n = Number(String(t).trim())
+                      if (String(t).trim() === '' || !Number.isFinite(n)) {
+                        delete next.fromSecond
+                      } else {
+                        next.fromSecond = n
+                      }
+                      return next
+                    })
+                  }
+                />
+              </View>
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Field
+                  label="To second"
+                  value={
+                    c.toSecond == null || c.toSecond === '' ? '' : String(c.toSecond)
+                  }
+                  keyboardType="number-pad"
+                  onChangeText={(t) =>
+                    setContent((cur) => {
+                      const next = { ...cur }
+                      const n = Number(String(t).trim())
+                      if (String(t).trim() === '' || !Number.isFinite(n)) {
+                        delete next.toSecond
+                      } else {
+                        next.toSecond = n
+                      }
+                      return next
+                    })
+                  }
+                />
+              </View>
+            </View>
+            <DialogueTwoPersonEditor
+              content={c}
+              setContent={setContent}
+              hideFooterSave
+              readOnly={readOnlyMode}
+              onRegisterHeaderSave={registerPrimaryScreenSave}
+              onSave={() => {
+                const d = draftRef.current
+                if (!d) return
+                saveStructured({ ...(d.content as Record<string, unknown>) })
+              }}
+            />
+          </View>
         )
       }
       case 'match': {
@@ -3203,9 +3256,59 @@ export function LessonScreenEditModal({
           const learned = mergeCelebrateLearnedFromExposureAndExtra(exp, extra)
           saveStructured({ ...base, learned, learned_extra: extra })
         }
+        const communityOn =
+          c.communityDiscussionEnabled === true ||
+          c.communityDiscussionEnabled === 'true' ||
+          c.communityDiscussionEnabled === 1 ||
+          c.communityDiscussionEnabled === '1'
         return (
           <View style={styles.form}>
             <Field label="Message" value={String(c.message ?? '')} allowMultiline onChangeText={(t) => setContent((cur) => ({ ...cur, message: t }))} />
+            <Row label="Community discussion">
+              <Switch
+                value={Boolean(communityOn)}
+                onValueChange={(on) =>
+                  setContent((cur) => {
+                    if (!on) {
+                      const next = { ...cur }
+                      delete next.communityDiscussionEnabled
+                      delete next.communityDiscussionPrompt
+                      delete next.communityDiscussionAllowedEnglish
+                      return next
+                    }
+                    return { ...cur, communityDiscussionEnabled: true }
+                  })
+                }
+                trackColor={{ false: '#3f3f46', true: '#E8870A' }}
+                thumbColor="#fff"
+              />
+            </Row>
+            {communityOn ? (
+              <>
+                <Field
+                  label="Discussion prompt"
+                  value={String(c.communityDiscussionPrompt ?? '')}
+                  allowMultiline
+                  onChangeText={(t) => setContent((cur) => ({ ...cur, communityDiscussionPrompt: t }))}
+                />
+                <Field
+                  label="Allowed English / non-Oromo (AI only, optional)"
+                  value={String(c.communityDiscussionAllowedEnglish ?? '')}
+                  allowMultiline
+                  onChangeText={(t) =>
+                    setContent((cur) => ({ ...cur, communityDiscussionAllowedEnglish: t }))
+                  }
+                />
+                <Text style={styles.hint}>
+                  Free-text note for moderation (not shown to learners). Example: “English names and
+                  ‘hello’ are OK; otherwise prefer Afaan Oromo.”
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.hint}>
+                Off = classic celebration. On = live community chat on this screen; posts use the same AI moderation as Lesson Discussions.
+              </Text>
+            )}
             <View style={styles.learnedBlock}>
               <Text style={styles.label}>From Audio exposure</Text>
               <Text style={styles.hint}>

@@ -18,6 +18,7 @@ export type ScreenType =
   | 'communityBoard'
   | 'word-breakdown'
   | 'videoReview'
+  | 'imageScreen'
 
 /** Legacy `type` strings in stored JSON → canonical ScreenType (learner registry keeps aliases too). */
 export const LEGACY_SCREEN_TYPE_ALIASES: Record<string, ScreenType> = {
@@ -64,9 +65,36 @@ export const SCREEN_TYPE_OPTIONS: { value: ScreenType; label: string }[] = [
   { value: 'communityBoard', label: 'Community board' },
   { value: 'word-breakdown', label: 'Word breakdown' },
   { value: 'videoReview', label: 'Video review' },
+  { value: 'imageScreen', label: 'Image' },
 ]
 
 export type ScreenTypeOption = { value: ScreenType; label: string }
+
+/** Learner Vocab tab section keys (matches Dubbadhu VocabularyData). */
+export const VOCAB_SECTION_OPTIONS: { value: string; label: string }[] = [
+  { value: 'Pronouns', label: 'Pronouns' },
+  { value: 'Demonstratives', label: 'Demonstratives' },
+  { value: 'Greetings', label: 'Greetings' },
+  { value: 'TimeWords', label: 'Time Words' },
+  { value: 'QuestionWords', label: 'Question Words' },
+  { value: 'Food', label: 'Food' },
+  { value: 'Numbers', label: 'Numbers' },
+  { value: 'Family', label: 'Family' },
+  { value: 'PlacesLocations', label: 'Places & Locations' },
+  { value: 'Adjectives', label: 'Adjectives' },
+  { value: 'BodyParts', label: 'Body Parts' },
+  { value: 'Colors', label: 'Colors' },
+  { value: 'CommonWords', label: 'Common Words' },
+  { value: 'DirectionsMovement', label: 'Directions & Movement' },
+  { value: 'WeatherNature', label: 'Weather & Nature' },
+  { value: 'ActionVerbs', label: 'Action Verbs' },
+  { value: 'Emotions', label: 'Emotions' },
+  { value: 'Shopping', label: 'Shopping' },
+  { value: 'ImportantPhrases', label: 'Important Phrases' },
+  { value: 'PossessiveSuffixes', label: 'Possessive Suffixes' },
+  { value: 'CaseMarkers', label: 'Case Markers' },
+  { value: 'Negatives', label: 'Negatives' },
+]
 
 /**
  * Order for “Add screen” (intro is not addable — it stays first). Matches how lessons are usually built:
@@ -86,6 +114,7 @@ const ADD_SCREEN_CURRICULUM_ORDER: ScreenType[] = [
   'CelebrateScreen',
   'communityBoard',
   'videoReview',
+  'imageScreen',
 ]
 
 /**
@@ -237,7 +266,7 @@ export function defaultScreen(type: ScreenType): LessonScreen {
     case 'audioExposure':
       return {
         type,
-        content: { saidBy: '', words: [{ word: '', word_id: '' }] },
+        content: { words: [{ word: '', word_id: '' }] },
       }
     case 'CelebrateScreen':
       return { type, content: { message: 'Nice work.' } }
@@ -274,6 +303,16 @@ export function defaultScreen(type: ScreenType): LessonScreen {
         content: {
           videoUrl: '',
           lines: [],
+        },
+      }
+    case 'imageScreen':
+      return {
+        type,
+        content: {
+          image: '',
+          imagePrompt: '',
+          title: '',
+          body: '',
         },
       }
     default:
@@ -559,10 +598,11 @@ const UUID_RE_FOR_WORD_ROW =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
- * Persist `{ word_id, word?, draftTokenId?, translation? }` (lean; learner hydrates gloss from DB too).
- * When there is no `word_id` yet, persist `{ draftTokenId, word, translation? }` so exposure rows stay
+ * Persist `{ word_id, word?, draftTokenId?, translation?, saidBy? }` (lean; learner hydrates gloss from DB too).
+ * When there is no `word_id` yet, persist `{ draftTokenId, word, translation?, saidBy? }` so exposure rows stay
  * in the lesson until they are linked to the word bank (same `draftTokenId` for speaking practice).
  * Optional `translation` keeps admin / Celebrate subtitles readable when JSON has no inline gloss.
+ * Optional `saidBy` is per-word speaker attribution in the learner app.
  */
 export function sanitizeAudioExposureWordTokenForPersistence(
   w: Record<string, unknown>,
@@ -571,18 +611,21 @@ export function sanitizeAudioExposureWordTokenForPersistence(
   const wordReadable = String(w.word ?? '').trim()
   const dt = String(w.draftTokenId ?? '').trim()
   const gloss = String(w.translation ?? w.english ?? '').trim()
+  const saidBy = String(w.saidBy ?? '').trim()
 
   if (UUID_RE_FOR_WORD_ROW.test(wid)) {
     const out: Record<string, unknown> = { word_id: wid }
     if (wordReadable) out.word = wordReadable
     if (dt) out.draftTokenId = dt
     if (gloss) out.translation = gloss
+    if (saidBy) out.saidBy = saidBy
     return out
   }
 
   if (!dt || !wordReadable) return null
   const out: Record<string, unknown> = { draftTokenId: dt, word: wordReadable }
   if (gloss) out.translation = gloss
+  if (saidBy) out.saidBy = saidBy
   return out
 }
 
@@ -688,9 +731,9 @@ export function newDraftTokenId(): string {
 /** Ensure every audio-exposure word has `draftTokenId` (for cross-screen links while editing). */
 export function normalizeAudioExposureContentForEdit(content: Record<string, unknown>): Record<string, unknown> {
   const out = { ...content }
-  const saidBy = String(out.saidBy ?? '').trim()
-  if (saidBy) out.saidBy = saidBy
-  else delete out.saidBy
+  // Legacy screen-level saidBy → stamp onto words that lack their own (then drop screen field).
+  const legacySaidBy = String(out.saidBy ?? '').trim()
+  delete out.saidBy
   const wordsRaw = out.words
   if (!Array.isArray(wordsRaw)) return out
   out.words = wordsRaw.map((w) => {
@@ -705,6 +748,10 @@ export function normalizeAudioExposureContentForEdit(content: Record<string, unk
       rec.translation = gloss
       delete rec.english
     }
+    const wordSaidBy = String(rec.saidBy ?? '').trim()
+    if (wordSaidBy) rec.saidBy = wordSaidBy
+    else if (legacySaidBy) rec.saidBy = legacySaidBy
+    else delete rec.saidBy
     const existing = String(rec.draftTokenId ?? '').trim()
     if (!existing) rec.draftTokenId = newDraftTokenId()
     delete rec.audioRef
@@ -984,10 +1031,14 @@ export function sanitizeScreenContentForPersistence(
           'communityDiscussionEnabled',
           'communityDiscussionPrompt',
           'communityDiscussionAllowedEnglish',
+          'vocabSectionId',
         ]),
       )
       const nl = base.nextLesson
       if (nl == null || !String(nl).trim()) delete base.nextLesson
+      const vocabSectionId = String(base.vocabSectionId ?? '').trim()
+      if (vocabSectionId) base.vocabSectionId = vocabSectionId
+      else delete base.vocabSectionId
       const enabled =
         base.communityDiscussionEnabled === true ||
         base.communityDiscussionEnabled === 'true' ||
@@ -1166,6 +1217,20 @@ export function sanitizeScreenContentForPersistence(
 
       return base
     }
+    case 'imageScreen': {
+      const base = pickAllowedKeys(content, new Set(['image', 'imagePrompt', 'title', 'body']))
+      // Prefer `image`; accept legacy `imageUrl` once if `image` empty.
+      const image =
+        String(base.image ?? '').trim() ||
+        String((content as Record<string, unknown>).imageUrl ?? '').trim()
+      base.image = image
+      const prompt = String(base.imagePrompt ?? '').trim()
+      if (prompt) base.imagePrompt = prompt
+      else delete base.imagePrompt
+      base.title = String(base.title ?? '').trim()
+      base.body = String(base.body ?? '').trim()
+      return base
+    }
     default:
       return { ...content }
   }
@@ -1289,6 +1354,16 @@ export function screenSummary(screen: LessonScreen): string {
       if (tail) return `Video: ${tail.length > 52 ? `${tail.slice(0, 52)}…` : tail}`
       return '—'
     }
+    case 'imageScreen': {
+      const t = String(c.title ?? '').trim()
+      if (t) return t.length > 80 ? `${t.slice(0, 80)}…` : t
+      const img = String(c.image ?? '').trim()
+      if (img) {
+        const tail = (img.split('/').pop() ?? img).split('?')[0]
+        return tail ? `Image: ${tail.slice(0, 60)}` : 'Image'
+      }
+      return '—'
+    }
     case 'discriminationDrill': {
       const q = String(c.question ?? c.title ?? c.prompt ?? '').trim()
       const raw = c.words
@@ -1340,6 +1415,11 @@ export function screenSubtitleLines(screen: LessonScreen, _ctx?: ScreenSubtitleC
         lines.push(`Video: ${tail}`)
       }
       return lines.length ? lines : [screenSummary(screen)]
+    }
+    case 'imageScreen': {
+      const t = String(c.title ?? '').trim()
+      if (t) return [t.length > 120 ? `${t.slice(0, 120)}…` : t]
+      return [screenSummary(screen)]
     }
     case 'speakingPractice': {
       const cr = c as Record<string, unknown>

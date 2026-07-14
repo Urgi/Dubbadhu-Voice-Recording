@@ -41,7 +41,10 @@
         "audioExposure",
         "audioDiscrimination",
         "communityBoard",
-        "word-breakdown"
+        "word-breakdown",
+        "videoReview",
+        "discriminationDrill",
+        "imageScreen"
       ]
     },
     "screen": {

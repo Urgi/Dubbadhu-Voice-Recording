@@ -27,6 +27,7 @@ import { AdminTextInput } from '../AdminTextInput'
 import type { LessonScreen } from '../../lib/lessonEditor'
 import {
   SCREEN_TYPE_OPTIONS,
+  VOCAB_SECTION_OPTIONS,
   celebrateAfaanDedupeKey,
   celebrateExposureWordRows,
   celebrateLearnedExtraEditorRows,
@@ -47,7 +48,10 @@ import {
 } from '../../lib/lessonEditor'
 import { WORD_DISCRIMINATION_SCENE_PREVIEW_ASPECT } from '../../lib/wordDiscriminationSceneSpec'
 import {
+  generateLessonImageScreenDraft,
   generateWordDiscriminationImageDraft,
+  LESSON_IMAGE_SCREEN_PREVIEW_ASPECT,
+  uploadLessonImageScreenDraft,
   uploadWordDiscriminationImageDraft,
   wordDiscriminationImageStorageBaseName,
   type WordDiscriminationImageDraft,
@@ -80,6 +84,7 @@ const STRUCTURED_SCREEN_TYPES_FOR_HEADER_SAVE = new Set([
   'discriminationDrill',
   'word-breakdown',
   'videoReview',
+  'imageScreen',
 ])
 
 /** Public storage bucket for Word discrimination quiz question images (Supabase dashboard). */
@@ -805,6 +810,60 @@ function VideoReviewDubbadhuVideoField({
   )
 }
 
+function CelebrateVocabSectionPicker({
+  value,
+  label,
+  onChange,
+}: {
+  value: string
+  label: string
+  onChange: (next: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <View style={{ marginBottom: 12 }}>
+      <Pressable style={styles.quizCorrectBtn} onPress={() => setOpen(true)}>
+        <Text style={styles.quizCorrectBtnLabel}>Vocab section</Text>
+        <Text style={styles.quizCorrectBtnValue}>{label}</Text>
+      </Pressable>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable style={styles.quizCorrectOverlay} onPress={() => setOpen(false)}>
+          <Pressable style={[styles.quizCorrectSheet, { maxHeight: 480 }]} onPress={() => {}}>
+            <Text style={styles.personTitle}>Link Vocab section</Text>
+            <Text style={styles.hint}>None → learner button says Language Vocab (all vocabulary).</Text>
+            <ScrollView style={{ maxHeight: 360 }} keyboardShouldPersistTaps="handled">
+              <Pressable
+                style={[styles.quizCorrectChoice, !value && styles.quizCorrectChoiceOn]}
+                onPress={() => {
+                  onChange('')
+                  setOpen(false)
+                }}
+              >
+                <Text style={styles.quizCorrectChoiceText}>None (Language Vocab)</Text>
+              </Pressable>
+              {VOCAB_SECTION_OPTIONS.map((opt) => (
+                <Pressable
+                  key={opt.value}
+                  style={[styles.quizCorrectChoice, value === opt.value && styles.quizCorrectChoiceOn]}
+                  onPress={() => {
+                    onChange(opt.value)
+                    setOpen(false)
+                  }}
+                >
+                  <Text style={styles.quizCorrectChoiceText}>{opt.label}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Pressable style={[styles.removeBtn, { marginTop: 8 }]} onPress={() => setOpen(false)}>
+              <Text style={styles.removeBtnText}>Cancel</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </View>
+  )
+}
+
 function WordDiscriminationSceneImageField({
   sceneIndex,
   image,
@@ -1305,6 +1364,238 @@ function WordDiscriminationSceneImageField({
           </Pressable>
         </Pressable>
       </Modal>
+    </View>
+  )
+}
+
+/** Gemini generate → preview → regenerate → upload for lesson Image screens. */
+function ImageScreenMediaField({
+  image,
+  imagePrompt,
+  setContent,
+}: {
+  image: string
+  imagePrompt: string
+  setContent: (patch: Record<string, unknown> | ((cur: Record<string, unknown>) => Record<string, unknown>)) => void
+}) {
+  const [promptDraft, setPromptDraft] = useState(() => String(imagePrompt ?? '').trim())
+  const [geminiBusy, setGeminiBusy] = useState(false)
+  const [geminiDraft, setGeminiDraft] = useState<WordDiscriminationImageDraft | null>(null)
+  const [uploadNaming, setUploadNaming] = useState(false)
+  const [uploadFileName, setUploadFileName] = useState('')
+
+  // After a confirmed upload (image URL changes), drop any in-progress draft UI.
+  useEffect(() => {
+    setGeminiDraft(null)
+    setUploadNaming(false)
+    setUploadFileName('')
+  }, [image])
+
+  const img = String(image ?? '').trim()
+  const suggestUploadFileName = () => {
+    const fromPrompt = wordDiscriminationImageStorageBaseName(promptDraft.trim())
+    return fromPrompt !== 'image' ? fromPrompt : ''
+  }
+
+  return (
+    <View style={{ marginBottom: 12 }}>
+      <Text style={styles.label}>Image (Gemini)</Text>
+      <Text style={styles.hint}>
+        Describe the scene, generate a draft, regenerate until you like it, then upload. Uses the same Gemini key and
+        storage bucket as discrimination images (saved under lesson-screen/).
+      </Text>
+      <AdminTextInput
+        style={[styles.input, { minHeight: 88, textAlignVertical: 'top' }]}
+        value={promptDraft}
+        onChangeText={(t) => {
+          setPromptDraft(t)
+          setContent((cur) => ({ ...cur, imagePrompt: t }))
+        }}
+        placeholder="e.g. Two friends greeting at a café outdoors, warm afternoon light…"
+        placeholderTextColor="#52525b"
+        allowMultiline
+        editable={!geminiBusy}
+      />
+      {!getExpoPublicGeminiKey().trim() ? (
+        <Text style={[styles.hint, { marginTop: 8 }]}>
+          Needs EXPO_PUBLIC_GEMINI_API_KEY in .env (restart Metro after adding).
+        </Text>
+      ) : null}
+      {geminiBusy ? (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
+          <ActivityIndicator color="#d4af37" />
+          <Text style={styles.hint}>{geminiDraft && uploadNaming ? 'Uploading…' : 'Generating…'}</Text>
+        </View>
+      ) : null}
+      <Pressable
+        style={[
+          styles.addBtn,
+          { marginTop: 10, opacity: geminiBusy || !promptDraft.trim() ? 0.45 : 1 },
+        ]}
+        disabled={geminiBusy || !promptDraft.trim() || !getExpoPublicGeminiKey().trim()}
+        onPress={() => {
+          const t = promptDraft.trim()
+          if (!t || geminiBusy) return
+          void (async () => {
+            setGeminiBusy(true)
+            const out = await generateLessonImageScreenDraft(t)
+            setGeminiBusy(false)
+            if ('error' in out) {
+              Alert.alert('Could not generate image', out.error)
+              return
+            }
+            setGeminiDraft(out)
+            setUploadNaming(false)
+            setUploadFileName('')
+            setContent((cur) => ({ ...cur, imagePrompt: t }))
+          })()
+        }}
+      >
+        <Text style={styles.addBtnText}>
+          {geminiDraft ? 'Regenerate draft image' : 'Generate draft image with Gemini'}
+        </Text>
+      </Pressable>
+
+      {geminiDraft ? (
+        <View style={{ marginTop: 12 }}>
+          <Text style={[styles.hint, { marginBottom: 8 }]}>
+            {uploadNaming ? 'Name this file, then upload' : 'Preview (not uploaded yet)'}
+          </Text>
+          <View
+            style={{
+              borderRadius: 12,
+              overflow: 'hidden',
+              borderWidth: 1,
+              borderColor: 'rgba(212,175,55,0.25)',
+              backgroundColor: '#0b1220',
+            }}
+          >
+            <Image
+              source={{ uri: geminiDraft.dataUrl }}
+              style={{ width: '100%', aspectRatio: LESSON_IMAGE_SCREEN_PREVIEW_ASPECT }}
+              resizeMode="contain"
+            />
+          </View>
+          {uploadNaming ? (
+            <>
+              <Text style={[styles.label, { marginTop: 12 }]}>File name</Text>
+              <Text style={styles.hint}>
+                Saved as lesson-screen/name in word-comparison-images. Extension is added automatically.
+              </Text>
+              <AdminTextInput
+                style={styles.input}
+                value={uploadFileName}
+                onChangeText={setUploadFileName}
+                placeholder="e.g. cafe_greeting"
+                placeholderTextColor="#52525b"
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!geminiBusy}
+              />
+              <Pressable
+                style={[
+                  styles.addBtn,
+                  {
+                    marginTop: 10,
+                    opacity: geminiBusy || !wordDiscriminationImageStorageBaseName(uploadFileName) ? 0.45 : 1,
+                  },
+                ]}
+                disabled={geminiBusy || !wordDiscriminationImageStorageBaseName(uploadFileName)}
+                onPress={() => {
+                  if (geminiBusy || !geminiDraft) return
+                  const base = wordDiscriminationImageStorageBaseName(uploadFileName)
+                  if (!base) return
+                  void (async () => {
+                    setGeminiBusy(true)
+                    const up = await uploadLessonImageScreenDraft(geminiDraft, base)
+                    setGeminiBusy(false)
+                    if ('error' in up) {
+                      Alert.alert('Could not upload image', up.error)
+                      return
+                    }
+                    setContent((cur) => ({
+                      ...cur,
+                      image: up.publicUrl,
+                      imagePrompt: promptDraft.trim(),
+                    }))
+                    setGeminiDraft(null)
+                    setUploadNaming(false)
+                    setUploadFileName('')
+                  })()
+                }}
+              >
+                <Text style={styles.addBtnText}>Upload & use</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.removeBtn, { marginTop: 6 }]}
+                disabled={geminiBusy}
+                onPress={() => setUploadNaming(false)}
+              >
+                <Text style={styles.removeBtnText}>Back to preview</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Pressable
+                style={[styles.addBtn, { marginTop: 10, opacity: geminiBusy ? 0.45 : 1 }]}
+                disabled={geminiBusy}
+                onPress={() => {
+                  if (geminiBusy || !geminiDraft) return
+                  setUploadFileName(suggestUploadFileName())
+                  setUploadNaming(true)
+                }}
+              >
+                <Text style={styles.addBtnText}>Use this image (upload)</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.removeBtn, { marginTop: 6 }]}
+                disabled={geminiBusy}
+                onPress={() => {
+                  setGeminiDraft(null)
+                  setUploadNaming(false)
+                  setUploadFileName('')
+                }}
+              >
+                <Text style={styles.removeBtnText}>Discard draft</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+      ) : null}
+
+      {img && !geminiDraft ? (
+        <View style={{ marginTop: 12 }}>
+          <Text style={styles.label}>Current image</Text>
+          <Image
+            source={{ uri: img }}
+            style={{
+              width: '100%',
+              aspectRatio: LESSON_IMAGE_SCREEN_PREVIEW_ASPECT,
+              borderRadius: 12,
+              backgroundColor: '#1a1a1a',
+            }}
+            resizeMode="cover"
+          />
+          <Pressable
+            style={styles.removeBtn}
+            onPress={() => setContent((cur) => ({ ...cur, image: '' }))}
+          >
+            <Text style={styles.removeBtnText}>Clear image</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      <Text style={[styles.label, { marginTop: 14 }]}>Or paste image URL</Text>
+      <AdminTextInput
+        style={styles.input}
+        value={String(image ?? '')}
+        onChangeText={(t) => setContent((cur) => ({ ...cur, image: t }))}
+        placeholder="https://… public image URL"
+        placeholderTextColor="#52525b"
+        autoCapitalize="none"
+        autoCorrect={false}
+        editable={!geminiBusy}
+      />
     </View>
   )
 }
@@ -3123,14 +3414,6 @@ export function LessonScreenEditModal({
         }
         return (
           <View style={styles.form}>
-            <Field
-              label="Said by (speaker name)"
-              value={String(c.saidBy ?? '')}
-              onChangeText={(t) => setContent((cur) => ({ ...cur, saidBy: t }))}
-            />
-            <Text style={styles.hint}>
-              Shown under the English gloss in the learner app (e.g. Hawwii). Leave blank to hide.
-            </Text>
             {words.length === 0 ? (
               <Text style={styles.hint}>
                 {allowJsonEditing
@@ -3140,9 +3423,10 @@ export function LessonScreenEditModal({
             ) : null}
             {words.length ? (
               <Text style={styles.hint}>
-                Type Afaan Oromo and translation for each row. Linking from search is optional while you draft the
-                series — Approve Series adds new phrases to the voice bank and recording queue. If a phrase already
-                exists, tap a search match to attach its word_id early.
+                Type Afaan Oromo and translation for each row. Set “Said by” per word (shown under the gloss in the
+                learner app). Linking from search is optional while you draft the series — Approve Series adds new
+                phrases to the voice bank and recording queue. If a phrase already exists, tap a search match to attach
+                its word_id early.
               </Text>
             ) : null}
             {words.map((w, i) => (
@@ -3212,6 +3496,24 @@ export function LessonScreenEditModal({
                     })
                   }}
                 />
+                <Field
+                  label="Said by (speaker name)"
+                  value={String(w.saidBy ?? '')}
+                  onChangeText={(t) => {
+                    setContent((cur) => {
+                      const ws = (cur.words as Record<string, unknown>[]) ?? []
+                      const next = ws.map((x, j) => {
+                        if (j !== i) return x
+                        const nx: Record<string, unknown> = { ...(x as Record<string, unknown>) }
+                        const v = t.trim()
+                        if (v) nx.saidBy = t
+                        else delete nx.saidBy
+                        return nx
+                      })
+                      return { ...cur, words: next }
+                    })
+                  }}
+                />
                 <Pressable
                   style={styles.removeBtn}
                   onPress={() => {
@@ -3255,6 +3557,10 @@ export function LessonScreenEditModal({
             return { ...cur, learned_extra: fn(row0) }
           })
         }
+        const vocabSectionId = String(c.vocabSectionId ?? '').trim()
+        const vocabSectionLabel =
+          VOCAB_SECTION_OPTIONS.find((o) => o.value === vocabSectionId)?.label ??
+          (vocabSectionId || 'None (Language Vocab)')
         primaryScreenSaveRef.current = () => {
           const d = draftRef.current
           if (!d) return
@@ -3277,6 +3583,23 @@ export function LessonScreenEditModal({
         return (
           <View style={styles.form}>
             <Field label="Message" value={String(c.message ?? '')} allowMultiline onChangeText={(t) => setContent((cur) => ({ ...cur, message: t }))} />
+            <Text style={styles.label}>Vocab button link</Text>
+            <Text style={styles.hint}>
+              Optional. With a section, learner CTA is “Series Vocab” and opens that Vocab tab section. With none, CTA is
+              “Language Vocab” (all vocabulary).
+            </Text>
+            <CelebrateVocabSectionPicker
+              value={vocabSectionId}
+              label={vocabSectionLabel}
+              onChange={(next) =>
+                setContent((cur) => {
+                  const out = { ...cur }
+                  if (next) out.vocabSectionId = next
+                  else delete out.vocabSectionId
+                  return out
+                })
+              }
+            />
             <Row label="Community discussion">
               <Switch
                 value={Boolean(communityOn)}
@@ -3932,6 +4255,43 @@ export function LessonScreenEditModal({
           </View>
         )
       }
+      case 'imageScreen': {
+        primaryScreenSaveRef.current = () => {
+          const d = draftRef.current
+          if (!d) return
+          const cur = d.content as Record<string, unknown>
+          saveStructured({
+            image: String(cur.image ?? '').trim(),
+            imagePrompt: String(cur.imagePrompt ?? '').trim(),
+            title: String(cur.title ?? '').trim(),
+            body: String(cur.body ?? '').trim(),
+          })
+        }
+        return (
+          <View style={styles.form}>
+            <Text style={styles.hint}>
+              Hero image with title and body. Generate with Gemini, regenerate until you like it, then upload — or paste a
+              public URL.
+            </Text>
+            <ImageScreenMediaField
+              image={String(c.image ?? '')}
+              imagePrompt={String(c.imagePrompt ?? '')}
+              setContent={setContent}
+            />
+            <Field
+              label="Title"
+              value={String(c.title ?? '')}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, title: t }))}
+            />
+            <Field
+              label="Body"
+              allowMultiline
+              value={String(c.body ?? '')}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, body: t }))}
+            />
+          </View>
+        )
+      }
       default:
         return null
     }
@@ -4418,6 +4778,10 @@ const styles = StyleSheet.create({
     borderColor: '#27272a',
     backgroundColor: '#111',
     marginTop: 10,
+  },
+  quizCorrectChoiceOn: {
+    borderColor: 'rgba(232,135,10,0.85)',
+    backgroundColor: 'rgba(232,135,10,0.16)',
   },
   quizCorrectChoiceText: { color: '#e4e4e7', fontSize: 14, fontWeight: '800' },
   quizCorrectChoiceSub: { color: '#a1a1aa', fontSize: 13, marginTop: 4, lineHeight: 18 },

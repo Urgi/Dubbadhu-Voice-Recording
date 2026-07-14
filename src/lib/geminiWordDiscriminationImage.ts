@@ -56,10 +56,15 @@ function extractFirstImagePart(body: GeminiGenerateBody): { mimeType: string; da
   return null
 }
 
-async function requestGeminiImage(apiKey: string, prompt: string): Promise<
-  | { mimeType: string; data: string }
-  | { error: string }
-> {
+/** Wide hero for lesson Image screens (matches learner ~16:10 frame; Gemini nearest is 16:9). */
+export const LESSON_IMAGE_SCREEN_GEMINI_ASPECT = '16:9' as const
+export const LESSON_IMAGE_SCREEN_PREVIEW_ASPECT = 16 / 9
+
+async function requestGeminiImage(
+  apiKey: string,
+  prompt: string,
+  aspectRatio: string = WORD_DISCRIMINATION_SCENE_GEMINI_ASPECT,
+): Promise<{ mimeType: string; data: string } | { error: string }> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`
   let res: Response
   try {
@@ -71,7 +76,7 @@ async function requestGeminiImage(apiKey: string, prompt: string): Promise<
         generationConfig: {
           responseModalities: ['TEXT', 'IMAGE'],
           imageConfig: {
-            aspectRatio: WORD_DISCRIMINATION_SCENE_GEMINI_ASPECT,
+            aspectRatio,
           },
         },
       }),
@@ -204,4 +209,89 @@ export async function generateAndUploadWordDiscriminationImage(
     storageBaseName?.trim() ||
     wordDiscriminationImageStorageBaseName(userDescription)
   return await uploadWordDiscriminationImageDraft(draft, base)
+}
+
+function buildLessonImageScreenPrompt(userDescription: string): string {
+  const d = userDescription.trim()
+  return [
+    'Generate one single image for a language-learning lesson hero screen.',
+    'Clear, warm, educational illustration or photo-realistic scene; suitable for adult language learners;',
+    'no text, letters, numbers, logos, or watermarks in the image.',
+    'Composition: wide landscape 16:9 frame for a mobile lesson hero; one clear focal subject; simple uncluttered background.',
+    'Subject and scene:',
+    d,
+  ].join(' ')
+}
+
+/**
+ * Generate a lesson Image-screen draft with Gemini (preview only; not uploaded yet).
+ */
+export async function generateLessonImageScreenDraft(
+  userDescription: string,
+): Promise<WordDiscriminationImageDraft | { error: string }> {
+  const apiKey = getExpoPublicGeminiKey().trim()
+  if (!apiKey) {
+    return { error: 'Missing EXPO_PUBLIC_GEMINI_API_KEY. Add it to .env and restart Metro.' }
+  }
+
+  const prompt = buildLessonImageScreenPrompt(userDescription)
+  const gen = await requestGeminiImage(apiKey, prompt, LESSON_IMAGE_SCREEN_GEMINI_ASPECT)
+  if ('error' in gen) return gen
+
+  const mimeType = gen.mimeType.trim()
+  const base64 = gen.data.trim()
+  if (!mimeType.startsWith('image/') || !base64) {
+    return { error: 'Gemini returned an invalid image payload.' }
+  }
+
+  const dataUrl = `data:${mimeType};base64,${base64}`
+  return { mimeType, base64, dataUrl }
+}
+
+/**
+ * Upload a lesson Image-screen draft under `lesson-screen/` in `word-comparison-images`.
+ */
+export async function uploadLessonImageScreenDraft(
+  draft: Pick<WordDiscriminationImageDraft, 'mimeType' | 'base64'>,
+  storageBaseName: string,
+): Promise<{ publicUrl: string } | { error: string }> {
+  let bytes: Uint8Array
+  try {
+    bytes = base64ToUint8Array(draft.base64)
+  } catch {
+    return { error: 'Could not decode image data for upload.' }
+  }
+  if (bytes.length === 0) {
+    return { error: 'Decoded image was empty.' }
+  }
+
+  const base = wordDiscriminationImageStorageBaseName(storageBaseName)
+  if (!base) {
+    return { error: 'Enter a file name (letters, numbers, underscores).' }
+  }
+
+  const mime = draft.mimeType.trim().toLowerCase()
+  const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'png'
+  const contentType = ext === 'jpg' ? 'image/jpeg' : 'image/png'
+  const path = `lesson-screen/${base}.${ext}`
+
+  const { error: upErr } = await supabase.storage
+    .from(WORD_COMPARISON_IMAGES_BUCKET)
+    .upload(path, bytes, { contentType, upsert: false })
+
+  if (upErr) {
+    const hint =
+      upErr.message.toLowerCase().includes('row-level security') ||
+      upErr.message.toLowerCase().includes('policy')
+        ? ' Add an INSERT policy on storage.objects for bucket word-comparison-images (see sql/storage_word_comparison_images_anon_upload.sql).'
+        : ''
+    return { error: `${upErr.message}.${hint}` }
+  }
+
+  const { data } = supabase.storage.from(WORD_COMPARISON_IMAGES_BUCKET).getPublicUrl(path)
+  const publicUrl = data.publicUrl?.trim()
+  if (!publicUrl) {
+    return { error: 'Upload succeeded but public URL was missing.' }
+  }
+  return { publicUrl }
 }

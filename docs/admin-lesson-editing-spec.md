@@ -172,9 +172,9 @@ Audio-first vocab. Dubbadhu supports **text-only mode** if `audioRef` is missing
 
 **content**
 - `title`: `string` (optional) — real headline override only. Do not store bare `Listen First` / `Listen & Learn` (learner treats those as defaults). Prefer `Listen First: Foo` → persist `Foo` only.
-- `saidBy`: `string` (optional) — speaker name shown as **Said by:** under the English gloss (e.g. `Hawwii`). Omit or leave empty to hide in the learner app.
+- `saidBy`: `string` (optional, **per word**) — speaker name shown as **Said by:** under the English gloss for that entry. Legacy screen-level `saidBy` is migrated onto words when editing.
 - **`words`**: array (>= 1). Each item is either:
-  - **Lean (preferred when linked to `public.words`)**: `word_id` (UUID), optional `word` (Afaan display string for JSON size), optional `draftTokenId` (editor / speaking links). URLs and `oromo`/`english` are filled at runtime in the learner app.
+  - **Lean (preferred when linked to `public.words`)**: `word_id` (UUID), optional `word` (Afaan display string for JSON size), optional `draftTokenId` (editor / speaking links), optional `saidBy`, optional `translation`. URLs and `oromo`/`english` are filled at runtime in the learner app.
   - **Legacy / text-only**: `oromo` + `english`, optional `audioRef` / `fastAudioRef` / `slowAudioRef`, etc.
 
 Example (text-only safe):
@@ -281,6 +281,7 @@ This one is important: the type is **exactly** `"CelebrateScreen"`.
 - `communityDiscussionEnabled`: `boolean` (optional; default off — classic celebration)
 - `communityDiscussionPrompt`: `string` (optional; shown when community discussion is on; posts go through `discussion-moderate`)
 - `communityDiscussionAllowedEnglish`: `string` (optional; author note for AI — which English / non-Oromo words or patterns are allowed; not shown to learners)
+- `vocabSectionId`: `string` (optional; Vocab tab section key e.g. `Greetings`. When set, Celebrate CTA is “Series Vocab” and opens that section. When omitted, CTA is “Language Vocab” and opens all vocabulary.)
 
 Minimal safe:
 

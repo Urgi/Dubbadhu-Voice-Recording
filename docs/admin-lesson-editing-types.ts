@@ -19,7 +19,8 @@ export type ScreenType =
   | "discriminationDrill"
   | "communityBoard"
   | "word-breakdown"
-  | "videoReview";
+  | "videoReview"
+  | "imageScreen";
 
 export type LessonContent = {
   id: `lesson${number}` | string;
@@ -53,11 +54,15 @@ export type AudioExposureWord = {
   text?: string;
   /** Optional; admin editor assigns for speaking-practice ↔ exposure links before `word_id` exists. */
   draftTokenId?: string;
+  /** Speaker name for "Said by:" on this word in the learner app. */
+  saidBy?: string;
   [k: string]: unknown;
 };
 export type AudioExposureContent = {
   title?: string;
-  /** Speaker name for "Said by:" attribution in the learner app (e.g. Hawwii). */
+  /**
+   * @deprecated Prefer `words[].saidBy`. Kept for older lesson JSON until edited/saved.
+   */
   saidBy?: string;
   subtitle?: string;
   words: AudioExposureWord[];
@@ -158,6 +163,15 @@ export type VideoReviewContent = {
   lines?: unknown[];
   message?: string;
   [k: string]: unknown;
+};
+
+/** Hero image URL + title + body copy. */
+export type ImageScreenContent = {
+  image: string;
+  /** Admin-only: last Gemini prompt used to generate `image` (not shown to learners). */
+  imagePrompt?: string;
+  title?: string;
+  body?: string;
 };
 
 /** One row in `word-breakdown` — target-language token and gloss (not tied to a specific language name). */

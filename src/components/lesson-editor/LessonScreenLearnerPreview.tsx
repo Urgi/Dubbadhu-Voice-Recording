@@ -22,6 +22,7 @@ const SOURCES: Record<string, ImageSourcePropType> = {
   communityBoard: require('../../../assets/lesson-screen-previews/community-board.png'),
   'word-breakdown': require('../../../assets/lesson-screen-previews/concept.png'),
   videoReview: require('../../../assets/lesson-screen-previews/concept.png'),
+  imageScreen: require('../../../assets/lesson-screen-previews/concept.png'),
 }
 
 function resolvePreviewSource(type: string): ImageSourcePropType | null {

@@ -297,7 +297,8 @@ type TranslationConflictPayload = {
 
 /**
  * Compares Audio exposure tokens to this series’ `words` rows only. Does not write to the database;
- * conflicts are resolved in lesson JSON. Inserts and translation updates run on series approve.
+ * conflicts are resolved in lesson JSON. Draft inserts/updates run on approval; live-series lesson
+ * saves sync linked definitions after the confirmation step.
  */
 async function resolveAudioExposureWordsAgainstBank(
   words: Record<string, unknown>[],

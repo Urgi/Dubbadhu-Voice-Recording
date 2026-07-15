@@ -50,6 +50,7 @@ import {
   seriesStatusLabel,
   type LessonSeriesStatus,
 } from '../lib/lessonSeriesStatus'
+import { syncLiveLessonWordTranslations } from '../lib/liveLessonWordBankSync'
 import supabase from '../lib/supabase'
 import { seriesKey, VOICE_BANK_LANGUAGE, wordsBankSeriesLabelFromSeriesId } from '../lib/voiceBankLabels'
 import type { RootStackParamList } from '../types'
@@ -649,6 +650,17 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
       }
       clearUnsaved()
       setSavedFlash(true)
+      if (role === 'admin' && isLessonStructureFrozen(seriesStatus)) {
+        try {
+          await syncLiveLessonWordTranslations(content, supabase)
+        } catch (wordSyncError) {
+          const detail = wordSyncError instanceof Error ? wordSyncError.message : String(wordSyncError)
+          const msg = `The lesson was saved, but its linked word definition was not updated in the word bank.\n\n${detail}`
+          setError(msg)
+          Alert.alert('Lesson saved; word bank not updated', msg)
+          return false
+        }
+      }
       return true
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)

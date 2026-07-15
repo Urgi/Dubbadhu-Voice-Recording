@@ -76,6 +76,13 @@ type LessonRow = {
   lesson_number: number | null
 }
 
+type LessonMoveSeriesOption = {
+  id: string
+  title: string | null
+  sort_order: number | null
+  status: LessonSeriesStatus
+}
+
 const SCRIPT_CARD_SUBTITLE_FALLBACK = 'docs/admin-lesson-editing-spec.schema.json'
 
 const RLS_LESSON_SERIES_HINT =
@@ -143,6 +150,9 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   const { seriesId } = route.params
   const [lessons, setLessons] = useState<LessonRow[]>([])
   const [seriesTitle, setSeriesTitle] = useState<string>(seriesId)
+  const [titleModalOpen, setTitleModalOpen] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [titleSaving, setTitleSaving] = useState(false)
   const [introScript, setIntroScript] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -175,11 +185,17 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   const [introVideoSaving, setIntroVideoSaving] = useState(false)
   const [videoReviewGaps, setVideoReviewGaps] = useState<VideoReviewGap[]>([])
   const [lessonReorderSaving, setLessonReorderSaving] = useState(false)
+  const [lessonToMove, setLessonToMove] = useState<LessonRow | null>(null)
+  const [lessonMoveSeries, setLessonMoveSeries] = useState<LessonMoveSeriesOption[]>([])
+  const [lessonMoveLoading, setLessonMoveLoading] = useState(false)
+  const [lessonMoving, setLessonMoving] = useState(false)
+  const [lessonMoveTargetId, setLessonMoveTargetId] = useState<string | null>(null)
   const [wordBankListModal, setWordBankListModal] = useState<
     null | 'newWords' | 'definitionChanges' | 'needsVaRecording'
   >(null)
   const lessonReorderInFlight = useRef(false)
   const lessonSwipeRefs = useRef<Record<string, Swipeable | null>>({})
+  const lessonLongPressRef = useRef<string | null>(null)
 
   const nextLessonNumber = useMemo(() => {
     let max = 0
@@ -235,6 +251,8 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     if (isAdmin) return true
     return seriesStatus !== 'published'
   }, [isAdmin, isProfessor, seriesStatus])
+
+  const seriesConfigEditable = isAdmin || (isProfessor && seriesStatus === 'draft')
 
   /** Open script modal to read; editing is still gated by scriptEditable. */
   const scriptViewable = isAdmin || isProfessor
@@ -475,6 +493,59 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       setLoading(false)
     }
   }, [seriesId, isAdmin])
+
+  const openTitleModal = useCallback(() => {
+    if (!seriesConfigEditable || !lessonSeriesRowExists) return
+    setTitleDraft(seriesTitle)
+    setTitleModalOpen(true)
+  }, [lessonSeriesRowExists, seriesConfigEditable, seriesTitle])
+
+  const saveSeriesTitle = useCallback(async () => {
+    if (!seriesConfigEditable || !lessonSeriesRowExists) return
+    const nextTitle = titleDraft.trim()
+    if (!nextTitle) {
+      Alert.alert('Series name required', 'Enter a name for this series.')
+      return
+    }
+    if (nextTitle === seriesTitle.trim()) {
+      setTitleModalOpen(false)
+      return
+    }
+    if (shouldConfirmAdminLiveSeriesSave(role ?? undefined, seriesStatus)) {
+      const proceed = await confirmAdminLiveSeriesSave(seriesStatus, 'series title')
+      if (!proceed) return
+    }
+
+    setTitleSaving(true)
+    const { data, error: updateError } = await supabase
+      .from('lesson_series')
+      .update({ title: nextTitle })
+      .eq('id', seriesId)
+      .select('title')
+      .maybeSingle()
+    setTitleSaving(false)
+
+    if (updateError) {
+      Alert.alert('Could not rename series', withLessonSeriesRlsHint(updateError.message))
+      return
+    }
+    const savedTitle =
+      data && typeof data === 'object' ? String((data as { title?: unknown }).title ?? '').trim() : ''
+    if (savedTitle !== nextTitle) {
+      Alert.alert('Could not rename series', 'The database did not persist the new title. Check the update policy.')
+      return
+    }
+    setSeriesTitle(savedTitle)
+    setTitleModalOpen(false)
+  }, [
+    lessonSeriesRowExists,
+    role,
+    seriesConfigEditable,
+    seriesId,
+    seriesStatus,
+    seriesTitle,
+    titleDraft,
+  ])
 
   const openScriptModal = useCallback(() => {
     if (!scriptViewable) {
@@ -978,8 +1049,8 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   )
 
   const applyLessonOrderToDb = useCallback(
-    async (ordered: LessonRow[]) => {
-      const sid = seriesId.trim()
+    async (ordered: LessonRow[], targetSeriesId = seriesId) => {
+      const sid = targetSeriesId.trim()
       if (!sid) return 'Missing series id.'
       const n = ordered.length
       for (let idx = 0; idx < n; idx++) {
@@ -1002,21 +1073,26 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
 
   const moveLesson = useCallback(
     async (fromIndex: number, direction: -1 | 1) => {
-      if (structureFrozen || lessonReorderInFlight.current) return
+      if (!seriesConfigEditable || lessonReorderInFlight.current) return
       const sorted = sortLessonsForOrder(lessons)
       const j = fromIndex + direction
       if (j < 0 || j >= sorted.length) return
 
-      const reordered = [...sorted]
-      const a = reordered[fromIndex]!
-      const b = reordered[j]!
-      reordered[fromIndex] = b
-      reordered[j] = a
-
       lessonReorderInFlight.current = true
-      setLessonReorderSaving(true)
-      setError('')
       try {
+        if (shouldConfirmAdminLiveSeriesSave(role ?? undefined, seriesStatus)) {
+          const proceed = await confirmAdminLiveSeriesSave(seriesStatus, 'lesson order')
+          if (!proceed) return
+        }
+
+        const reordered = [...sorted]
+        const a = reordered[fromIndex]!
+        const b = reordered[j]!
+        reordered[fromIndex] = b
+        reordered[j] = a
+
+        setLessonReorderSaving(true)
+        setError('')
         const nextRows = reordered.map((row, idx) => ({
           ...row,
           lesson_number: idx + 1,
@@ -1033,7 +1109,145 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
         setLessonReorderSaving(false)
       }
     },
-    [applyLessonOrderToDb, lessons, load, structureFrozen],
+    [applyLessonOrderToDb, lessons, load, role, seriesConfigEditable, seriesStatus],
+  )
+
+  const openMoveLesson = useCallback(
+    async (lesson: LessonRow) => {
+      if (!isAdmin || lessonMoving) return
+      lessonSwipeRefs.current[lesson.id]?.close()
+      setLessonToMove(lesson)
+      setLessonMoveSeries([])
+      setLessonMoveLoading(true)
+
+      const { data, error: seriesError } = await supabase
+        .from('lesson_series')
+        .select('id,title,sort_order,series_status')
+        .neq('id', seriesId)
+        .order('sort_order', { ascending: true })
+      setLessonMoveLoading(false)
+
+      if (seriesError) {
+        setLessonToMove(null)
+        Alert.alert('Could not load series', withLessonSeriesRlsHint(seriesError.message))
+        return
+      }
+      setLessonMoveSeries(
+        ((data ?? []) as {
+          id: string
+          title: string | null
+          sort_order: number | null
+          series_status: string | null
+        }[]).map((item) => ({
+          id: item.id,
+          title: item.title,
+          sort_order: item.sort_order,
+          status: normalizeSeriesStatus(item.series_status),
+        })),
+      )
+    },
+    [isAdmin, lessonMoving, seriesId],
+  )
+
+  const moveLessonToSeries = useCallback(
+    async (target: LessonMoveSeriesOption) => {
+      const lesson = lessonToMove
+      if (!isAdmin || !lesson || lessonMoving || target.id === seriesId) return
+
+      const liveStatuses = [seriesStatus, target.status].filter(isLessonStructureFrozen)
+      if (liveStatuses.length > 0) {
+        const warningStatus: LessonSeriesStatus = liveStatuses.includes('published')
+          ? 'published'
+          : liveStatuses.includes('testing')
+            ? 'testing'
+            : 'complete'
+        const proceed = await confirmAdminLiveSeriesSave(warningStatus, 'lesson move')
+        if (!proceed) return
+      }
+
+      setLessonMoving(true)
+      setLessonMoveTargetId(target.id)
+      setError('')
+      try {
+        const [{ data: sourceData, error: sourceError }, { data: targetData, error: targetError }] =
+          await Promise.all([
+            supabase.from('lessons').select('content').eq('id', lesson.id).eq('series_id', seriesId).maybeSingle(),
+            supabase
+              .from('lessons')
+              .select('id,title,series_id,lesson_number')
+              .eq('series_id', target.id)
+              .order('lesson_number', { ascending: true }),
+          ])
+        if (sourceError) throw new Error(sourceError.message)
+        if (!sourceData) throw new Error('The lesson is no longer in this series. Refresh and try again.')
+        if (targetError) throw new Error(targetError.message)
+
+        const targetLessons = sortLessonsForOrder((targetData ?? []) as LessonRow[])
+        const rawContent = (sourceData as { content?: unknown }).content
+        const nextContent =
+          rawContent && typeof rawContent === 'object' && !Array.isArray(rawContent)
+            ? {
+                ...(rawContent as Record<string, unknown>),
+                series: wordsBankSeriesLabelFromSeriesId(target.id),
+              }
+            : rawContent
+        const movedLesson: LessonRow = {
+          ...lesson,
+          series_id: target.id,
+          lesson_number: targetLessons.length + 1,
+        }
+
+        const { data: moved, error: moveError } = await supabase
+          .from('lessons')
+          .update({
+            series_id: target.id,
+            lesson_number: movedLesson.lesson_number,
+            next_lesson_id: null,
+            content: nextContent,
+          })
+          .eq('id', lesson.id)
+          .eq('series_id', seriesId)
+          .select('id')
+          .maybeSingle()
+        if (moveError) throw new Error(moveError.message)
+        if (!moved) throw new Error('The database did not move the lesson. Check the lessons update policy.')
+
+        const sourceOrderError = await applyLessonOrderToDb(
+          sortLessonsForOrder(lessons.filter((item) => item.id !== lesson.id)),
+          seriesId,
+        )
+        const targetOrderError = await applyLessonOrderToDb([...targetLessons, movedLesson], target.id)
+        if (sourceOrderError || targetOrderError) {
+          const detail = [sourceOrderError, targetOrderError].filter(Boolean).join('\n')
+          Alert.alert(
+            'Lesson moved; order cleanup failed',
+            withLessonsRlsHint(
+              `The lesson is now in “${target.title?.trim() || target.id}”, but numbering could not be fully normalized.\n\n${detail}`,
+            ),
+          )
+        }
+
+        setLessonToMove(null)
+        await load()
+      } catch (moveError) {
+        const msg = moveError instanceof Error ? moveError.message : String(moveError)
+        Alert.alert('Could not move lesson', withLessonsRlsHint(msg))
+        await load()
+      } finally {
+        setLessonMoving(false)
+        setLessonMoveTargetId(null)
+      }
+    },
+    [
+      applyLessonOrderToDb,
+      isAdmin,
+      lessonMoving,
+      lessonToMove,
+      lessons,
+      load,
+      seriesId,
+      seriesStatus,
+    ],
   )
 
   const confirmDeleteLesson = useCallback(
@@ -1091,6 +1305,26 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
 
   const listHeader = (
     <>
+      <View style={styles.statusBlock}>
+        <AdminSectionHeader label="Series" emphasis="gold" />
+        <View style={styles.statusCard}>
+          <View style={styles.statusRow}>
+            <View style={styles.statusTextCol}>
+              <Text style={styles.statusTitle}>Series name</Text>
+              <Text style={styles.seriesNameText}>{seriesTitle || seriesId}</Text>
+            </View>
+            {seriesConfigEditable && lessonSeriesRowExists ? (
+              <Pressable
+                style={[styles.secondaryBtn, titleSaving && styles.btnDisabledOpacity]}
+                onPress={openTitleModal}
+                disabled={titleSaving}
+              >
+                <Text style={styles.secondaryBtnText}>Rename</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      </View>
       <View style={[styles.scriptBlock, !scriptEditable && isAdmin && styles.scriptReadOnlyWrap]}>
         <AdminSectionHeader label="Script" emphasis="gold" />
         <AdminSeriesScriptCard subtitle={scriptCardSubtitle(introScript)} onPress={openScriptModal} />
@@ -1445,6 +1679,9 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       <View style={styles.lessonsBlock}>
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <AdminSectionHeader label="Lessons" right={`${lessons.length} total`} emphasis="gold" />
+        {isAdmin && lessons.length > 0 ? (
+          <Text style={styles.lessonMoveHint}>Hold a lesson to move it to another series.</Text>
+        ) : null}
       </View>
     </>
   )
@@ -1456,7 +1693,9 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     seriesStatusSaving ||
     vaSyncing ||
     lessonReorderSaving ||
-    introVideoSaving
+    introVideoSaving ||
+    titleSaving ||
+    lessonMoving
 
   return (
     <View style={styles.screen}>
@@ -1472,12 +1711,27 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
         }
         renderItem={({ item, index }) => {
           const order = item.lesson_number != null && item.lesson_number > 0 ? item.lesson_number : index + 1
-          const canReorderLessons = !structureFrozen && orderedLessons.length >= 2
+          const canReorderLessons = seriesConfigEditable && orderedLessons.length >= 2
           const row = (
             <View style={styles.rowCard}>
               <Pressable
                 style={({ pressed }) => [styles.rowCardMain, pressed && styles.rowPressed]}
-                onPress={() => navigation.navigate('LessonConfigDetail', { lessonId: item.id })}
+                onPress={() => {
+                  if (lessonLongPressRef.current === item.id) {
+                    lessonLongPressRef.current = null
+                    return
+                  }
+                  navigation.navigate('LessonConfigDetail', { lessonId: item.id })
+                }}
+                onLongPress={
+                  isAdmin
+                    ? () => {
+                        lessonLongPressRef.current = item.id
+                        void openMoveLesson(item)
+                      }
+                    : undefined
+                }
+                delayLongPress={450}
                 android_ripple={{ color: '#333' }}
               >
                 <View style={styles.rowInner}>
@@ -1498,29 +1752,35 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
               {canReorderLessons ? (
                 <View style={styles.lessonReorderToolbar}>
                   <Pressable
-                    style={({ pressed }) => [
-                      styles.lessonReorderBtn,
-                      (index === 0 || lessonReorderSaving) && styles.btnDisabledOpacity,
-                      pressed && styles.lessonReorderBtnPressed,
-                    ]}
+                    style={styles.lessonReorderBtn}
                     onPress={() => void moveLesson(index, -1)}
                     disabled={index === 0 || lessonReorderSaving}
                     hitSlop={6}
                   >
-                    <Text style={styles.lessonReorderBtnText}>↑</Text>
+                    <Text
+                      style={[
+                        styles.lessonReorderBtnText,
+                        (index === 0 || lessonReorderSaving) && styles.disabledText,
+                      ]}
+                    >
+                      Up
+                    </Text>
                   </Pressable>
-                  <View style={styles.lessonReorderSep} />
+                  <Text style={styles.lessonReorderSep}>·</Text>
                   <Pressable
-                    style={({ pressed }) => [
-                      styles.lessonReorderBtn,
-                      (index >= orderedLessons.length - 1 || lessonReorderSaving) && styles.btnDisabledOpacity,
-                      pressed && styles.lessonReorderBtnPressed,
-                    ]}
+                    style={styles.lessonReorderBtn}
                     onPress={() => void moveLesson(index, 1)}
                     disabled={index >= orderedLessons.length - 1 || lessonReorderSaving}
                     hitSlop={6}
                   >
-                    <Text style={styles.lessonReorderBtnText}>↓</Text>
+                    <Text
+                      style={[
+                        styles.lessonReorderBtnText,
+                        (index >= orderedLessons.length - 1 || lessonReorderSaving) && styles.disabledText,
+                      ]}
+                    >
+                      Down
+                    </Text>
                   </Pressable>
                 </View>
               ) : null}
@@ -1575,6 +1835,123 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
           </Pressable>
         </View>
       ) : null}
+
+      <Modal
+        visible={titleModalOpen}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => !titleSaving && setTitleModalOpen(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalRoot}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.modalHeader}>
+            <Pressable hitSlop={12} onPress={() => !titleSaving && setTitleModalOpen(false)}>
+              <Text style={styles.modalCancel}>Cancel</Text>
+            </Pressable>
+            <Text style={styles.modalTitle}>Rename series</Text>
+            <Pressable hitSlop={12} onPress={() => void saveSeriesTitle()} disabled={titleSaving}>
+              <Text style={[styles.modalSave, titleSaving && styles.modalSaveDisabled]}>
+                {titleSaving ? '…' : 'Save'}
+              </Text>
+            </Pressable>
+          </View>
+          <ScrollView
+            style={styles.modalScroll}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.modalScrollContent}
+          >
+            <Text style={styles.modalLabel}>Series name</Text>
+            <AdminTextInput
+              style={styles.modalFieldInput}
+              value={titleDraft}
+              onChangeText={setTitleDraft}
+              placeholder="Enter series name"
+              placeholderTextColor="#52525b"
+              autoFocus
+            />
+            <Text style={styles.modalFieldHint}>
+              This is the title learners see. The internal series ID stays unchanged.
+            </Text>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        visible={lessonToMove !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => {
+          if (!lessonMoving && !lessonMoveLoading) setLessonToMove(null)
+        }}
+      >
+        <View style={styles.modalRoot}>
+          <View style={styles.modalHeader}>
+            <Pressable
+              hitSlop={12}
+              onPress={() => setLessonToMove(null)}
+              disabled={lessonMoving || lessonMoveLoading}
+            >
+              <Text
+                style={[
+                  styles.modalCancel,
+                  (lessonMoving || lessonMoveLoading) && styles.modalSaveDisabled,
+                ]}
+              >
+                Cancel
+              </Text>
+            </Pressable>
+            <Text style={styles.modalTitle} numberOfLines={1}>
+              Move lesson
+            </Text>
+            <View style={styles.modalHeaderSpacer} />
+          </View>
+          <ScrollView
+            style={styles.modalScroll}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.modalScrollContent}
+          >
+            <Text style={styles.modalInfo}>
+              Move{' '}
+              <Text style={styles.modalInfoEm}>
+                {lessonToMove?.title?.trim() || lessonToMove?.id || 'this lesson'}
+              </Text>{' '}
+              to:
+            </Text>
+            {lessonMoveLoading ? (
+              <ActivityIndicator color={ADMIN_ACCENT_GOLD} />
+            ) : lessonMoveSeries.length === 0 ? (
+              <Text style={styles.empty}>No other series are available.</Text>
+            ) : (
+              lessonMoveSeries.map((target) => (
+                <Pressable
+                  key={target.id}
+                  style={({ pressed }) => [
+                    styles.lessonMoveTarget,
+                    pressed && styles.rowPressed,
+                    lessonMoving && styles.btnDisabledOpacity,
+                  ]}
+                  onPress={() => void moveLessonToSeries(target)}
+                  disabled={lessonMoving}
+                >
+                  <View style={styles.lessonMoveTargetText}>
+                    <Text style={styles.rowTitle}>{target.title?.trim() || target.id}</Text>
+                    <Text style={styles.rowMeta}>
+                      {target.id} · {seriesStatusLabel(target.status)}
+                    </Text>
+                  </View>
+                  {lessonMoveTargetId === target.id ? (
+                    <ActivityIndicator size="small" color={ADMIN_ACCENT_GOLD} />
+                  ) : (
+                    <AdminChevronRight size={10} color="#636366" />
+                  )}
+                </Pressable>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
 
       <Modal
         visible={addLessonOpen}
@@ -1801,6 +2178,7 @@ const styles = StyleSheet.create({
   },
   statusTextCol: { flex: 1, minWidth: 0 },
   statusTitle: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  seriesNameText: { fontSize: 16, fontWeight: '700', color: ADMIN_ACCENT_GOLD, marginTop: 6 },
   statusSubtitle: { fontSize: 12, color: '#636366', marginTop: 4, lineHeight: 16 },
   seriesStatusBadge: {
     fontSize: 15,
@@ -1933,6 +2311,7 @@ const styles = StyleSheet.create({
     marginVertical: 14,
   },
   lessonsBlock: { marginBottom: 8 },
+  lessonMoveHint: { fontSize: 11, color: '#636366', marginTop: 4 },
   error: { color: '#f87171', marginBottom: 10, fontSize: 14 },
   lessonSwipeActions: {
     flexDirection: 'row',
@@ -1951,8 +2330,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   rowCard: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
     backgroundColor: '#1c1c1e',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#38383a',
@@ -1960,30 +2337,25 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     overflow: 'hidden',
   },
-  rowCardMain: { flex: 1, minWidth: 0 },
+  rowCardMain: { width: '100%', minWidth: 0 },
   rowPressed: { opacity: 0.92 },
   lessonReorderToolbar: {
-    flexDirection: 'column',
-    justifyContent: 'center',
-    borderLeftWidth: StyleSheet.hairlineWidth,
-    borderLeftColor: '#38383a',
-    paddingVertical: 2,
-    paddingHorizontal: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#2c2c2e',
+    gap: 6,
   },
   lessonReorderBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    minWidth: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 4,
   },
-  lessonReorderBtnPressed: { opacity: 0.88 },
-  lessonReorderBtnText: { fontSize: 15, fontWeight: '700', color: ADMIN_ACCENT_GOLD },
-  lessonReorderSep: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: '#38383a',
-    marginHorizontal: 6,
-  },
+  lessonReorderBtnText: { fontSize: 12, fontWeight: '500', color: '#a1a1aa' },
+  lessonReorderSep: { fontSize: 12, color: '#3a3a3c' },
+  disabledText: { opacity: 0.32 },
   rowInner: {
     flex: 1,
     minWidth: 0,
@@ -2007,6 +2379,20 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, minWidth: 0 },
   rowTitle: { fontSize: 14, fontWeight: '500', color: '#fff' },
   rowMeta: { fontSize: 12, color: '#636366', marginTop: 1 },
+  lessonMoveTarget: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 8,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#38383a',
+    backgroundColor: '#1c1c1e',
+  },
+  lessonMoveTargetText: { flex: 1, minWidth: 0 },
   empty: { color: '#636366', fontSize: 14, textAlign: 'center', marginTop: 32, paddingHorizontal: 24 },
   addLessonBtn: {
     paddingVertical: 12,

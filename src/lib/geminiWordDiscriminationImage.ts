@@ -56,7 +56,7 @@ function extractFirstImagePart(body: GeminiGenerateBody): { mimeType: string; da
   return null
 }
 
-/** Wide hero for lesson Image screens (matches learner ~16:10 frame; Gemini nearest is 16:9). */
+/** Wide hero for Cultural Context screens (matches learner ~16:10 frame; Gemini nearest is 16:9). */
 export const LESSON_IMAGE_SCREEN_GEMINI_ASPECT = '16:9' as const
 export const LESSON_IMAGE_SCREEN_PREVIEW_ASPECT = 16 / 9
 
@@ -224,7 +224,7 @@ function buildLessonImageScreenPrompt(userDescription: string): string {
 }
 
 /**
- * Generate a lesson Image-screen draft with Gemini (preview only; not uploaded yet).
+ * Generate a Cultural Context screen draft with Gemini (preview only; not uploaded yet).
  */
 export async function generateLessonImageScreenDraft(
   userDescription: string,
@@ -249,7 +249,7 @@ export async function generateLessonImageScreenDraft(
 }
 
 /**
- * Upload a lesson Image-screen draft under `lesson-screen/` in `word-comparison-images`.
+ * Upload a Cultural Context screen draft under `lesson-screen/` in `word-comparison-images`.
  */
 export async function uploadLessonImageScreenDraft(
   draft: Pick<WordDiscriminationImageDraft, 'mimeType' | 'base64'>,

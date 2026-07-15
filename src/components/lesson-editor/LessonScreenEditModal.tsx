@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -23,6 +24,7 @@ import {
   Text,
   View,
 } from 'react-native'
+import * as VideoThumbnails from 'expo-video-thumbnails'
 import { AdminTextInput } from '../AdminTextInput'
 import type { LessonScreen } from '../../lib/lessonEditor'
 import {
@@ -104,6 +106,8 @@ type Props = {
   lessonSeries?: string | null
   /** Optional: `lesson.content.series` string (e.g. "Mastering Greetings") for `words.series` matching. */
   lessonContentSeries?: string | null
+  /** Resolved series video used by dialogue clips (no-translation preferred, translated fallback). */
+  seriesNoTranslationVideoUrl?: string | null
   wordBankLanguage?: string
   /** Professors: false — hide raw JSON and JSON-only escape hatches. */
   allowJsonEditing?: boolean
@@ -810,6 +814,112 @@ function VideoReviewDubbadhuVideoField({
   )
 }
 
+function DialogueVideoTimingReference({
+  videoUrl,
+  fromSecond,
+  toSecond,
+}: {
+  videoUrl: string
+  fromSecond: unknown
+  toSecond: unknown
+}) {
+  const uri = String(videoUrl ?? '').trim()
+  const [fromThumb, setFromThumb] = useState('')
+  const [toThumb, setToThumb] = useState('')
+  const [thumbBusy, setThumbBusy] = useState(false)
+
+  const from = Number(fromSecond)
+  const to = Number(toSecond)
+  const fromSec = Number.isFinite(from) && from >= 0 ? from : 0
+  const toSec = Number.isFinite(to) && to >= 0 ? to : fromSec
+
+  useEffect(() => {
+    if (!uri) {
+      setFromThumb('')
+      setToThumb('')
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void (async () => {
+        setThumbBusy(true)
+        setFromThumb('')
+        setToThumb('')
+        try {
+          const [start, end] = await Promise.allSettled([
+            VideoThumbnails.getThumbnailAsync(uri, {
+              time: Math.round(fromSec * 1000),
+              quality: 0.72,
+            }),
+            VideoThumbnails.getThumbnailAsync(uri, {
+              time: Math.round(toSec * 1000),
+              quality: 0.72,
+            }),
+          ])
+          if (!cancelled) {
+            setFromThumb(start.status === 'fulfilled' ? start.value.uri : '')
+            setToThumb(end.status === 'fulfilled' ? end.value.uri : '')
+          }
+        } catch {
+          if (!cancelled) {
+            setFromThumb('')
+            setToThumb('')
+          }
+        } finally {
+          if (!cancelled) setThumbBusy(false)
+        }
+      })()
+    }, 180)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [uri, fromSec, toSec])
+
+  if (!uri) {
+    return (
+      <Text style={styles.hint}>
+        No series video is available yet. Add one on the series config to preview dialogue timing.
+      </Text>
+    )
+  }
+
+  return (
+    <View style={styles.dialogueVideoReference}>
+      <View style={styles.dialogueVideoHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.label}>Series video timing reference</Text>
+          <Text style={styles.hint}>Open the video to scrub, then use the start/end stills to verify your seconds.</Text>
+        </View>
+        <Pressable
+          style={styles.dialogueOpenVideoBtn}
+          onPress={() => {
+            void Linking.openURL(uri).catch(() => {
+              Alert.alert('Could not open video', 'Check the series video URL and try again.')
+            })
+          }}
+        >
+          <Text style={styles.dialogueOpenVideoText}>Open video</Text>
+        </Pressable>
+      </View>
+      <View style={styles.dialogueThumbRow}>
+        {[
+          { label: `From ${fromSec.toFixed(2)}s`, uri: fromThumb },
+          { label: `To ${toSec.toFixed(2)}s`, uri: toThumb },
+        ].map((item) => (
+          <View key={item.label} style={styles.dialogueThumbCell}>
+            <View style={styles.dialogueThumbBox}>
+              {item.uri ? <Image source={{ uri: item.uri }} style={styles.dialogueThumb} resizeMode="contain" /> : null}
+              {thumbBusy && !item.uri ? <ActivityIndicator color="#d4af37" /> : null}
+            </View>
+            <Text style={styles.dialogueThumbLabel}>{item.label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  )
+}
+
 function CelebrateVocabSectionPicker({
   value,
   label,
@@ -1368,7 +1478,7 @@ function WordDiscriminationSceneImageField({
   )
 }
 
-/** Gemini generate → preview → regenerate → upload for lesson Image screens. */
+/** Gemini generate → preview → regenerate → upload for Cultural Context screens. */
 function ImageScreenMediaField({
   image,
   imagePrompt,
@@ -1399,7 +1509,7 @@ function ImageScreenMediaField({
 
   return (
     <View style={{ marginBottom: 12 }}>
-      <Text style={styles.label}>Image (Gemini)</Text>
+      <Text style={styles.label}>Cultural context image (Gemini)</Text>
       <Text style={styles.hint}>
         Describe the scene, generate a draft, regenerate until you like it, then upload. Uses the same Gemini key and
         storage bucket as discrimination images (saved under lesson-screen/).
@@ -2280,6 +2390,7 @@ export function LessonScreenEditModal({
   lessonScreenIndex = null,
   lessonSeries = null,
   lessonContentSeries = null,
+  seriesNoTranslationVideoUrl = null,
   wordBankLanguage = VOICE_BANK_LANGUAGE,
   allowJsonEditing = true,
   allowVideoReviewMediaFields = true,
@@ -2830,6 +2941,11 @@ export function LessonScreenEditModal({
               Plays the series no-translation video from these seconds (decimals OK, e.g. 3.5). Leave
               blank to hide the video button on the learner dialogue screen.
             </Text>
+            <DialogueVideoTimingReference
+              videoUrl={String(seriesNoTranslationVideoUrl ?? '')}
+              fromSecond={c.fromSecond}
+              toSecond={c.toSecond}
+            />
             <View style={styles.rowSwitch}>
               <View style={{ flex: 1, marginRight: 8 }}>
                 <Field
@@ -4497,6 +4613,41 @@ const styles = StyleSheet.create({
   hint: { color: '#a1a1aa', fontSize: 14, marginBottom: 12 },
   imagePickStatusEmpty: { color: '#f87171' },
   form: { marginBottom: 20 },
+  dialogueVideoReference: {
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    borderRadius: 12,
+    backgroundColor: '#111',
+    padding: 10,
+    marginBottom: 12,
+  },
+  dialogueVideoHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  dialogueOpenVideoBtn: {
+    borderWidth: 1,
+    borderColor: '#d4af37',
+    borderRadius: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  dialogueOpenVideoText: { color: '#fde68a', fontSize: 12, fontWeight: '800' },
+  dialogueThumbRow: { flexDirection: 'row', gap: 8 },
+  dialogueThumbCell: { flex: 1 },
+  dialogueThumbBox: {
+    height: 100,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dialogueThumb: { width: '100%', height: '100%' },
+  dialogueThumbLabel: {
+    color: '#d4d4d8',
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginTop: 5,
+  },
   field: { marginBottom: 14 },
   label: { color: '#d4d4d8', fontSize: 13, fontWeight: '600', marginBottom: 6 },
   input: {

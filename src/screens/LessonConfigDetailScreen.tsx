@@ -407,6 +407,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
   /** Professor admin_draft: structured screen preview (read-only), not raw JSON. */
   const [previewReadOnlyIndex, setPreviewReadOnlyIndex] = useState<number | null>(null)
   const [seriesStatus, setSeriesStatus] = useState<LessonSeriesStatus>('draft')
+  const [seriesNoTranslationVideoUrl, setSeriesNoTranslationVideoUrl] = useState<string | null>(null)
 
   const addScreenOptions = useMemo(
     () => buildAddScreenOptionsForCurriculumEditor(role ?? undefined),
@@ -448,6 +449,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
     if (!r) {
       setDraft(null)
       setSeriesStatus('draft')
+      setSeriesNoTranslationVideoUrl(null)
       setLoading(false)
       clearUnsaved()
       return
@@ -455,10 +457,11 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
 
     let resolvedSeriesStatus: LessonSeriesStatus = 'draft'
     const sid = (r.series_id ?? '').trim()
+    setSeriesNoTranslationVideoUrl(null)
     if (sid) {
       const { data: lsRow, error: lsErr } = await supabase
         .from('lesson_series')
-        .select('series_status,approved,audio_recorded')
+        .select('series_status,approved,audio_recorded,intro_video_no_translation_url,intro_video_url')
         .eq('id', sid)
         .maybeSingle()
       if (!lsErr && lsRow) {
@@ -466,7 +469,14 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
           series_status?: string | null
           approved?: boolean | null
           audio_recorded?: boolean | null
+          intro_video_no_translation_url?: string | null
+          intro_video_url?: string | null
         }
+        const noTranslationUrl = String(sr.intro_video_no_translation_url ?? '').trim()
+        const translatedUrl = String(sr.intro_video_url ?? '').trim()
+        setSeriesNoTranslationVideoUrl(
+          noTranslationUrl || translatedUrl || null,
+        )
         const raw = sr.series_status
         if (typeof raw === 'string' && raw.trim()) {
           resolvedSeriesStatus = normalizeSeriesStatus(raw)
@@ -474,6 +484,8 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
         else if (sr.approved === true) resolvedSeriesStatus = 'approved'
         else resolvedSeriesStatus = 'draft'
       }
+    } else {
+      setSeriesNoTranslationVideoUrl(null)
     }
     setSeriesStatus(resolvedSeriesStatus)
 
@@ -1278,6 +1290,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
             ? draft.series.trim()
             : null
         }
+        seriesNoTranslationVideoUrl={seriesNoTranslationVideoUrl}
         wordBankLanguage={VOICE_BANK_LANGUAGE}
         allowJsonEditing={role !== 'professor'}
         allowVideoReviewMediaFields={role !== 'professor'}
@@ -1301,6 +1314,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
             ? draft.series.trim()
             : null
         }
+        seriesNoTranslationVideoUrl={seriesNoTranslationVideoUrl}
         wordBankLanguage={VOICE_BANK_LANGUAGE}
         allowJsonEditing={false}
         allowVideoReviewMediaFields

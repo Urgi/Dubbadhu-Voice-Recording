@@ -65,7 +65,7 @@ export const SCREEN_TYPE_OPTIONS: { value: ScreenType; label: string }[] = [
   { value: 'communityBoard', label: 'Community board' },
   { value: 'word-breakdown', label: 'Word breakdown' },
   { value: 'videoReview', label: 'Video review' },
-  { value: 'imageScreen', label: 'Image' },
+  { value: 'imageScreen', label: 'Cultural Context' },
 ]
 
 export type ScreenTypeOption = { value: ScreenType; label: string }

@@ -182,6 +182,8 @@ export type RepetitionExample = {
   english: string;
   /** Public audio URL when available. */
   audio?: string;
+  /** Linked `public.words.id` when chosen from the word bank. */
+  word_id?: string;
 };
 
 /** Pattern exposure: multiple related examples with speakers; tap for English. */

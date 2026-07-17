@@ -1264,9 +1264,11 @@ export function sanitizeScreenContentForPersistence(
           const oromo = String(rec.oromo ?? '').trim()
           const english = String(rec.english ?? '').trim()
           const audio = String(rec.audio ?? rec.audioRef ?? '').trim()
+          const wordId = String(rec.word_id ?? '').trim().toLowerCase()
           if (!oromo || !english) return null
           const out: Record<string, unknown> = { oromo, english }
           if (audio) out.audio = audio
+          if (UUID_RE_FOR_WORD_ROW.test(wordId)) out.word_id = wordId
           return out
         })
         .filter((x): x is Record<string, unknown> => x != null)

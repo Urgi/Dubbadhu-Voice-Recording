@@ -23,6 +23,8 @@ const SOURCES: Record<string, ImageSourcePropType> = {
   'word-breakdown': require('../../../assets/lesson-screen-previews/concept.png'),
   videoReview: require('../../../assets/lesson-screen-previews/concept.png'),
   imageScreen: require('../../../assets/lesson-screen-previews/concept.png'),
+  repetition: require('../../../assets/lesson-screen-previews/concept.png'),
+  repetitionPractice: require('../../../assets/lesson-screen-previews/concept.png'),
 }
 
 function resolvePreviewSource(type: string): ImageSourcePropType | null {

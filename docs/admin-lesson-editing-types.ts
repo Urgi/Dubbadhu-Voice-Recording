@@ -20,7 +20,9 @@ export type ScreenType =
   | "communityBoard"
   | "word-breakdown"
   | "videoReview"
-  | "imageScreen";
+  | "imageScreen"
+  | "repetition"
+  | "repetitionPractice";
 
 export type LessonContent = {
   id: `lesson${number}` | string;
@@ -173,6 +175,28 @@ export type ImageScreenContent = {
   title?: string;
   body?: string;
 };
+
+/** One related example line on a Repetition screen (max 6). */
+export type RepetitionExample = {
+  oromo: string;
+  english: string;
+  /** Public audio URL when available. */
+  audio?: string;
+};
+
+/** Pattern exposure: multiple related examples with speakers; tap for English. */
+export type RepetitionContent = {
+  title?: string;
+  /** Pattern word/phrase to highlight inside each oromo line (e.g. "jiru"). */
+  target?: string;
+  examples: RepetitionExample[];
+};
+
+/**
+ * Speaking twin of `repetition`: English cue + mic, then reveal Oromo + model audio.
+ * Same `examples` shape as `RepetitionContent`.
+ */
+export type RepetitionPracticeContent = RepetitionContent;
 
 /** One row in `word-breakdown` — target-language token and gloss (not tied to a specific language name). */
 export type WordBreakdownWordRow = {

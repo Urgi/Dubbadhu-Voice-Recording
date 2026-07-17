@@ -19,6 +19,8 @@ export type ScreenType =
   | 'word-breakdown'
   | 'videoReview'
   | 'imageScreen'
+  | 'repetition'
+  | 'repetitionPractice'
 
 /** Legacy `type` strings in stored JSON → canonical ScreenType (learner registry keeps aliases too). */
 export const LEGACY_SCREEN_TYPE_ALIASES: Record<string, ScreenType> = {
@@ -66,6 +68,8 @@ export const SCREEN_TYPE_OPTIONS: { value: ScreenType; label: string }[] = [
   { value: 'word-breakdown', label: 'Word breakdown' },
   { value: 'videoReview', label: 'Video review' },
   { value: 'imageScreen', label: 'Cultural Context' },
+  { value: 'repetition', label: 'Repetition' },
+  { value: 'repetitionPractice', label: 'Repetition practice' },
 ]
 
 export type ScreenTypeOption = { value: ScreenType; label: string }
@@ -105,6 +109,8 @@ const ADD_SCREEN_CURRICULUM_ORDER: ScreenType[] = [
   'concept',
   'dialogue',
   'audioExposure',
+  'repetition',
+  'repetitionPractice',
   'speakingPractice',
   'patternPractice',
   'quiz',
@@ -313,6 +319,16 @@ export function defaultScreen(type: ScreenType): LessonScreen {
           imagePrompt: '',
           title: '',
           body: '',
+        },
+      }
+    case 'repetition':
+    case 'repetitionPractice':
+      return {
+        type,
+        content: {
+          title: '',
+          target: '',
+          examples: [{ oromo: '', english: '', audio: '' }],
         },
       }
     default:
@@ -1231,6 +1247,32 @@ export function sanitizeScreenContentForPersistence(
       base.body = String(base.body ?? '').trim()
       return base
     }
+    case 'repetition':
+    case 'repetitionPractice': {
+      const base = pickAllowedKeys(content, new Set(['title', 'target', 'examples']))
+      const title = String(base.title ?? '').trim()
+      if (title) base.title = title
+      else delete base.title
+      const target = String(base.target ?? '').trim()
+      if (target) base.target = target
+      else delete base.target
+      const raw = Array.isArray(base.examples) ? base.examples : []
+      base.examples = raw
+        .map((row) => {
+          if (row == null || typeof row !== 'object' || Array.isArray(row)) return null
+          const rec = row as Record<string, unknown>
+          const oromo = String(rec.oromo ?? '').trim()
+          const english = String(rec.english ?? '').trim()
+          const audio = String(rec.audio ?? rec.audioRef ?? '').trim()
+          if (!oromo || !english) return null
+          const out: Record<string, unknown> = { oromo, english }
+          if (audio) out.audio = audio
+          return out
+        })
+        .filter((x): x is Record<string, unknown> => x != null)
+        .slice(0, 6)
+      return base
+    }
     default:
       return { ...content }
   }
@@ -1364,6 +1406,14 @@ export function screenSummary(screen: LessonScreen): string {
       }
       return '—'
     }
+    case 'repetition':
+    case 'repetitionPractice': {
+      const target = String(c.target ?? '').trim()
+      const n = Array.isArray(c.examples) ? c.examples.length : 0
+      const kind = screen.type === 'repetitionPractice' ? 'practice' : 'listen'
+      if (target) return `${target} · ${n} example(s) · ${kind}`
+      return n ? `${n} example(s) · ${kind}` : '—'
+    }
     case 'discriminationDrill': {
       const q = String(c.question ?? c.title ?? c.prompt ?? '').trim()
       const raw = c.words
@@ -1420,6 +1470,14 @@ export function screenSubtitleLines(screen: LessonScreen, _ctx?: ScreenSubtitleC
       const t = String(c.title ?? '').trim()
       if (t) return [t.length > 120 ? `${t.slice(0, 120)}…` : t]
       return [screenSummary(screen)]
+    }
+    case 'repetition':
+    case 'repetitionPractice': {
+      const target = String(c.target ?? '').trim()
+      const n = Array.isArray(c.examples) ? c.examples.length : 0
+      const kind = screen.type === 'repetitionPractice' ? 'Practice' : 'Listen'
+      if (target) return [`${kind}: ${target}`, `${n} example(s)`]
+      return [n ? `${kind} · ${n} example(s)` : '—']
     }
     case 'speakingPractice': {
       const cr = c as Record<string, unknown>

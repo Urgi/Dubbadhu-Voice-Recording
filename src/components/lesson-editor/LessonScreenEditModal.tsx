@@ -87,6 +87,8 @@ const STRUCTURED_SCREEN_TYPES_FOR_HEADER_SAVE = new Set([
   'word-breakdown',
   'videoReview',
   'imageScreen',
+  'repetition',
+  'repetitionPractice',
 ])
 
 /** Public storage bucket for Word discrimination quiz question images (Supabase dashboard). */
@@ -4406,6 +4408,171 @@ export function LessonScreenEditModal({
               value={String(c.body ?? '')}
               onChangeText={(t) => setContent((cur) => ({ ...cur, body: t }))}
             />
+          </View>
+        )
+      }
+      case 'repetition':
+      case 'repetitionPractice': {
+        const isPractice = draft.type === 'repetitionPractice'
+        const rawExamples = Array.isArray(c.examples) ? (c.examples as Record<string, unknown>[]) : []
+        const displayExamples =
+          rawExamples.length > 0 ? rawExamples : [{ oromo: '', english: '', audio: '' }]
+
+        primaryScreenSaveRef.current = () => {
+          setJsonError('')
+          const d = draftRef.current
+          if (!d) return
+          const content = d.content as Record<string, unknown>
+          const title = String(content.title ?? '').trim()
+          const target = String(content.target ?? '').trim()
+          const arr = Array.isArray(content.examples)
+            ? (content.examples as Record<string, unknown>[])
+            : []
+          const cleaned = arr
+            .map((row) => {
+              const oromo = String(row.oromo ?? '').trim()
+              const english = String(row.english ?? '').trim()
+              const audio = String(row.audio ?? row.audioRef ?? '').trim()
+              if (!oromo || !english) return null
+              return audio ? { oromo, english, audio } : { oromo, english }
+            })
+            .filter((row): row is { oromo: string; english: string; audio?: string } => row != null)
+            .slice(0, 6)
+          if (cleaned.length < 1) {
+            setJsonError('Add at least one example with both Afaan Oromo and English.')
+            return
+          }
+          saveStructured({
+            ...(title ? { title } : {}),
+            ...(target ? { target } : {}),
+            examples: cleaned,
+          })
+        }
+
+        return (
+          <View style={styles.form}>
+            <Text style={styles.hint}>
+              {isPractice
+                ? 'Up to 6 English cues with mics. Learners record, then Check answers reveals Oromo and model audio for self-compare. Same fields as Repetition.'
+                : 'Up to 6 related examples so learners hear a pattern (e.g. jiru). Speaker plays audio; learners tap a line for English. Optional target highlights that word in each line.'}
+            </Text>
+            <Field
+              label="Title (optional)"
+              value={String(c.title ?? '')}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, title: t }))}
+            />
+            <Field
+              label="Pattern / target word (optional)"
+              value={String(c.target ?? '')}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, target: t }))}
+            />
+            <Text style={styles.label}>Examples (max 6)</Text>
+            {displayExamples.map((row, i) => (
+              <View key={`rep-${i}`} style={styles.bulletRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.matchRightPreviewLabel}>Afaan Oromo</Text>
+                  <AdminTextInput
+                    style={styles.bulletInput}
+                    value={String(row.oromo ?? '')}
+                    onChangeText={(t) => {
+                      setContent((cur) => {
+                        const xs = Array.isArray(cur.examples)
+                          ? ([...(cur.examples as Record<string, unknown>[])])
+                          : []
+                        const base = xs.length > 0 ? xs : [{ oromo: '', english: '', audio: '' }]
+                        return {
+                          ...cur,
+                          examples: base.map((x, j) => (j === i ? { ...x, oromo: t } : x)),
+                        }
+                      })
+                    }}
+                    placeholder="Mana koo"
+                    placeholderTextColor="#52525b"
+                  />
+                  <Text style={[styles.matchRightPreviewLabel, { marginTop: 8 }]}>English</Text>
+                  <AdminTextInput
+                    style={styles.bulletInput}
+                    value={String(row.english ?? '')}
+                    onChangeText={(t) => {
+                      setContent((cur) => {
+                        const xs = Array.isArray(cur.examples)
+                          ? ([...(cur.examples as Record<string, unknown>[])])
+                          : []
+                        const base = xs.length > 0 ? xs : [{ oromo: '', english: '', audio: '' }]
+                        return {
+                          ...cur,
+                          examples: base.map((x, j) => (j === i ? { ...x, english: t } : x)),
+                        }
+                      })
+                    }}
+                    placeholder="my house"
+                    placeholderTextColor="#52525b"
+                  />
+                  <Text style={[styles.matchRightPreviewLabel, { marginTop: 8 }]}>
+                    {isPractice ? 'Model audio URL' : 'Audio URL'}
+                  </Text>
+                  <AdminTextInput
+                    style={styles.bulletInput}
+                    value={String(row.audio ?? '')}
+                    onChangeText={(t) => {
+                      setContent((cur) => {
+                        const xs = Array.isArray(cur.examples)
+                          ? ([...(cur.examples as Record<string, unknown>[])])
+                          : []
+                        const base = xs.length > 0 ? xs : [{ oromo: '', english: '', audio: '' }]
+                        return {
+                          ...cur,
+                          examples: base.map((x, j) => (j === i ? { ...x, audio: t } : x)),
+                        }
+                      })
+                    }}
+                    placeholder="https://…"
+                    placeholderTextColor="#52525b"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+                <Pressable
+                  style={styles.bulletMiniBtn}
+                  onPress={() => {
+                    setContent((cur) => {
+                      const xs = Array.isArray(cur.examples)
+                        ? ([...(cur.examples as Record<string, unknown>[])])
+                        : []
+                      const base = xs.length > 0 ? xs : [{ oromo: '', english: '', audio: '' }]
+                      if (base.length <= 1) {
+                        return { ...cur, examples: [{ oromo: '', english: '', audio: '' }] }
+                      }
+                      return { ...cur, examples: base.filter((_, j) => j !== i) }
+                    })
+                  }}
+                >
+                  <Text style={styles.bulletMiniBtnTextDanger}>✕</Text>
+                </Pressable>
+              </View>
+            ))}
+            {displayExamples.length < 6 ? (
+              <Pressable
+                style={styles.addBtn}
+                onPress={() => {
+                  setContent((cur) => {
+                    const xs = Array.isArray(cur.examples)
+                      ? ([...(cur.examples as Record<string, unknown>[])])
+                      : []
+                    const base = xs.length > 0 ? xs : [{ oromo: '', english: '', audio: '' }]
+                    if (base.length >= 6) return cur
+                    return {
+                      ...cur,
+                      examples: [...base, { oromo: '', english: '', audio: '' }],
+                    }
+                  })
+                }}
+              >
+                <Text style={styles.addBtnText}>+ Add example</Text>
+              </Pressable>
+            ) : (
+              <Text style={styles.hint}>Maximum of 6 examples.</Text>
+            )}
           </View>
         )
       }

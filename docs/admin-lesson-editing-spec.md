@@ -92,6 +92,9 @@ Supported `type` values:
 - `audioDiscrimination`
 - `communityBoard`
 - `word-breakdown`
+- `imageScreen`
+- `repetition`
+- `repetitionPractice`
 
 If you write a different string, the Dubbadhu client won’t be able to render it.
 
@@ -373,6 +376,17 @@ Break a phrase into word boxes (personalizes `original` by replacing `____` with
 - **`original`**: `string` (required; can include `____` for the learner name)
 - **`words`**: `{ word: string, translation: string }[]` (>= 1) — target-language segment and gloss/explanation
 - `tip`: `string` (optional)
+
+### `repetition`
+Pattern exposure with up to 6 related example lines.
+
+**content**
+- `title`: `string` (optional)
+- `target`: `string` (optional) — pattern word highlighted in each Oromo line (e.g. `jiru`)
+- **`examples`**: `{ oromo: string, english: string, audio?: string }[]` (1–6)
+
+### `repetitionPractice`
+Speaking twin of `repetition`. Same content shape. Learner sees English + mic; **Check answers** reveals Oromo and model audio for self-compare.
 
 ---
 

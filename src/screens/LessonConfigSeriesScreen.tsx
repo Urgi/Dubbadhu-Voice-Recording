@@ -1461,10 +1461,10 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                       <Text style={styles.wordBankReviewLabel}>Nothing queued from lessons</Text>
                       <Text style={styles.wordBankReviewLine}>
                         Scanned {wordBankReview.lessonRowCount} lesson row(s) in this series; found{' '}
-                        {wordBankReview.harvestedCount} unique token(s) from Audio exposure and Speaking practice
-                        only. Nothing new to insert, no rows still waiting on VA recording, no translation diffs, and no
-                        cross-series blocks. Put vocabulary on those screens with Afaan (word / legacy oromo/text) and
-                        gloss (translation) on exposures.
+                        {wordBankReview.harvestedCount} unique token(s) from Audio exposure, Repetition practice,
+                        and Speaking practice. Nothing new to insert, no rows still waiting on VA recording, no
+                        translation diffs, and no cross-series blocks. Put vocabulary on those screens with Afaan
+                        text and a gloss where the editor provides one.
                       </Text>
                     </View>
                   ) : null}

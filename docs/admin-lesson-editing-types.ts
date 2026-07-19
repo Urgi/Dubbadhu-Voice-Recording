@@ -198,7 +198,10 @@ export type RepetitionContent = {
 export type RepetitionPracticeWord = {
   oromo: string;
   english?: string;
-  audio: string;
+  /** Optional while authoring; populated from the linked word-bank row after voice recording. */
+  audio?: string;
+  /** Linked `public.words.id`; missing typed words receive this when the series sync creates their recording row. */
+  word_id?: string;
 };
 
 /** Exactly three pairs; the learner hears five words and speaks the final answer. */

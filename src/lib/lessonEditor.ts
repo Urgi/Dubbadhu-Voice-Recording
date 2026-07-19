@@ -1323,10 +1323,12 @@ export function sanitizeScreenContentForPersistence(
             const oromo = String(word.oromo ?? '').trim()
             const english = String(word.english ?? '').trim()
             const audio = String(word.audio ?? word.audioRef ?? '').trim()
+            const wordId = String(word.word_id ?? '').trim().toLowerCase()
             if (!oromo || (requireEnglish && !english)) return null
             const out: Record<string, unknown> = { oromo }
             if (english) out.english = english
             if (audio) out.audio = audio
+            if (UUID_RE_FOR_WORD_ROW.test(wordId)) out.word_id = wordId
             return out
           }
           const baseWord = normalizeWord(rec.base, true)

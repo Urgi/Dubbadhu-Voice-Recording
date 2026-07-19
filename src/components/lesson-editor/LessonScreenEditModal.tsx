@@ -4755,10 +4755,12 @@ export function LessonScreenEditModal({
                 oromo: String(base.oromo ?? '').trim(),
                 english: String(base.english ?? '').trim(),
                 audio: String(base.audio ?? '').trim(),
+                word_id: String(base.word_id ?? '').trim().toLowerCase(),
               },
               answer: {
                 oromo: String(answer.oromo ?? '').trim(),
                 audio: String(answer.audio ?? '').trim(),
+                word_id: String(answer.word_id ?? '').trim().toLowerCase(),
               },
               sharedStem: String(pair.sharedStem ?? '').trim(),
               addedPart: String(pair.addedPart ?? '').trim(),
@@ -4768,13 +4770,11 @@ export function LessonScreenEditModal({
             (pair) =>
               !pair.base.oromo ||
               !pair.base.english ||
-              !pair.base.audio ||
-              !pair.answer.oromo ||
-              !pair.answer.audio,
+              !pair.answer.oromo,
           )
           if (incomplete) {
             setJsonError(
-              'Each pair needs a base Oromo word, base English meaning, answer word, and audio for both words.',
+              'Each pair needs a base Oromo word, base English meaning, and answer word. Missing audio is queued for voice recording when the series syncs.',
             )
             return
           }
@@ -4793,7 +4793,8 @@ export function LessonScreenEditModal({
           <View style={styles.form}>
             <Text style={styles.hint}>
               Exactly three Oromo pairs. Learners hear the first five words in order, then record the
-              missing sixth word and compare it with the model.
+              missing sixth word and compare it with the model. Words without audio are queued for
+              voice recording when the series syncs.
             </Text>
             <Field
               label="Title (optional)"
@@ -4826,6 +4827,13 @@ export function LessonScreenEditModal({
                     !Array.isArray(current[side])
                       ? (current[side] as Record<string, unknown>)
                       : {}
+                  if (key === 'oromo') {
+                    const next: Record<string, unknown> = { ...word, oromo: value }
+                    delete next.word_id
+                    delete next.audio
+                    delete next.audioRef
+                    return { ...current, [side]: next }
+                  }
                   return { ...current, [side]: { ...word, [key]: value } }
                 })
               }
@@ -4847,6 +4855,7 @@ export function LessonScreenEditModal({
                         base: {
                           oromo: rowAfaanTextForBankPick(picked),
                           english: rowTranslationText(picked),
+                          word_id: picked.id,
                           ...(audio ? { audio } : {}),
                         },
                       }))
@@ -4874,6 +4883,7 @@ export function LessonScreenEditModal({
                         ...current,
                         answer: {
                           oromo: rowAfaanTextForBankPick(picked),
+                          word_id: picked.id,
                           ...(audio ? { audio } : {}),
                         },
                       }))

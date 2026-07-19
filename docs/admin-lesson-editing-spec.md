@@ -389,8 +389,10 @@ Three-pair pattern induction and speaking check. The learner reveals the first f
 - `title`: `string` (optional)
 - `instruction`: `string` (optional)
 - **`pairs`**: exactly 3 `{ base, answer, sharedStem?, addedPart? }` objects
-  - `base`: `{ oromo: string, english: string, audio: string }`
-  - `answer`: `{ oromo: string, audio: string }`
+- `base`: `{ oromo: string, english: string, audio?: string, word_id?: uuid }`
+- `answer`: `{ oromo: string, audio?: string, word_id?: uuid }`
+  - A typed word without bank audio is added to `public.words` as pending during series sync/approval, then appears in the voice-recording queue.
+  - After recording, learner lesson hydration resolves `audio` from the linked `word_id`.
   - `sharedStem`: `string` (optional) — highlighted after the final answer
   - `addedPart`: `string` (optional) — highlighted after the final answer
 

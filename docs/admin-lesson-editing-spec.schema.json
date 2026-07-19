@@ -403,11 +403,12 @@
     "repetitionPracticeWord": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["oromo", "audio"],
+      "required": ["oromo"],
       "properties": {
         "oromo": { "type": "string", "minLength": 1 },
         "english": { "type": "string" },
-        "audio": { "type": "string" }
+        "audio": { "type": "string" },
+        "word_id": { "type": "string", "format": "uuid" }
       }
     },
     "repetitionPracticeContent": {

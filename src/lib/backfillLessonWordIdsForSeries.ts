@@ -129,6 +129,27 @@ function patchScreensInPlace(screens: unknown[], wordMap: Map<string, string>): 
       }
     }
 
+    if (type === 'repetitionPractice') {
+      const pairs = cr.pairs
+      if (!Array.isArray(pairs)) continue
+      for (const pair of pairs) {
+        if (pair == null || typeof pair !== 'object' || Array.isArray(pair)) continue
+        const pr = pair as Record<string, unknown>
+        for (const side of ['base', 'answer'] as const) {
+          const item = pr[side]
+          if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
+          const rec = item as Record<string, unknown>
+          if (isBankWordUuid(rec.word_id)) continue
+          const afaan = String(rec.oromo ?? rec.word ?? rec.text ?? '').trim()
+          if (!afaan) continue
+          const rowId = wordMap.get(afaan.toLowerCase())
+          if (!rowId) continue
+          rec.word_id = rowId.toLowerCase()
+          changed = true
+        }
+      }
+    }
+
     if (type === 'speakingPractice') {
       if (isBankWordUuid(cr.word_id)) continue
       const afaan = String(cr.word ?? cr.prompt ?? '').trim()

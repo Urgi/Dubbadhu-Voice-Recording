@@ -71,7 +71,7 @@ function lessonDisplayNumber(row: LessonRowForHarvest, sortedIndex: number): num
 }
 
 /**
- * Raw hits from Audio exposure + Speaking practice (one entry per token per screen).
+ * Raw hits from Audio exposure, Repetition practice, and Speaking practice (one entry per token per screen).
  * `lessonNumber` should be the curriculum lesson number shown to admins (DB `lesson_number`, or sort rank).
  *
  * **Audio exposure:** counts every non-empty Afaan line (`word` / legacy `oromo` / `text`), not only rows already
@@ -107,6 +107,25 @@ export function collectVoiceBankHitsFromScreens(
           if (!afaan) continue
           const english = String(rec.translation ?? rec.english ?? '').trim() || null
           out.push({ word: afaan, translation: english, lessonNumber, screenIndex })
+        }
+      }
+    }
+
+    if (type === 'repetitionPractice') {
+      const pairs = cr.pairs
+      if (Array.isArray(pairs)) {
+        for (const pair of pairs) {
+          if (pair == null || typeof pair !== 'object' || Array.isArray(pair)) continue
+          const pr = pair as Record<string, unknown>
+          for (const side of ['base', 'answer'] as const) {
+            const item = pr[side]
+            if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
+            const rec = item as Record<string, unknown>
+            const afaan = String(rec.oromo ?? rec.word ?? rec.text ?? '').trim()
+            if (!afaan) continue
+            const english = String(rec.english ?? rec.translation ?? '').trim() || null
+            out.push({ word: afaan, translation: english, lessonNumber, screenIndex })
+          }
         }
       }
     }
@@ -270,9 +289,9 @@ function pushHarvestUnique(
 }
 
 /**
- * Tokens that sync to `words` / VA on **Approve Series**: only **audioExposure** (`content.words[]` — any row with
- * Afaan text, including drafts without `word_id`) and **speakingPractice** (`word` / `prompt`). Excludes quiz,
- * dialogue, match, celebrate, etc.
+ * Tokens that sync to `words` / VA on **Approve Series**: **audioExposure** (`content.words[]`),
+ * **repetitionPractice** (`pairs[].base` + `pairs[].answer`), and **speakingPractice** (`word` / `prompt`).
+ * Draft rows without `word_id` are included so typed words can enter the voice-recording queue.
  */
 export function harvestWordsForVoiceBank(content: unknown): HarvestedWord[] {
   const screens = extractLessonScreensForHarvest(content)
@@ -313,6 +332,24 @@ export function harvestWordsFromLessonContent(content: unknown): HarvestedWord[]
           if (!afaan) continue
           const english = String(rec.translation ?? rec.english ?? '').trim() || null
           pushHarvestUnique(out, seen, afaan, english)
+        }
+      }
+    }
+
+    if (type === 'repetitionPractice') {
+      const pairs = cr.pairs
+      if (Array.isArray(pairs)) {
+        for (const pair of pairs) {
+          if (pair == null || typeof pair !== 'object' || Array.isArray(pair)) continue
+          const pr = pair as Record<string, unknown>
+          for (const side of ['base', 'answer'] as const) {
+            const item = pr[side]
+            if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
+            const rec = item as Record<string, unknown>
+            const afaan = String(rec.oromo ?? rec.word ?? rec.text ?? '').trim()
+            const english = String(rec.english ?? rec.translation ?? '').trim() || null
+            if (afaan) pushHarvestUnique(out, seen, afaan, english)
+          }
         }
       }
     }

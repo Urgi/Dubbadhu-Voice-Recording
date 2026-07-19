@@ -25,6 +25,7 @@ const SOURCES: Record<string, ImageSourcePropType> = {
   imageScreen: require('../../../assets/lesson-screen-previews/concept.png'),
   repetition: require('../../../assets/lesson-screen-previews/concept.png'),
   repetitionPractice: require('../../../assets/lesson-screen-previews/concept.png'),
+  sentenceBuilder: require('../../../assets/lesson-screen-previews/concept.png'),
 }
 
 function resolvePreviewSource(type: string): ImageSourcePropType | null {

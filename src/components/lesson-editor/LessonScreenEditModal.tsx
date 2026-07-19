@@ -47,6 +47,7 @@ import {
   normalizeVideoReviewContentForEdit,
   normalizeWordDiscriminationContentForEdit,
   normalizeQuizOptionRowForEditor,
+  normalizeSpeakingPracticeContentForSave,
 } from '../../lib/lessonEditor'
 import { WORD_DISCRIMINATION_SCENE_PREVIEW_ASPECT } from '../../lib/wordDiscriminationSceneSpec'
 import {
@@ -89,6 +90,7 @@ const STRUCTURED_SCREEN_TYPES_FOR_HEADER_SAVE = new Set([
   'imageScreen',
   'repetition',
   'repetitionPractice',
+  'sentenceBuilder',
 ])
 
 /** Public storage bucket for Word discrimination quiz question images (Supabase dashboard). */
@@ -3366,112 +3368,179 @@ export function LessonScreenEditModal({
         )
       }
       case 'speakingPractice': {
-        const phraseVal = String(c.word ?? c.prompt ?? '')
-        const exposureLinked = Boolean(String(c.speakingDraftTokenId ?? '').trim())
+        const rawPhrases = Array.isArray(c.phrases) ? (c.phrases as Record<string, unknown>[]) : []
+        const legacySingle =
+          rawPhrases.length === 0 &&
+          (String(c.word ?? '').trim() ||
+            String(c.prompt ?? '').trim() ||
+            String(c.word_id ?? '').trim() ||
+            String(c.speakingDraftTokenId ?? '').trim())
+            ? [
+                {
+                  word: c.word,
+                  prompt: c.prompt,
+                  tip: c.tip,
+                  word_id: c.word_id,
+                  speakingDraftTokenId: c.speakingDraftTokenId,
+                } as Record<string, unknown>,
+              ]
+            : []
+        const displayPhrases =
+          rawPhrases.length > 0
+            ? rawPhrases
+            : legacySingle.length > 0
+              ? legacySingle
+              : [{ word: '', prompt: '' }]
+
+        const updatePhrase = (index: number, patch: (row: Record<string, unknown>) => Record<string, unknown>) => {
+          setContent((cur) => {
+            const xs = Array.isArray(cur.phrases)
+              ? ([...(cur.phrases as Record<string, unknown>[])])
+              : displayPhrases.map((p) => ({ ...p }))
+            const base = xs.length > 0 ? xs : [{ word: '', prompt: '' }]
+            return {
+              phrases: base.map((x, j) => (j === index ? patch({ ...x }) : x)),
+            }
+          })
+        }
+
         primaryScreenSaveRef.current = () => {
           const d = draftRef.current
           if (!d) return
-          saveStructured({ ...(d.content as Record<string, unknown>) })
+          const content = d.content as Record<string, unknown>
+          const normalized = normalizeSpeakingPracticeContentForSave(content)
+          const phrases = Array.isArray(normalized.phrases) ? normalized.phrases : []
+          if (phrases.length < 1) {
+            setJsonError('Add at least one phrase (Afaan Oromo text, word bank pick, or exposure link).')
+            return
+          }
+          setJsonError('')
+          saveStructured(normalized)
         }
         return (
           <View style={styles.form}>
             <Text style={styles.hint}>
-              Type in Afaan Oromo, or type 2+ letters and pick from the word bank — the English gloss comes from the
-              bank when you pick a row.
+              Add one or more phrases. Learners practice them one after another on this screen (same as stacking
+              Speaking practice steps). Type 2+ letters and pick from the word bank, or link an Audio exposure word.
+              Max {10}.
             </Text>
-            <AudioExposureOromoField
-              readOnly={Boolean(c.word_id) || exposureLinked}
-              lessonHarvested={exposureWordsForAfaanPicker}
-              value={phraseVal}
-              onChangeText={(t) => {
-                setContent((cur) => {
-                  const next: Record<string, unknown> = {
-                    ...cur,
-                    word: t,
-                    prompt: t,
-                    word_id: null,
-                    tip: '',
-                  }
-                  if (!next.word_id) delete next.word_id
-                  delete next.speakingDraftTokenId
-                  return next
-                })
-              }}
-              onPickFromBank={(row) => {
-                setContent((cur) => {
-                  const bankId = isRealWordBankRowId(row) ? row.id : null
-                  const next: Record<string, unknown> = {
-                    ...cur,
-                    word_id: bankId,
-                    word: rowAfaanTextForBankPick(row),
-                    prompt: rowAfaanTextForBankPick(row),
-                  }
-                  if (!bankId) delete next.word_id
-                  delete next.speakingDraftTokenId
-                  return next
-                })
-              }}
-            />
-            {audioExposureSpeakingLinkOptions.length ? (
-              <View style={{ marginTop: 14 }}>
-                <Text style={[styles.hint, { marginBottom: 8 }]}>
-                  Or link this screen to a word from an Audio exposure step in this lesson (works even when that word
-                  is not in the word bank yet). Example audio appears once exposure has clips or after you add the word
-                  to the bank.
-                </Text>
-                {audioExposureSpeakingLinkOptions.map((opt) => (
-                  <Pressable
-                    key={opt.draftTokenId}
-                    style={styles.quizCorrectChoice}
-                    onPress={() => {
-                      setContent((cur) => {
+            <Text style={styles.label}>Phrases</Text>
+            {displayPhrases.map((row, i) => {
+              const phraseVal = String(row.word ?? row.prompt ?? '')
+              const exposureLinked = Boolean(String(row.speakingDraftTokenId ?? '').trim())
+              const bankLinked = Boolean(String(row.word_id ?? '').trim())
+              return (
+                <View key={`sp-${i}`} style={styles.pairCard}>
+                  <Text style={styles.personTitle}>Phrase {i + 1}</Text>
+                  <AudioExposureOromoField
+                    readOnly={bankLinked || exposureLinked}
+                    lessonHarvested={exposureWordsForAfaanPicker}
+                    value={phraseVal}
+                    onChangeText={(t) => {
+                      updatePhrase(i, () => {
                         const next: Record<string, unknown> = {
-                          ...cur,
-                          word: opt.afaan,
-                          prompt: opt.afaan,
-                          speakingDraftTokenId: opt.draftTokenId,
+                          word: t,
+                          prompt: t,
                           tip: '',
                         }
-                        delete next.word_id
                         return next
                       })
                     }}
+                    onPickFromBank={(picked) => {
+                      updatePhrase(i, (cur) => {
+                        const bankId = isRealWordBankRowId(picked) ? picked.id : null
+                        const next: Record<string, unknown> = {
+                          ...cur,
+                          word_id: bankId,
+                          word: rowAfaanTextForBankPick(picked),
+                          prompt: rowAfaanTextForBankPick(picked),
+                        }
+                        if (!bankId) delete next.word_id
+                        delete next.speakingDraftTokenId
+                        return next
+                      })
+                    }}
+                  />
+                  {audioExposureSpeakingLinkOptions.length ? (
+                    <View style={{ marginTop: 10 }}>
+                      <Text style={[styles.hint, { marginBottom: 8 }]}>
+                        Or link to an Audio exposure word in this lesson.
+                      </Text>
+                      {audioExposureSpeakingLinkOptions.map((opt) => (
+                        <Pressable
+                          key={`${i}-${opt.draftTokenId}`}
+                          style={styles.quizCorrectChoice}
+                          onPress={() => {
+                            updatePhrase(i, () => {
+                              const next: Record<string, unknown> = {
+                                word: opt.afaan,
+                                prompt: opt.afaan,
+                                speakingDraftTokenId: opt.draftTokenId,
+                                tip: '',
+                              }
+                              return next
+                            })
+                          }}
+                        >
+                          <Text style={styles.quizCorrectChoiceText}>
+                            {opt.afaan}
+                            {opt.screenIndex ? ` · exposure screen #${opt.screenIndex}` : ''}
+                          </Text>
+                          {opt.english.trim() ? (
+                            <Text style={styles.quizCorrectChoiceSub}>{opt.english.trim()}</Text>
+                          ) : null}
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
+                  <Pressable
+                    style={styles.changeWordBtn}
+                    onPress={() => {
+                      updatePhrase(i, () => ({ word: '', prompt: '', tip: '' }))
+                    }}
                   >
-                    <Text style={styles.quizCorrectChoiceText}>
-                      {opt.afaan}
-                      {opt.screenIndex ? ` · exposure screen #${opt.screenIndex}` : ''}
-                    </Text>
-                    {opt.english.trim() ? (
-                      <Text style={styles.quizCorrectChoiceSub}>{opt.english.trim()}</Text>
-                    ) : null}
+                    <Text style={styles.changeWordBtnText}>Clear</Text>
                   </Pressable>
-                ))}
-              </View>
+                  <Field
+                    label="Tip (optional)"
+                    value={String(row.tip ?? '')}
+                    onChangeText={(t) => {
+                      updatePhrase(i, (cur) => ({ ...cur, tip: t }))
+                    }}
+                  />
+                  {displayPhrases.length > 1 ? (
+                    <Pressable
+                      style={styles.removeBtn}
+                      onPress={() => {
+                        setContent((cur) => {
+                          const xs = Array.isArray(cur.phrases)
+                            ? ([...(cur.phrases as Record<string, unknown>[])])
+                            : displayPhrases.map((p) => ({ ...p }))
+                          return { phrases: xs.filter((_, j) => j !== i) }
+                        })
+                      }}
+                    >
+                      <Text style={styles.removeBtnText}>Remove phrase</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              )
+            })}
+            {displayPhrases.length < 10 ? (
+              <Pressable
+                style={styles.addBtn}
+                onPress={() => {
+                  setContent((cur) => {
+                    const xs = Array.isArray(cur.phrases)
+                      ? ([...(cur.phrases as Record<string, unknown>[])])
+                      : displayPhrases.map((p) => ({ ...p }))
+                    return { phrases: [...xs, { word: '', prompt: '' }] }
+                  })
+                }}
+              >
+                <Text style={styles.addBtnText}>+ Add phrase</Text>
+              </Pressable>
             ) : null}
-            <Pressable
-              style={styles.changeWordBtn}
-              onPress={() => {
-                setContent((cur) => {
-                  const next: Record<string, unknown> = {
-                    ...cur,
-                    word_id: null,
-                    word: '',
-                    prompt: '',
-                    tip: '',
-                  }
-                  if (!next.word_id) delete next.word_id
-                  delete next.speakingDraftTokenId
-                  return next
-                })
-              }}
-            >
-              <Text style={styles.changeWordBtnText}>Clear</Text>
-            </Pressable>
-            <Field
-              label="Tip (optional)"
-              value={String(c.tip ?? '')}
-              onChangeText={(t) => setContent((cur) => ({ ...cur, tip: t }))}
-            />
           </View>
         )
       }
@@ -4411,9 +4480,7 @@ export function LessonScreenEditModal({
           </View>
         )
       }
-      case 'repetition':
-      case 'repetitionPractice': {
-        const isPractice = draft.type === 'repetitionPractice'
+      case 'repetition': {
         const rawExamples = Array.isArray(c.examples) ? (c.examples as Record<string, unknown>[]) : []
         const displayExamples =
           rawExamples.length > 0 ? rawExamples : [{ oromo: '', english: '', audio: '' }]
@@ -4458,9 +4525,7 @@ export function LessonScreenEditModal({
         return (
           <View style={styles.form}>
             <Text style={styles.hint}>
-              {isPractice
-                ? 'Up to 6 English cues with mics. Type 2+ letters in Afaan Oromo and pick from the word bank — English and model audio fill in automatically.'
-                : 'Up to 6 related examples. Type 2+ letters in Afaan Oromo and pick from the word bank — English and audio fill in automatically. Optional target highlights the pattern word.'}
+              Up to 6 related examples. Type 2+ letters in Afaan Oromo and pick from the word bank — English and audio fill in automatically. Optional target highlights the pattern word.
             </Text>
             <Field
               label="Title (optional)"
@@ -4551,7 +4616,7 @@ export function LessonScreenEditModal({
                   {linked ? (
                     <View style={{ marginTop: 8 }}>
                       <Text style={styles.matchRightPreviewLabel}>
-                        {isPractice ? 'Model audio' : 'Audio'}
+                        Audio
                       </Text>
                       <Text style={styles.matchRightPreview} numberOfLines={2}>
                         {audioUrl || '— (no audio on this word bank row yet)'}
@@ -4559,7 +4624,7 @@ export function LessonScreenEditModal({
                     </View>
                   ) : (
                     <Field
-                      label={isPractice ? 'Model audio URL' : 'Audio URL'}
+                      label="Audio URL"
                       value={audioUrl}
                       onChangeText={(t) => {
                         setContent((cur) => {
@@ -4637,6 +4702,281 @@ export function LessonScreenEditModal({
             ) : (
               <Text style={styles.hint}>Maximum of 6 examples.</Text>
             )}
+          </View>
+        )
+      }
+      case 'repetitionPractice': {
+        const emptyPair = () => ({
+          base: { oromo: '', english: '', audio: '' },
+          answer: { oromo: '', audio: '' },
+          sharedStem: '',
+          addedPart: '',
+        })
+        const rawPairs = Array.isArray(c.pairs) ? (c.pairs as Record<string, unknown>[]) : []
+        const displayPairs = Array.from({ length: 3 }, (_, index) => rawPairs[index] ?? emptyPair())
+
+        const updatePair = (
+          pairIndex: number,
+          updater: (pair: Record<string, unknown>) => Record<string, unknown>,
+        ) => {
+          setContent((cur) => {
+            const current = Array.isArray(cur.pairs)
+              ? ([...(cur.pairs as Record<string, unknown>[])])
+              : []
+            const next = Array.from({ length: 3 }, (_, index) => current[index] ?? emptyPair())
+            next[pairIndex] = updater(next[pairIndex])
+            return { ...cur, pairs: next }
+          })
+        }
+
+        primaryScreenSaveRef.current = () => {
+          setJsonError('')
+          const d = draftRef.current
+          if (!d) return
+          const content = d.content as Record<string, unknown>
+          const pairs = Array.isArray(content.pairs)
+            ? (content.pairs as Record<string, unknown>[])
+            : []
+          if (pairs.length !== 3) {
+            setJsonError('Pattern practice requires exactly three pairs.')
+            return
+          }
+          const cleaned = pairs.map((pair) => {
+            const base =
+              pair.base && typeof pair.base === 'object' && !Array.isArray(pair.base)
+                ? (pair.base as Record<string, unknown>)
+                : {}
+            const answer =
+              pair.answer && typeof pair.answer === 'object' && !Array.isArray(pair.answer)
+                ? (pair.answer as Record<string, unknown>)
+                : {}
+            return {
+              base: {
+                oromo: String(base.oromo ?? '').trim(),
+                english: String(base.english ?? '').trim(),
+                audio: String(base.audio ?? '').trim(),
+              },
+              answer: {
+                oromo: String(answer.oromo ?? '').trim(),
+                audio: String(answer.audio ?? '').trim(),
+              },
+              sharedStem: String(pair.sharedStem ?? '').trim(),
+              addedPart: String(pair.addedPart ?? '').trim(),
+            }
+          })
+          const incomplete = cleaned.some(
+            (pair) =>
+              !pair.base.oromo ||
+              !pair.base.english ||
+              !pair.base.audio ||
+              !pair.answer.oromo ||
+              !pair.answer.audio,
+          )
+          if (incomplete) {
+            setJsonError(
+              'Each pair needs a base Oromo word, base English meaning, answer word, and audio for both words.',
+            )
+            return
+          }
+          saveStructured({
+            ...(String(content.title ?? '').trim()
+              ? { title: String(content.title ?? '').trim() }
+              : {}),
+            ...(String(content.instruction ?? '').trim()
+              ? { instruction: String(content.instruction ?? '').trim() }
+              : {}),
+            pairs: cleaned,
+          })
+        }
+
+        return (
+          <View style={styles.form}>
+            <Text style={styles.hint}>
+              Exactly three Oromo pairs. Learners hear the first five words in order, then record the
+              missing sixth word and compare it with the model.
+            </Text>
+            <Field
+              label="Title (optional)"
+              value={String(c.title ?? '')}
+              onChangeText={(title) => setContent((cur) => ({ ...cur, title }))}
+            />
+            <Field
+              label="Instruction (optional)"
+              value={String(c.instruction ?? '')}
+              onChangeText={(instruction) => setContent((cur) => ({ ...cur, instruction }))}
+            />
+            {displayPairs.map((pair, pairIndex) => {
+              const base =
+                pair.base && typeof pair.base === 'object' && !Array.isArray(pair.base)
+                  ? (pair.base as Record<string, unknown>)
+                  : {}
+              const answer =
+                pair.answer && typeof pair.answer === 'object' && !Array.isArray(pair.answer)
+                  ? (pair.answer as Record<string, unknown>)
+                  : {}
+              const updateWord = (
+                side: 'base' | 'answer',
+                key: 'oromo' | 'english' | 'audio',
+                value: string,
+              ) => {
+                updatePair(pairIndex, (current) => {
+                  const word =
+                    current[side] &&
+                    typeof current[side] === 'object' &&
+                    !Array.isArray(current[side])
+                      ? (current[side] as Record<string, unknown>)
+                      : {}
+                  return { ...current, [side]: { ...word, [key]: value } }
+                })
+              }
+              return (
+                <View key={`pattern-pair-${pairIndex}`} style={styles.pairCard}>
+                  <Text style={styles.personTitle}>
+                    Pair {pairIndex + 1}{pairIndex === 2 ? ' · learner completes this pair' : ''}
+                  </Text>
+                  <Text style={styles.label}>Base Afaan Oromo</Text>
+                  <AudioExposureOromoField
+                    readOnly={false}
+                    lessonHarvested={exposureWordsForAfaanPicker}
+                    value={String(base.oromo ?? '')}
+                    onChangeText={(value) => updateWord('base', 'oromo', value)}
+                    onPickFromBank={(picked) => {
+                      const audio = audioRefFromWordRow(picked)
+                      updatePair(pairIndex, (current) => ({
+                        ...current,
+                        base: {
+                          oromo: rowAfaanTextForBankPick(picked),
+                          english: rowTranslationText(picked),
+                          ...(audio ? { audio } : {}),
+                        },
+                      }))
+                    }}
+                  />
+                  <Field
+                    label="Base English meaning"
+                    value={String(base.english ?? '')}
+                    onChangeText={(value) => updateWord('base', 'english', value)}
+                  />
+                  <Field
+                    label="Base audio URL"
+                    value={String(base.audio ?? '')}
+                    onChangeText={(value) => updateWord('base', 'audio', value)}
+                  />
+                  <Text style={styles.label}>Paired / answer Afaan Oromo</Text>
+                  <AudioExposureOromoField
+                    readOnly={false}
+                    lessonHarvested={exposureWordsForAfaanPicker}
+                    value={String(answer.oromo ?? '')}
+                    onChangeText={(value) => updateWord('answer', 'oromo', value)}
+                    onPickFromBank={(picked) => {
+                      const audio = audioRefFromWordRow(picked)
+                      updatePair(pairIndex, (current) => ({
+                        ...current,
+                        answer: {
+                          oromo: rowAfaanTextForBankPick(picked),
+                          ...(audio ? { audio } : {}),
+                        },
+                      }))
+                    }}
+                  />
+                  <Field
+                    label="Answer audio URL"
+                    value={String(answer.audio ?? '')}
+                    onChangeText={(value) => updateWord('answer', 'audio', value)}
+                  />
+                  <Field
+                    label="Shared stem (optional highlight)"
+                    value={String(pair.sharedStem ?? '')}
+                    onChangeText={(sharedStem) =>
+                      updatePair(pairIndex, (current) => ({ ...current, sharedStem }))
+                    }
+                  />
+                  <Field
+                    label="Added part (optional highlight)"
+                    value={String(pair.addedPart ?? '')}
+                    onChangeText={(addedPart) =>
+                      updatePair(pairIndex, (current) => ({ ...current, addedPart }))
+                    }
+                  />
+                </View>
+              )
+            })}
+          </View>
+        )
+      }
+      case 'sentenceBuilder': {
+        primaryScreenSaveRef.current = () => {
+          setJsonError('')
+          const d = draftRef.current
+          if (!d) return
+          const content = d.content as Record<string, unknown>
+          const english = String(content.english ?? '').trim()
+          const words = (Array.isArray(content.words) ? content.words : [])
+            .map((word) => String(word ?? '').trim())
+            .filter(Boolean)
+          if (!english || words.length < 2) {
+            setJsonError('Add an English cue and at least two ordered Afaan Oromo words.')
+            return
+          }
+          saveStructured({
+            ...(String(content.title ?? '').trim()
+              ? { title: String(content.title ?? '').trim() }
+              : {}),
+            ...(String(content.instruction ?? '').trim()
+              ? { instruction: String(content.instruction ?? '').trim() }
+              : {}),
+            english,
+            words,
+            ...(String(content.audio ?? '').trim()
+              ? { audio: String(content.audio ?? '').trim() }
+              : {}),
+            ...(String(content.tip ?? '').trim() ? { tip: String(content.tip ?? '').trim() } : {}),
+          })
+        }
+
+        return (
+          <View style={styles.form}>
+            <Text style={styles.hint}>
+              Enter the target sentence as ordered chunks, one chunk per line. The learner sees them
+              shuffled and taps them into Afaan Oromo sentence order.
+            </Text>
+            <Field
+              label="Title (optional)"
+              value={String(c.title ?? '')}
+              onChangeText={(title) => setContent((cur) => ({ ...cur, title }))}
+            />
+            <Field
+              label="Instruction (optional)"
+              value={String(c.instruction ?? '')}
+              onChangeText={(instruction) => setContent((cur) => ({ ...cur, instruction }))}
+            />
+            <Field
+              label="English cue"
+              value={String(c.english ?? '')}
+              onChangeText={(english) => setContent((cur) => ({ ...cur, english }))}
+            />
+            <Field
+              label="Ordered Afaan Oromo chunks (one per line)"
+              allowMultiline
+              value={(Array.isArray(c.words) ? c.words : []).map((word) => String(word)).join('\n')}
+              onChangeText={(value) =>
+                setContent((cur) => ({
+                  ...cur,
+                  words: value.split('\n'),
+                }))
+              }
+            />
+            <Field
+              label="Model sentence audio URL (optional)"
+              value={String(c.audio ?? '')}
+              onChangeText={(audio) => setContent((cur) => ({ ...cur, audio }))}
+            />
+            <Field
+              label="Tip after answer (optional)"
+              allowMultiline
+              value={String(c.tip ?? '')}
+              onChangeText={(tip) => setContent((cur) => ({ ...cur, tip }))}
+            />
           </View>
         )
       }

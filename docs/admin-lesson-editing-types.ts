@@ -22,7 +22,8 @@ export type ScreenType =
   | "videoReview"
   | "imageScreen"
   | "repetition"
-  | "repetitionPractice";
+  | "repetitionPractice"
+  | "sentenceBuilder";
 
 export type LessonContent = {
   id: `lesson${number}` | string;
@@ -194,11 +195,48 @@ export type RepetitionContent = {
   examples: RepetitionExample[];
 };
 
+export type RepetitionPracticeWord = {
+  oromo: string;
+  english?: string;
+  audio: string;
+};
+
+/** Exactly three pairs; the learner hears five words and speaks the final answer. */
+export type RepetitionPracticeContent = {
+  title?: string;
+  instruction?: string;
+  pairs: [
+    { base: RepetitionPracticeWord; answer: RepetitionPracticeWord; sharedStem?: string; addedPart?: string },
+    { base: RepetitionPracticeWord; answer: RepetitionPracticeWord; sharedStem?: string; addedPart?: string },
+    { base: RepetitionPracticeWord; answer: RepetitionPracticeWord; sharedStem?: string; addedPart?: string },
+  ];
+};
+
+/** Shuffled chunks the learner taps into canonical Afaan Oromo sentence order. */
+export type SentenceBuilderContent = {
+  title?: string;
+  instruction?: string;
+  english: string;
+  words: string[];
+  audio?: string;
+  tip?: string;
+};
+
+/** One phrase on a Speaking practice screen (max 10). */
+export type SpeakingPracticePhrase = {
+  word?: string;
+  prompt?: string;
+  tip?: string;
+  word_id?: string;
+  speakingDraftTokenId?: string;
+};
+
 /**
- * Speaking twin of `repetition`: English cue + mic, then reveal Oromo + model audio.
- * Same `examples` shape as `RepetitionContent`.
+ * Sequential speaking drills. Prefer `phrases`; legacy single top-level word/prompt still loads.
  */
-export type RepetitionPracticeContent = RepetitionContent;
+export type SpeakingPracticeContent = {
+  phrases: SpeakingPracticePhrase[];
+};
 
 /** One row in `word-breakdown` — target-language token and gloss (not tied to a specific language name). */
 export type WordBreakdownWordRow = {

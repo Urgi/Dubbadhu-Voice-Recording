@@ -21,6 +21,7 @@ export type ScreenType =
   | 'imageScreen'
   | 'repetition'
   | 'repetitionPractice'
+  | 'sentenceBuilder'
 
 /** Legacy `type` strings in stored JSON → canonical ScreenType (learner registry keeps aliases too). */
 export const LEGACY_SCREEN_TYPE_ALIASES: Record<string, ScreenType> = {
@@ -70,6 +71,7 @@ export const SCREEN_TYPE_OPTIONS: { value: ScreenType; label: string }[] = [
   { value: 'imageScreen', label: 'Cultural Context' },
   { value: 'repetition', label: 'Repetition' },
   { value: 'repetitionPractice', label: 'Repetition practice' },
+  { value: 'sentenceBuilder', label: 'Sentence builder' },
 ]
 
 export type ScreenTypeOption = { value: ScreenType; label: string }
@@ -111,6 +113,7 @@ const ADD_SCREEN_CURRICULUM_ORDER: ScreenType[] = [
   'audioExposure',
   'repetition',
   'repetitionPractice',
+  'sentenceBuilder',
   'speakingPractice',
   'patternPractice',
   'quiz',
@@ -322,13 +325,38 @@ export function defaultScreen(type: ScreenType): LessonScreen {
         },
       }
     case 'repetition':
-    case 'repetitionPractice':
       return {
         type,
         content: {
           title: '',
           target: '',
           examples: [{ oromo: '', english: '', audio: '' }],
+        },
+      }
+    case 'repetitionPractice':
+      return {
+        type,
+        content: {
+          title: '',
+          instruction: '',
+          pairs: Array.from({ length: 3 }, () => ({
+            base: { oromo: '', english: '', audio: '' },
+            answer: { oromo: '', audio: '' },
+            sharedStem: '',
+            addedPart: '',
+          })),
+        },
+      }
+    case 'sentenceBuilder':
+      return {
+        type,
+        content: {
+          title: '',
+          instruction: '',
+          english: '',
+          words: [],
+          audio: '',
+          tip: '',
         },
       }
     default:
@@ -1247,8 +1275,7 @@ export function sanitizeScreenContentForPersistence(
       base.body = String(base.body ?? '').trim()
       return base
     }
-    case 'repetition':
-    case 'repetitionPractice': {
+    case 'repetition': {
       const base = pickAllowedKeys(content, new Set(['title', 'target', 'examples']))
       const title = String(base.title ?? '').trim()
       if (title) base.title = title
@@ -1273,6 +1300,63 @@ export function sanitizeScreenContentForPersistence(
         })
         .filter((x): x is Record<string, unknown> => x != null)
         .slice(0, 6)
+      return base
+    }
+    case 'repetitionPractice': {
+      const base = pickAllowedKeys(content, new Set(['title', 'instruction', 'pairs']))
+      for (const key of ['title', 'instruction'] as const) {
+        const value = String(base[key] ?? '').trim()
+        if (value) base[key] = value
+        else delete base[key]
+      }
+      const rawPairs = Array.isArray(base.pairs) ? base.pairs : []
+      base.pairs = rawPairs
+        .map((pair) => {
+          if (pair == null || typeof pair !== 'object' || Array.isArray(pair)) return null
+          const rec = pair as Record<string, unknown>
+          const normalizeWord = (
+            value: unknown,
+            requireEnglish: boolean,
+          ): Record<string, unknown> | null => {
+            if (value == null || typeof value !== 'object' || Array.isArray(value)) return null
+            const word = value as Record<string, unknown>
+            const oromo = String(word.oromo ?? '').trim()
+            const english = String(word.english ?? '').trim()
+            const audio = String(word.audio ?? word.audioRef ?? '').trim()
+            if (!oromo || (requireEnglish && !english)) return null
+            const out: Record<string, unknown> = { oromo }
+            if (english) out.english = english
+            if (audio) out.audio = audio
+            return out
+          }
+          const baseWord = normalizeWord(rec.base, true)
+          const answer = normalizeWord(rec.answer, false)
+          if (!baseWord || !answer) return null
+          const out: Record<string, unknown> = { base: baseWord, answer }
+          const sharedStem = String(rec.sharedStem ?? '').trim()
+          const addedPart = String(rec.addedPart ?? '').trim()
+          if (sharedStem) out.sharedStem = sharedStem
+          if (addedPart) out.addedPart = addedPart
+          return out
+        })
+        .filter((pair): pair is Record<string, unknown> => pair != null)
+        .slice(0, 3)
+      return base
+    }
+    case 'sentenceBuilder': {
+      const base = pickAllowedKeys(
+        content,
+        new Set(['title', 'instruction', 'english', 'words', 'audio', 'tip']),
+      )
+      for (const key of ['title', 'instruction', 'audio', 'tip'] as const) {
+        const value = String(base[key] ?? '').trim()
+        if (value) base[key] = value
+        else delete base[key]
+      }
+      base.english = String(base.english ?? '').trim()
+      base.words = (Array.isArray(base.words) ? base.words : [])
+        .map((word) => String(word ?? '').trim())
+        .filter(Boolean)
       return base
     }
     default:
@@ -1408,13 +1492,20 @@ export function screenSummary(screen: LessonScreen): string {
       }
       return '—'
     }
-    case 'repetition':
-    case 'repetitionPractice': {
+    case 'repetition': {
       const target = String(c.target ?? '').trim()
       const n = Array.isArray(c.examples) ? c.examples.length : 0
-      const kind = screen.type === 'repetitionPractice' ? 'practice' : 'listen'
-      if (target) return `${target} · ${n} example(s) · ${kind}`
-      return n ? `${n} example(s) · ${kind}` : '—'
+      if (target) return `${target} · ${n} example(s) · listen`
+      return n ? `${n} example(s) · listen` : '—'
+    }
+    case 'repetitionPractice': {
+      const n = Array.isArray(c.pairs) ? c.pairs.length : 0
+      return n ? `${n} word pair(s) · speak the last` : '—'
+    }
+    case 'sentenceBuilder': {
+      const english = String(c.english ?? '').trim()
+      const n = Array.isArray(c.words) ? c.words.length : 0
+      return english ? `${english} · ${n} word(s)` : '—'
     }
     case 'discriminationDrill': {
       const q = String(c.question ?? c.title ?? c.prompt ?? '').trim()
@@ -1473,13 +1564,20 @@ export function screenSubtitleLines(screen: LessonScreen, _ctx?: ScreenSubtitleC
       if (t) return [t.length > 120 ? `${t.slice(0, 120)}…` : t]
       return [screenSummary(screen)]
     }
-    case 'repetition':
-    case 'repetitionPractice': {
+    case 'repetition': {
       const target = String(c.target ?? '').trim()
       const n = Array.isArray(c.examples) ? c.examples.length : 0
-      const kind = screen.type === 'repetitionPractice' ? 'Practice' : 'Listen'
-      if (target) return [`${kind}: ${target}`, `${n} example(s)`]
-      return [n ? `${kind} · ${n} example(s)` : '—']
+      if (target) return [`Listen: ${target}`, `${n} example(s)`]
+      return [n ? `Listen · ${n} example(s)` : '—']
+    }
+    case 'repetitionPractice': {
+      const n = Array.isArray(c.pairs) ? c.pairs.length : 0
+      return [n ? `Pattern speaking · ${n} pair(s)` : '—']
+    }
+    case 'sentenceBuilder': {
+      const english = String(c.english ?? '').trim()
+      const n = Array.isArray(c.words) ? c.words.length : 0
+      return [english || 'Sentence builder', `${n} word(s)`]
     }
     case 'speakingPractice': {
       const cr = c as Record<string, unknown>

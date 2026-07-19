@@ -95,6 +95,7 @@ Supported `type` values:
 - `imageScreen`
 - `repetition`
 - `repetitionPractice`
+- `sentenceBuilder`
 
 If you write a different string, the Dubbadhu client won’t be able to render it.
 
@@ -195,32 +196,28 @@ Example (text-only safe):
 When an object can carry both languages under different keys, **Dubbadhu prefers `oromo` over `word` over `text`** for the Afaan line, and **`definition` / `english` / `translation`** for the English gloss. That matches `features/LessonTab/lessonTextFields.js` and avoids showing English as the main drill line when admin JSON keys are inconsistent.
 
 ### `speakingPractice`
-Supports two modes. **Do not mix** Mode A and Mode B in one screen: if `phrase` is set, leave `prompt` and `expectedAnswer` empty (the Dubbadhu app treats `phrase` as the spoken Oromo line and ignores stale English in `expectedAnswer`).
+Preferred shape: one or more phrases practiced **sequentially** on a single screen (same learner flow as stacking multiple Speaking practice steps).
 
-**Mode A (prompt/expectedAnswer) — situational**
-- **`prompt`**: `string` — short instruction (often English), e.g. “Say: Good morning (respectful)”
-- **`expectedAnswer`**: `string` — **must be the Afaan Oromo** the learner should say (same language as `phrase` in Mode B)
-- `hint`: `string` (optional)
-- `showAnswerAfterRecording`: `boolean` (optional; default false)
-- Leave **`phrase` / `phraseEnglish` empty** for this mode.
+**Preferred — `phrases` array**
+- **`phrases`**: array (1–10)
+  - **`word`**: `string` — Afaan Oromo to say (canonical)
+  - **`prompt`**: `string` (optional; defaults to `word` when saving)
+  - **`word_id`**: `string` (optional UUID from `public.words`)
+  - **`speakingDraftTokenId`**: `string` (optional; link to an Audio exposure draft token for example audio)
+  - **`tip`**: `string` (optional)
 
 Example:
 
 ```json
 {
-  "prompt": "Say: Good morning (respectful)",
-  "expectedAnswer": "Akkam Bultaan?",
-  "showAnswerAfterRecording": true
+  "phrases": [
+    { "word": "Kee", "prompt": "Kee", "word_id": "…" },
+    { "word": "Koo", "prompt": "Koo", "word_id": "…" }
+  ]
 }
 ```
 
-**Mode B (phrase/phraseEnglish/targetAudioRef) — word-bank / drill**
-- **`phrase`**: `string` — Afaan Oromo line to practice
-- **`phraseEnglish`**: `string` — English gloss (not shown as the main practice line in Dubbadhu)
-- `targetAudioRef`: `string` (optional)
-- `tip`: `string` (optional)
-- `hint`: `string` (optional)
-- Leave **`prompt` / `expectedAnswer` empty** when using the lesson editor’s word picker (it writes Mode B only).
+**Legacy (still read by the learner app)** — single phrase at the top level with the same keys (`word` / `prompt` / `word_id` / `tip` / `speakingDraftTokenId`). Admin save migrates this into `phrases: […]`.
 
 ### `quiz`
 Supports a multi-question array or a single-question object.
@@ -386,7 +383,27 @@ Pattern exposure with up to 6 related example lines.
 - **`examples`**: `{ oromo: string, english: string, audio?: string }[]` (1–6)
 
 ### `repetitionPractice`
-Speaking twin of `repetition`. Same content shape. Learner sees English + mic; **Check answers** reveals Oromo and model audio for self-compare.
+Three-pair pattern induction and speaking check. The learner reveals the first five Oromo words in sequence, records the missing sixth word, then compares learner/model audio. Exactly three complete pairs are required.
+
+**content**
+- `title`: `string` (optional)
+- `instruction`: `string` (optional)
+- **`pairs`**: exactly 3 `{ base, answer, sharedStem?, addedPart? }` objects
+  - `base`: `{ oromo: string, english: string, audio: string }`
+  - `answer`: `{ oromo: string, audio: string }`
+  - `sharedStem`: `string` (optional) — highlighted after the final answer
+  - `addedPart`: `string` (optional) — highlighted after the final answer
+
+### `sentenceBuilder`
+Tap-to-order Afaan Oromo sentence construction. `words` is persisted in the one correct order; the learner receives a shuffled copy.
+
+**content**
+- `title`: `string` (optional)
+- `instruction`: `string` (optional)
+- **`english`**: `string` — English cue
+- **`words`**: `string[]` (at least 2) — ordered target words or meaningful chunks
+- `audio`: `string` (optional) — model sentence audio
+- `tip`: `string` (optional) — shown after completion
 
 ---
 

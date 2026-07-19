@@ -302,40 +302,100 @@ async function hydrateAudioRefsFromWordBank(content: Record<string, unknown>, se
     }
 
     if (type === 'speakingPractice') {
-      const swId = speakingPracticeWordsBankRowId(cr) ?? ''
-      if (swId) {
-        const byId = await lookupWordAudioRowById(swId)
-        if (byId) {
-          const fast = byId.fast_audio_url?.trim()
-          const slow = byId.slow_audio_url?.trim()
-          if (fast) cr.targetAudioRef = fast
-          else if (slow) cr.targetAudioRef = slow
+      const phraseRows: Record<string, unknown>[] =
+        Array.isArray(cr.phrases) && cr.phrases.length > 0
+          ? (cr.phrases as unknown[]).filter(
+              (p): p is Record<string, unknown> =>
+                p != null && typeof p === 'object' && !Array.isArray(p),
+            )
+          : [cr]
+
+      for (const phrase of phraseRows) {
+        const swId = speakingPracticeWordsBankRowId(phrase) ?? ''
+        if (swId) {
+          const byId = await lookupWordAudioRowById(swId)
+          if (byId) {
+            const fast = byId.fast_audio_url?.trim()
+            const slow = byId.slow_audio_url?.trim()
+            if (fast) phrase.targetAudioRef = fast
+            else if (slow) phrase.targetAudioRef = slow
+          }
+        } else {
+          const prompt = String(phrase.prompt ?? '').trim()
+          const expected = String(phrase.expectedAnswer ?? '').trim()
+          const word = String(phrase.word ?? '').trim()
+          const phraseText = String(phrase.phrase ?? '').trim()
+          const lookupText = prompt && expected ? expected : word || phraseText || prompt
+          if (lookupText && getRow) {
+            const wrow = await getRow(lookupText)
+            if (wrow) {
+              const fast = wrow.fast_audio_url?.trim()
+              const slow = wrow.slow_audio_url?.trim()
+              if (fast) phrase.targetAudioRef = fast
+              else if (slow) phrase.targetAudioRef = slow
+            }
+          }
         }
-      } else {
-        const prompt = String(cr.prompt ?? '').trim()
-        const expected = String(cr.expectedAnswer ?? '').trim()
-        const phrase = String(cr.phrase ?? '').trim()
-        const lookupText = prompt && expected ? expected : phrase
-        if (lookupText) {
-          const wrow = await getRow(lookupText)
-          if (wrow) {
-            const fast = wrow.fast_audio_url?.trim()
-            const slow = wrow.slow_audio_url?.trim()
-            if (fast) cr.targetAudioRef = fast
-            else if (slow) cr.targetAudioRef = slow
+        const linkTok = String(phrase.speakingDraftTokenId ?? '').trim()
+        if (linkTok && !isHttpUrl(phrase.targetAudioRef)) {
+          const ex = findAudioExposureWordRecordByDraftTokenId(typedScreens, linkTok)
+          if (ex) {
+            const ref =
+              String(ex.fastAudioRef ?? '').trim() ||
+              String(ex.slowAudioRef ?? '').trim() ||
+              String(ex.audioRef ?? '').trim()
+            if (ref) phrase.targetAudioRef = ref
           }
         }
       }
-      const linkTok = String(cr.speakingDraftTokenId ?? '').trim()
-      if (linkTok && !isHttpUrl(cr.targetAudioRef)) {
-        const ex = findAudioExposureWordRecordByDraftTokenId(typedScreens, linkTok)
-        if (ex) {
-          const ref =
-            String(ex.fastAudioRef ?? '').trim() ||
-            String(ex.slowAudioRef ?? '').trim() ||
-            String(ex.audioRef ?? '').trim()
-          if (ref) cr.targetAudioRef = ref
-        }
+
+      if (Array.isArray(cr.phrases) && cr.phrases.length > 0) {
+        cr.phrases = phraseRows
+      }
+    }
+
+    if (type === 'repetitionPractice') {
+      const pairs = Array.isArray(cr.pairs) ? (cr.pairs as unknown[]) : []
+      cr.pairs = await Promise.all(
+        pairs.map(async (pair) => {
+          if (pair == null || typeof pair !== 'object' || Array.isArray(pair)) return pair
+          const pr = { ...(pair as Record<string, unknown>) }
+          for (const side of ['base', 'answer'] as const) {
+            const word = pr[side]
+            if (word == null || typeof word !== 'object' || Array.isArray(word)) continue
+            const wr = { ...(word as Record<string, unknown>) }
+            if (isHttpUrl(wr.audio) || isHttpUrl(wr.audioRef)) {
+              if (!isHttpUrl(wr.audio) && isHttpUrl(wr.audioRef)) wr.audio = wr.audioRef
+              pr[side] = wr
+              continue
+            }
+            let row: WordBankAudioRow | null = null
+            const wid = String(wr.word_id ?? '').trim()
+            if (looksLikeWordsRowUuid(wid)) row = await getRowById(wid)
+            if (!row && getRow) {
+              const text = String(wr.oromo ?? wr.word ?? '').trim()
+              if (text) row = await getRow(text)
+            }
+            if (row) {
+              const audio = row.fast_audio_url?.trim() || row.slow_audio_url?.trim() || ''
+              if (audio) wr.audio = audio
+            }
+            pr[side] = wr
+          }
+          return pr
+        }),
+      )
+    }
+
+    if (type === 'sentenceBuilder' && !isHttpUrl(cr.audio) && getRow) {
+      const words = Array.isArray(cr.words)
+        ? (cr.words as unknown[]).map((w) => String(w ?? '').trim()).filter(Boolean)
+        : []
+      const joined = words.join(' ')
+      if (joined) {
+        const row = await getRow(joined)
+        const audio = row?.fast_audio_url?.trim() || row?.slow_audio_url?.trim() || ''
+        if (audio) cr.audio = audio
       }
     }
   }

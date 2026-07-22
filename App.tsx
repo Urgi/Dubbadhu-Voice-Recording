@@ -9,6 +9,7 @@ import ProfessorHomeScreen from './src/screens/ProfessorHomeScreen'
 import AdminHomeScreen from './src/screens/AdminHomeScreen'
 import AdminAnalyticsScreen from './src/screens/AdminAnalyticsScreen'
 import AdminFreeAccessScreen from './src/screens/AdminFreeAccessScreen'
+import AdminUsersScreen from './src/screens/AdminUsersScreen'
 import AdminPracticeSuggestionsScreen from './src/screens/AdminPracticeSuggestionsScreen'
 import AdminCommunityReportsScreen from './src/screens/AdminCommunityReportsScreen'
 import AdminDiscussionReviewScreen from './src/screens/AdminDiscussionReviewScreen'
@@ -72,6 +73,11 @@ function AppStack() {
           })}
         />
         <Stack.Screen name="AdminAnalytics" component={AdminAnalyticsScreen} />
+        <Stack.Screen
+          name="AdminUsers"
+          component={AdminUsersScreen}
+          options={{ title: 'Registered users' }}
+        />
         <Stack.Screen
           name="AdminFreeAccess"
           component={AdminFreeAccessScreen}

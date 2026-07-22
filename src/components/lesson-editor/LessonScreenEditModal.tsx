@@ -4785,6 +4785,7 @@ export function LessonScreenEditModal({
             ...(String(content.instruction ?? '').trim()
               ? { instruction: String(content.instruction ?? '').trim() }
               : {}),
+            ...(content.onePairAtATime === true ? { onePairAtATime: true } : {}),
             pairs: cleaned,
           })
         }
@@ -4806,6 +4807,27 @@ export function LessonScreenEditModal({
               value={String(c.instruction ?? '')}
               onChangeText={(instruction) => setContent((cur) => ({ ...cur, instruction }))}
             />
+            <Row label="One pair at a time (more room)">
+              <Switch
+                value={c.onePairAtATime === true}
+                onValueChange={(on) =>
+                  setContent((cur) => {
+                    if (!on) {
+                      const next = { ...cur }
+                      delete next.onePairAtATime
+                      return next
+                    }
+                    return { ...cur, onePairAtATime: true }
+                  })
+                }
+                trackColor={{ false: '#3f3f46', true: '#E8870A' }}
+                thumbColor="#fff"
+              />
+            </Row>
+            <Text style={styles.hint}>
+              Off (default): all three pairs stacked. On: each pair fills the screen; bottom arrow
+              advances to the next pair.
+            </Text>
             {displayPairs.map((pair, pairIndex) => {
               const base =
                 pair.base && typeof pair.base === 'object' && !Array.isArray(pair.base)

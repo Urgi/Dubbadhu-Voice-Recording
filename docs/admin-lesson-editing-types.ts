@@ -208,6 +208,8 @@ export type RepetitionPracticeWord = {
 export type RepetitionPracticeContent = {
   title?: string;
   instruction?: string;
+  /** When true, learner sees one pair at a time with a bottom advance control. Default: stacked grid. */
+  onePairAtATime?: boolean;
   pairs: [
     { base: RepetitionPracticeWord; answer: RepetitionPracticeWord; sharedStem?: string; addedPart?: string },
     { base: RepetitionPracticeWord; answer: RepetitionPracticeWord; sharedStem?: string; addedPart?: string },

@@ -418,6 +418,7 @@
       "properties": {
         "title": { "type": "string" },
         "instruction": { "type": "string" },
+        "onePairAtATime": { "type": "boolean" },
         "pairs": {
           "type": "array",
           "minItems": 3,

@@ -38,6 +38,8 @@ export type RootStackParamList = {
   /** In-app Gemini chat with bundled Dubbadhu ecosystem context (both apps). */
   LubbuDubbadhu: undefined
   AdminAnalytics: undefined
+  /** Registered learners list (name, streak, last activity). */
+  AdminUsers: undefined
   /** Complimentary Premium (isPremium, no premium_product_id). */
   AdminFreeAccess: undefined
   /** Curate Practice tab “From the community” picks per WOTD day (max 7). */

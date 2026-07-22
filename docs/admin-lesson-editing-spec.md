@@ -388,6 +388,7 @@ Three-pair pattern induction and speaking check. The learner reveals the first f
 **content**
 - `title`: `string` (optional)
 - `instruction`: `string` (optional)
+- `onePairAtATime`: `boolean` (optional, default false) — when true, the learner sees one pair at a time with a bottom arrow to advance (more room for long words). When omitted/false, all three pairs stack on one screen.
 - **`pairs`**: exactly 3 `{ base, answer, sharedStem?, addedPart? }` objects
 - `base`: `{ oromo: string, english: string, audio?: string, word_id?: uuid }`
 - `answer`: `{ oromo: string, audio?: string, word_id?: uuid }`

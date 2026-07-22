@@ -386,13 +386,18 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
 
       <Text style={styles.sectionLabel}>Users</Text>
       <View style={styles.metricRow}>
-        <View style={styles.metricCard}>
+        <Pressable
+          style={styles.metricCard}
+          onPress={() => navigation.navigate('AdminUsers')}
+          accessibilityRole="button"
+          accessibilityLabel="View registered users"
+        >
           <Text style={styles.metricLabel}>Registered</Text>
           <Text style={styles.metricValue}>{usersTotal ?? '—'}</Text>
           <Text style={styles.metricDeltaUp}>
             {usersThisWeek != null ? `+${usersThisWeek} this week` : '—'}
           </Text>
-        </View>
+        </Pressable>
         <View style={styles.metricCard}>
           <Text style={styles.metricLabel}>Active today</Text>
           <Text style={styles.metricValue}>{activeToday != null ? activeToday : '—'}</Text>

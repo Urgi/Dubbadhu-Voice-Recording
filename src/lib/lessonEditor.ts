@@ -339,6 +339,7 @@ export function defaultScreen(type: ScreenType): LessonScreen {
         content: {
           title: '',
           instruction: '',
+          onePairAtATime: false,
           pairs: Array.from({ length: 3 }, () => ({
             base: { oromo: '', english: '', audio: '' },
             answer: { oromo: '', audio: '' },
@@ -1303,12 +1304,14 @@ export function sanitizeScreenContentForPersistence(
       return base
     }
     case 'repetitionPractice': {
-      const base = pickAllowedKeys(content, new Set(['title', 'instruction', 'pairs']))
+      const base = pickAllowedKeys(content, new Set(['title', 'instruction', 'onePairAtATime', 'pairs']))
       for (const key of ['title', 'instruction'] as const) {
         const value = String(base[key] ?? '').trim()
         if (value) base[key] = value
         else delete base[key]
       }
+      if (base.onePairAtATime === true) base.onePairAtATime = true
+      else delete base.onePairAtATime
       const rawPairs = Array.isArray(base.pairs) ? base.pairs : []
       base.pairs = rawPairs
         .map((pair) => {

@@ -613,6 +613,36 @@ function pickAllowedKeys(obj: Record<string, unknown>, allowed: Set<string>): Re
 }
 
 /**
+ * One speaking-practice phrase row (learner reads `content.phrases[]`, legacy = single row at top level).
+ * Returns null when the row has no usable content so empty rows are dropped on save.
+ */
+function sanitizeSpeakingPhraseRowForPersistence(
+  row: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const out = pickAllowedKeys(
+    row,
+    new Set(['word', 'word_id', 'prompt', 'tip', 'speakingDraftTokenId']),
+  )
+  const wiRaw = String(out.word_id ?? '').trim().toLowerCase()
+  if (UUID_RE_FOR_WORD_ROW.test(wiRaw)) out.word_id = wiRaw
+  else delete out.word_id
+  const linkTok = String(out.speakingDraftTokenId ?? '').trim()
+  if (linkTok) out.speakingDraftTokenId = linkTok
+  else delete out.speakingDraftTokenId
+  const w = String(out.word ?? '').trim()
+  if (w) out.word = w
+  else delete out.word
+  const p = String(out.prompt ?? '').trim()
+  if (p) out.prompt = p
+  else delete out.prompt
+  const t = String(out.tip ?? '').trim()
+  if (t) out.tip = t
+  else delete out.tip
+  const hasContent = Boolean(out.word || out.prompt || out.word_id || out.speakingDraftTokenId)
+  return hasContent ? out : null
+}
+
+/**
  * Defaults mirrored in learner screens; persist JSON only when it differs — keeps `lessons.content` small.
  *
  * - Audio exposure timing/chrome: fixed in `Dubbadhu/.../AudioExposureScreen.js` (not stored; only optional `title` + `words`).
@@ -854,9 +884,17 @@ export function findAudioExposureWordRecordByDraftTokenId(
 }
 
 function speakingPracticePrimaryLine(c: Record<string, unknown>): string {
-  const prompt = String(c.prompt ?? '').trim()
-  if (prompt) return prompt
-  return String(c.word ?? '').trim()
+  const rows: Record<string, unknown>[] = Array.isArray(c.phrases)
+    ? (c.phrases as unknown[]).filter(
+        (p): p is Record<string, unknown> => p != null && typeof p === 'object' && !Array.isArray(p),
+      )
+    : [c]
+  const labels = rows
+    .map((row) => String(row.prompt ?? '').trim() || String(row.word ?? '').trim())
+    .filter((s) => s.length > 0)
+  if (labels.length === 0) return ''
+  const head = labels.slice(0, 2).join(' · ')
+  return labels.length > 2 ? `${head} +${labels.length - 2}` : head
 }
 
 function speakingPracticeEnglishLine(c: Record<string, unknown>): string {
@@ -1014,34 +1052,18 @@ export function sanitizeScreenContentForPersistence(
       return base
     }
     case 'speakingPractice': {
-      const sp = pickAllowedKeys(
-        content,
-        new Set([
-          'word',
-          'word_id',
-          'prompt',
-          'tip',
-          'speakingDraftTokenId',
-        ]),
-      )
-      const wiRaw = String((sp as Record<string, unknown>).word_id ?? '').trim().toLowerCase()
-      if (UUID_RE_FOR_WORD_ROW.test(wiRaw)) {
-        ;(sp as Record<string, unknown>).word_id = wiRaw
-      } else {
-        delete (sp as Record<string, unknown>).word_id
+      if (Array.isArray(content.phrases)) {
+        const phrases = (content.phrases as unknown[])
+          .map((row) =>
+            row != null && typeof row === 'object' && !Array.isArray(row)
+              ? sanitizeSpeakingPhraseRowForPersistence(row as Record<string, unknown>)
+              : null,
+          )
+          .filter((x): x is Record<string, unknown> => x != null)
+        return { phrases }
       }
-      const linkTok = String((sp as Record<string, unknown>).speakingDraftTokenId ?? '').trim()
-      if (linkTok) (sp as Record<string, unknown>).speakingDraftTokenId = linkTok
-      else delete (sp as Record<string, unknown>).speakingDraftTokenId
-      const w = String((sp as Record<string, unknown>).word ?? '').trim()
-      if (!w) delete (sp as Record<string, unknown>).word
-      else (sp as Record<string, unknown>).word = w
-      const p = String((sp as Record<string, unknown>).prompt ?? '').trim()
-      if (!p) delete (sp as Record<string, unknown>).prompt
-      else (sp as Record<string, unknown>).prompt = p
-      const t = String((sp as Record<string, unknown>).tip ?? '').trim()
-      if (!t) delete (sp as Record<string, unknown>).tip
-      return sp
+      const single = sanitizeSpeakingPhraseRowForPersistence(content)
+      return single ?? {}
     }
     case 'audioExposure': {
       const base = pickAllowedKeys(content, new Set(['title', 'saidBy', 'words']))
@@ -1369,16 +1391,18 @@ export function sanitizeScreenContentForPersistence(
   }
 }
 
-export function normalizeSpeakingPracticeContentForSave(content: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...content }
+function normalizeSpeakingPhraseRow(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...row }
   const word = String(out.word ?? '').trim()
   let prompt = String(out.prompt ?? '').trim()
   if (!prompt && word) prompt = word
   const tip = String(out.tip ?? '').trim()
   const wi = String(out.word_id ?? '').trim().toLowerCase()
   const linkTok = String(out.speakingDraftTokenId ?? '').trim()
-  out.word = word
-  out.prompt = prompt
+  if (word) out.word = word
+  else delete out.word
+  if (prompt) out.prompt = prompt
+  else delete out.prompt
   if (tip) out.tip = tip
   else delete out.tip
   if (UUID_RE_FOR_WORD_ROW.test(wi)) out.word_id = wi
@@ -1386,6 +1410,27 @@ export function normalizeSpeakingPracticeContentForSave(content: Record<string, 
   if (linkTok) out.speakingDraftTokenId = linkTok
   else delete out.speakingDraftTokenId
   return out
+}
+
+function speakingPhraseRowHasContent(row: Record<string, unknown>): boolean {
+  return Boolean(
+    String(row.word ?? '').trim() ||
+      String(row.prompt ?? '').trim() ||
+      String(row.word_id ?? '').trim() ||
+      String(row.speakingDraftTokenId ?? '').trim(),
+  )
+}
+
+export function normalizeSpeakingPracticeContentForSave(content: Record<string, unknown>): Record<string, unknown> {
+  if (Array.isArray(content.phrases)) {
+    const phrases = (content.phrases as unknown[])
+      .filter((p): p is Record<string, unknown> => p != null && typeof p === 'object' && !Array.isArray(p))
+      .map((p) => normalizeSpeakingPhraseRow(p))
+      .filter((p) => speakingPhraseRowHasContent(p))
+    return { phrases }
+  }
+  const single = normalizeSpeakingPhraseRow(content)
+  return speakingPhraseRowHasContent(single) ? { phrases: [single] } : { phrases: [] }
 }
 
 /** Normalize + strip before persisting a single screen (modal save + full lesson save). */

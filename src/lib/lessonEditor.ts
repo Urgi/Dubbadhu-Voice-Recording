@@ -8,6 +8,7 @@ export type ScreenType =
   | 'firstLook'
   | 'match'
   | 'quiz'
+  | 'textQuiz'
   | 'CelebrateScreen'
   | 'dialogue'
   | 'concept'
@@ -58,6 +59,7 @@ export const SCREEN_TYPE_OPTIONS: { value: ScreenType; label: string }[] = [
   { value: 'concept', label: 'Concept' },
   { value: 'dialogue', label: 'Dialogue' },
   { value: 'quiz', label: 'Quiz' },
+  { value: 'textQuiz', label: 'Text quiz' },
   { value: 'match', label: 'Match' },
   { value: 'speakingPractice', label: 'Speaking practice' },
   { value: 'audioExposure', label: 'Audio exposure' },
@@ -117,6 +119,7 @@ const ADD_SCREEN_CURRICULUM_ORDER: ScreenType[] = [
   'speakingPractice',
   'patternPractice',
   'quiz',
+  'textQuiz',
   'match',
   'discriminationDrill',
   'word-breakdown',
@@ -263,6 +266,13 @@ export function defaultScreen(type: ScreenType): LessonScreen {
         content: {
           heading: '',
           questions: [{ question: '', options: ['', ''], correctAnswer: 0 }],
+        },
+      }
+    case 'textQuiz':
+      return {
+        type,
+        content: {
+          questions: [{ question: '', options: ['', ''], correctAnswer: 0, explanation: '' }],
         },
       }
     case 'match':
@@ -1051,6 +1061,32 @@ export function sanitizeScreenContentForPersistence(
       })
       return base
     }
+    case 'textQuiz': {
+      const rows = Array.isArray(content.questions) ? (content.questions as unknown[]) : []
+      return {
+        questions: rows
+          .map((row) => {
+            if (row == null || typeof row !== 'object' || Array.isArray(row)) return null
+            const q = row as Record<string, unknown>
+            const question = String(q.question ?? '').trim()
+            const options = (Array.isArray(q.options) ? (q.options as unknown[]) : [])
+              .map((opt) => String(opt ?? '').trim())
+              .filter(Boolean)
+            const rawCorrect = Number(q.correctAnswer)
+            const correctAnswer = Number.isFinite(rawCorrect)
+              ? Math.max(0, Math.min(Math.trunc(rawCorrect), Math.max(0, options.length - 1)))
+              : 0
+            const explanation = String(q.explanation ?? '').trim()
+            return {
+              question,
+              options,
+              correctAnswer,
+              ...(explanation ? { explanation } : {}),
+            }
+          })
+          .filter((x) => x != null),
+      }
+    }
     case 'speakingPractice': {
       if (Array.isArray(content.phrases)) {
         const phrases = (content.phrases as unknown[])
@@ -1482,6 +1518,14 @@ export function screenSummary(screen: LessonScreen): string {
     case 'quiz':
       if (Array.isArray(c.questions)) return `${c.questions.length} question(s)`
       return String(c.question ?? '').slice(0, 60) || '—'
+    case 'textQuiz': {
+      const rows = Array.isArray(c.questions) ? (c.questions as Record<string, unknown>[]) : []
+      if (rows.length === 0) return '—'
+      const first = String(rows[0]?.question ?? '').trim()
+      const head = first.length > 60 ? `${first.slice(0, 60)}…` : first
+      const count = `${rows.length} question(s)`
+      return head ? `${head} · ${count}` : count
+    }
     case 'match':
       return Array.isArray(c.pairs) ? `${c.pairs.length} pair(s)` : '—'
     case 'speakingPractice': {

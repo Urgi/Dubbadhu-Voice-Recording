@@ -600,6 +600,19 @@ export function normalizeVideoReviewContentForEdit(
           if (afaan) rec.word = afaan
           delete rec.oromo
           delete rec.text
+          const gloss = String(rec.translation ?? rec.english ?? '').trim()
+          if (gloss) {
+            rec.translation = gloss
+            delete rec.english
+          }
+          const wid = String(rec.word_id ?? '').trim().toLowerCase()
+          if (UUID_RE_FOR_WORD_ROW.test(wid)) {
+            rec.word_id = wid
+          } else {
+            delete rec.word_id
+            // Survive sanitize until Approve Series / bank link fills word_id (same as audio exposure).
+            if (!String(rec.draftTokenId ?? '').trim()) rec.draftTokenId = newDraftTokenId()
+          }
           return rec
         })
       return { id, text, vocabWords }

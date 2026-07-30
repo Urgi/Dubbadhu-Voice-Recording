@@ -1,4 +1,6 @@
 /** If Supabase uses an enum for `words.status`, add value `rerecord_requested` there too. */
+import type { AdminRegisteredUserRow } from '../lib/adminUsers'
+
 export type RecordingStatus =
   | 'pending'
   | 'recorded'
@@ -35,11 +37,15 @@ export type RootStackParamList = {
   Login: undefined
   ProfessorHome: undefined
   AdminHome: undefined
+  /** Hub section drill-in (tiles for analytics / assets / moderation). */
+  AdminHubSection: { section: 'analytics' | 'assets' | 'moderation' }
   /** In-app Gemini chat with bundled Dubbadhu ecosystem context (both apps). */
   LubbuDubbadhu: undefined
   AdminAnalytics: undefined
-  /** Registered learners list (name, streak, last activity). */
-  AdminUsers: undefined
+  /** Registered learners list, or active-today (max 10) when mode is set. */
+  AdminUsers: { mode?: 'activeToday' } | undefined
+  /** Signup → lesson timeline for one user (from Active today / Registered). */
+  AdminUserTimeline: { user: AdminRegisteredUserRow }
   /** Complimentary Premium (isPremium, no premium_product_id). */
   AdminFreeAccess: undefined
   /** Curate Practice tab “From the community” picks per WOTD day (max 7). */

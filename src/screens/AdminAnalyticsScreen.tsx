@@ -15,21 +15,32 @@ import {
 } from 'react-native'
 import Svg, { Circle } from 'react-native-svg'
 import type { StackScreenProps } from '@react-navigation/stack'
+import GeminiMarkdownText from '../components/GeminiMarkdownText'
+import SeriesPipelineBlock from '../components/SeriesPipelineBlock'
 import {
   summarizeReliabilityEvents24h,
   type Reliability24hSummary,
   type ReliabilityEventRow,
 } from '../lib/analyticsHealthEvents'
 import { fetchRecentAnalyticsEventsForGemini } from '../lib/analyticsEventsQuery'
+import { isAnalyticsExcludedUserId } from '../lib/analyticsExcludedUsers'
 import {
   ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT,
   ANALYTICS_GEMINI_PROMPT_EVENT_LIMIT,
   runGeminiAnalyticsInsights,
   runGeminiAnalyticsQuestion,
 } from '../lib/geminiEventInsights'
+import {
+  METRIC_TONE_COLOR,
+  toneForRegisteredTotal,
+  toneForWeeklyRegisteredDelta,
+} from '../lib/adminMetricTone'
+import {
+  fetchProductionSeriesPipeline,
+  type ProductionSeriesPipeline,
+} from '../lib/productionSeriesPipeline'
 import supabase from '../lib/supabase'
 import type { RootStackParamList } from '../types'
-import GeminiMarkdownText from '../components/GeminiMarkdownText'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminAnalytics'>
 
@@ -163,6 +174,7 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
   const [askLoading, setAskLoading] = useState(false)
   const [askError, setAskError] = useState('')
   const [retentionRange, setRetentionRange] = useState<RetentionRange>('30d')
+  const [seriesPipeline, setSeriesPipeline] = useState<ProductionSeriesPipeline | null>(null)
   const scrollRef = useRef<ScrollView>(null)
   const askSectionY = useRef(0)
 
@@ -230,12 +242,18 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
       setReliability24h(null)
     } else {
       const rows =
-        (ev24Res.data as ReliabilityEventRow[] | null)?.map((e) => ({
-          ...e,
-          properties: (e.properties as Record<string, unknown> | null) ?? null,
-        })) ?? []
+        (ev24Res.data as ReliabilityEventRow[] | null)
+          ?.map((e) => ({
+            ...e,
+            properties: (e.properties as Record<string, unknown> | null) ?? null,
+          }))
+          .filter((e) => !isAnalyticsExcludedUserId(e.user_id)) ?? []
       setReliability24h(summarizeReliabilityEvents24h(rows))
     }
+
+    const pipelineRes = await fetchProductionSeriesPipeline(supabase)
+    if (pipelineRes.error) errs.push(`series pipeline: ${pipelineRes.error}`)
+    setSeriesPipeline(pipelineRes.data)
 
     setLoadErrors(errs)
   }, [])
@@ -393,19 +411,50 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
           accessibilityLabel="View registered users"
         >
           <Text style={styles.metricLabel}>Registered</Text>
-          <Text style={styles.metricValue}>{usersTotal ?? '—'}</Text>
-          <Text style={styles.metricDeltaUp}>
+          <Text
+            style={[
+              styles.metricValue,
+              { color: METRIC_TONE_COLOR[toneForRegisteredTotal(usersTotal)] },
+            ]}
+          >
+            {usersTotal ?? '—'}
+          </Text>
+          <Text
+            style={[
+              styles.metricDelta,
+              { color: METRIC_TONE_COLOR[toneForWeeklyRegisteredDelta(usersThisWeek)] },
+            ]}
+          >
             {usersThisWeek != null ? `+${usersThisWeek} this week` : '—'}
           </Text>
         </Pressable>
-        <View style={styles.metricCard}>
+        <Pressable
+          style={styles.metricCard}
+          onPress={() => navigation.navigate('AdminUsers', { mode: 'activeToday' })}
+          accessibilityRole="button"
+          accessibilityLabel="View users active today"
+        >
           <Text style={styles.metricLabel}>Active today</Text>
           <Text style={styles.metricValue}>{activeToday != null ? activeToday : '—'}</Text>
           <Text style={styles.metricDeltaNeutral}>
             {activePctOfTotal != null ? `${activePctOfTotal}% of total` : '—'}
           </Text>
-        </View>
+        </Pressable>
       </View>
+
+      <Text style={styles.sectionLabel}>Series config</Text>
+      <Pressable
+        style={styles.card}
+        onPress={() => navigation.navigate('LessonConfig')}
+        accessibilityRole="button"
+        accessibilityLabel="Open Series Config"
+      >
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>Production pipeline</Text>
+          <Text style={styles.cardChevron}>›</Text>
+        </View>
+        <SeriesPipelineBlock pipeline={seriesPipeline} />
+      </Pressable>
 
       <Text style={styles.sectionLabel}>App health · 24h</Text>
       <View style={styles.card}>
@@ -660,7 +709,7 @@ const styles = StyleSheet.create({
   },
   metricLabel: { fontSize: 11, color: '#888888', marginBottom: 4 },
   metricValue: { fontSize: 26, fontWeight: '700', color: '#fff', lineHeight: 30 },
-  metricDeltaUp: { fontSize: 11, marginTop: 4, color: '#30d158', fontWeight: '600' },
+  metricDelta: { fontSize: 11, marginTop: 4, fontWeight: '600' },
   metricDeltaNeutral: { fontSize: 11, marginTop: 4, color: '#888888' },
   card: {
     backgroundColor: CARD_BG,
@@ -694,6 +743,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cardTitle: { fontSize: 13, fontWeight: '600', color: '#fff', flexShrink: 0 },
+  cardChevron: {
+    color: ORANGE,
+    fontSize: 22,
+    fontWeight: '300',
+    lineHeight: 22,
+  },
   cardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, justifyContent: 'flex-end' },
   cardSource: { fontSize: 10, color: '#555555', textAlign: 'right', flexShrink: 1 },
   infoBtn: {

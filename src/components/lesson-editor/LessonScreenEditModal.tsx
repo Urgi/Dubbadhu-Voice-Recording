@@ -147,6 +147,8 @@ type WordBankRow = {
   translation?: string | null
   slow_audio_url?: string | null
   fast_audio_url?: string | null
+  /** On lesson-token picks: exposure `draftTokenId` so video review / speaking can share the draft link. */
+  draftTokenId?: string | null
 }
 
 /** Columns returned for word-bank search / pick lists (matches `public.words`). */
@@ -437,7 +439,13 @@ async function fetchWordBankRows(query: string): Promise<{ data: WordBankRow[] |
 
 const LESSON_PICK_ID_PREFIX = 'lesson-token:'
 
-function mergeDbAndLessonHarvestForPicker(db: WordBankRow[], harvested: HarvestedWord[], query: string): WordBankRow[] {
+type LessonHarvestPickerWord = HarvestedWord & { draftTokenId?: string }
+
+function mergeDbAndLessonHarvestForPicker(
+  db: WordBankRow[],
+  harvested: LessonHarvestPickerWord[],
+  query: string,
+): WordBankRow[] {
   const q = query.trim().toLowerCase()
   if (q.length < 2) return db
   const keys = new Set(db.map((r) => celebrateAfaanDedupeKey(rowAfaanText(r))))
@@ -448,21 +456,43 @@ function mergeDbAndLessonHarvestForPicker(db: WordBankRow[], harvested: Harveste
     const k = celebrateAfaanDedupeKey(w)
     if (keys.has(k)) continue
     keys.add(k)
+    const dt = String(h.draftTokenId ?? '').trim()
     extra.push({
       id: `${LESSON_PICK_ID_PREFIX}${k}`,
       word: w,
       translation: h.translation,
+      ...(dt ? { draftTokenId: dt } : {}),
     })
   }
   return sortWordBankRowsShortestAfaanFirst([...db, ...extra])
 }
 
 /** Audio exposure tokens in the draft lesson (for Afaan lookup: same shape as broad harvest merge). */
-function harvestAudioExposureWordsForPicker(screens: LessonScreen[]): HarvestedWord[] {
-  return celebrateExposureWordRows(screens).map((r) => ({
-    word: r.afaan.trim(),
-    translation: r.english.trim() ? r.english.trim() : null,
-  }))
+function harvestAudioExposureWordsForPicker(screens: LessonScreen[]): LessonHarvestPickerWord[] {
+  const out: LessonHarvestPickerWord[] = []
+  const seen = new Set<string>()
+  for (const s of screens) {
+    if (s.type !== 'audioExposure') continue
+    const words = (s.content as Record<string, unknown>).words
+    if (!Array.isArray(words)) continue
+    for (const w of words) {
+      if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
+      const rec = w as Record<string, unknown>
+      const afaan = String(rec.word ?? rec.oromo ?? rec.text ?? '').trim()
+      if (!afaan) continue
+      const key = celebrateAfaanDedupeKey(afaan)
+      if (seen.has(key)) continue
+      seen.add(key)
+      const english = String(rec.translation ?? rec.english ?? '').trim()
+      const dt = String(rec.draftTokenId ?? '').trim()
+      out.push({
+        word: afaan,
+        translation: english || null,
+        ...(dt ? { draftTokenId: dt } : {}),
+      })
+    }
+  }
+  return out
 }
 
 function isRealWordBankRowId(row: WordBankRow): boolean {
@@ -4593,6 +4623,9 @@ export function LessonScreenEditModal({
                                       delete nextWord.audioRef
                                       delete nextWord.fastAudioRef
                                       delete nextWord.slowAudioRef
+                                      if (!String(nextWord.draftTokenId ?? '').trim()) {
+                                        nextWord.draftTokenId = newDraftTokenId()
+                                      }
                                     }
                                     return nextWord
                                   })
@@ -4611,13 +4644,20 @@ export function LessonScreenEditModal({
                                     if (j !== wi) return x
                                     const item: Record<string, unknown> = {
                                       ...(x as Record<string, unknown>),
-                                      word_id: bankId,
                                       word: rowAfaanTextForBankPick(row),
                                       translation: rowTranslationText(row),
                                     }
                                     delete item.oromo
                                     delete item.english
-                                    if (!bankId) delete item.word_id
+                                    if (bankId) {
+                                      item.word_id = bankId
+                                    } else {
+                                      delete item.word_id
+                                      // Lesson-new / exposure draft: keep or mint draftTokenId so sanitize + Approve Series can link audio later.
+                                      const fromExposure = String(row.draftTokenId ?? '').trim()
+                                      const existing = String(item.draftTokenId ?? '').trim()
+                                      item.draftTokenId = fromExposure || existing || newDraftTokenId()
+                                    }
                                     applyWordBankUrlsToExposureWord(item, row)
                                     return item
                                   })
@@ -4661,7 +4701,7 @@ export function LessonScreenEditModal({
                               const arr = Array.isArray(cur.lines) ? (cur.lines as Record<string, unknown>[]) : []
                               const curLine = (arr[idx] as Record<string, unknown>) ?? {}
                               const ws = Array.isArray(curLine.vocabWords) ? (curLine.vocabWords as Record<string, unknown>[]) : []
-                              const nextWs = [...ws, { word: '' }]
+                              const nextWs = [...ws, { word: '', draftTokenId: newDraftTokenId() }]
                               const nextLine = { ...curLine, id, text: String(curLine.text ?? ''), vocabWords: nextWs }
                               const next = arr.map((x, j) => (j === idx ? nextLine : x))
                               return { ...cur, lines: next }
@@ -4695,7 +4735,7 @@ export function LessonScreenEditModal({
                             {
                               id: `line_${arr.length + 1}`,
                               text: '',
-                              vocabWords: [{ word: '' }],
+                              vocabWords: [{ word: '', draftTokenId: newDraftTokenId() }],
                             },
                           ],
                         }

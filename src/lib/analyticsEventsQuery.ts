@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT } from './geminiEventInsights'
+import { isAnalyticsExcludedUserId } from './analyticsExcludedUsers'
 
 export type AnalyticsEventRow = {
   id: string
@@ -30,9 +31,11 @@ export async function fetchRecentAnalyticsEventsForGemini(
   const cap = Math.max(1, Math.min(limit, ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT))
   const rows: AnalyticsEventRow[] = []
   let offset = 0
+  /** Extra pages allowed while skipping excluded seed/dev accounts. */
+  const maxOffset = cap * 3
 
-  while (rows.length < cap) {
-    const pageSize = Math.min(FETCH_PAGE_SIZE, cap - rows.length)
+  while (rows.length < cap && offset < maxOffset) {
+    const pageSize = Math.min(FETCH_PAGE_SIZE, Math.max(cap - rows.length, 200))
     const { data, error } = await client.rpc('admin_fetch_analytics_events', {
       p_since: null,
       p_limit: pageSize,
@@ -43,12 +46,18 @@ export async function fetchRecentAnalyticsEventsForGemini(
       return { data: rows, error: error.message }
     }
 
-    const batch = (data ?? []).map((row) => normalizeAnalyticsEventRow(row as Record<string, unknown>))
+    const batch = ((data ?? []) as Record<string, unknown>[]).map((row) =>
+      normalizeAnalyticsEventRow(row),
+    )
     if (batch.length === 0) break
 
-    rows.push(...batch)
-    offset += batch.length
+    for (const row of batch) {
+      if (isAnalyticsExcludedUserId(row.user_id)) continue
+      rows.push(row)
+      if (rows.length >= cap) break
+    }
 
+    offset += batch.length
     if (batch.length < pageSize) break
   }
 

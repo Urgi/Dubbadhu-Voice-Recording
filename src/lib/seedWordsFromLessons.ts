@@ -71,7 +71,8 @@ function lessonDisplayNumber(row: LessonRowForHarvest, sortedIndex: number): num
 }
 
 /**
- * Raw hits from Audio exposure, Repetition practice, and Speaking practice (one entry per token per screen).
+ * Raw hits from Audio exposure, Repetition practice, Speaking practice, and Video review vocab
+ * (one entry per token per screen).
  * `lessonNumber` should be the curriculum lesson number shown to admins (DB `lesson_number`, or sort rank).
  *
  * **Audio exposure:** counts every non-empty Afaan line (`word` / legacy `oromo` / `text`), not only rows already
@@ -79,6 +80,9 @@ function lessonDisplayNumber(row: LessonRowForHarvest, sortedIndex: number): num
  *
  * **Speaking practice:** counts the practice phrase when `word` / `prompt` is set, with or without `word_id`
  * (e.g. linked to exposure via `speakingDraftTokenId` before a bank row exists).
+ *
+ * **Video review:** counts each line `vocabWords[]` Afaan token (with or without `word_id`) so tough-part
+ * words can enter the voice bank and receive audio later; `backfillLessonWordIdsForSeries` then stamps `word_id`.
  */
 export function collectVoiceBankHitsFromScreens(
   screens: unknown[],
@@ -136,6 +140,29 @@ export function collectVoiceBankHitsFromScreens(
       const gloss =
         String(cr.phraseEnglish ?? cr.translation ?? cr.english ?? '').trim() || null
       out.push({ word, translation: gloss, lessonNumber, screenIndex })
+    }
+
+    if (type === 'videoReview') {
+      const lines = cr.lines
+      if (!Array.isArray(lines)) continue
+      for (const line of lines) {
+        if (line == null || typeof line !== 'object' || Array.isArray(line)) continue
+        const ln = line as Record<string, unknown>
+        const vw = Array.isArray(ln.vocabWords)
+          ? ln.vocabWords
+          : Array.isArray(ln.words)
+            ? ln.words
+            : null
+        if (!vw) continue
+        for (const item of vw) {
+          if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
+          const rec = item as Record<string, unknown>
+          const afaan = String(rec.word ?? rec.oromo ?? rec.text ?? '').trim()
+          if (!afaan) continue
+          const english = String(rec.translation ?? rec.english ?? '').trim() || null
+          out.push({ word: afaan, translation: english, lessonNumber, screenIndex })
+        }
+      }
     }
   }
 
@@ -290,7 +317,8 @@ function pushHarvestUnique(
 
 /**
  * Tokens that sync to `words` / VA on **Approve Series**: **audioExposure** (`content.words[]`),
- * **repetitionPractice** (`pairs[].base` + `pairs[].answer`), and **speakingPractice** (`word` / `prompt`).
+ * **repetitionPractice** (`pairs[].base` + `pairs[].answer`), **speakingPractice** (`word` / `prompt`),
+ * and **videoReview** (`lines[].vocabWords[]`).
  * Draft rows without `word_id` are included so typed words can enter the voice-recording queue.
  */
 export function harvestWordsForVoiceBank(content: unknown): HarvestedWord[] {

@@ -1,115 +1,254 @@
+/** Admin home — control center. */
 import { useFocusEffect } from '@react-navigation/native'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
+import SeriesPipelineBlock from '../components/SeriesPipelineBlock'
 import { useAuth } from '../context/AuthContext'
+import {
+  ADMIN_HOME_SECTIONS,
+  sectionBadge,
+  type AdminHomeCounts,
+  type AdminHomeSectionId,
+} from '../lib/adminHomeSections'
 import { fetchOpenCommunityBoardReportsCount } from '../lib/communityBoardReports'
 import { fetchPendingDiscussionReviewCount } from '../lib/discussionReviewQueue'
+import {
+  METRIC_TONE_COLOR,
+  explainActivationMetric,
+  explainPremiumMetric,
+  explainRegisteredMetric,
+  toneForActivationPercent,
+  toneForPremiumPercent,
+  toneForRegisteredTotal,
+  toneForWeeklyActivationDelta,
+  toneForWeeklyPremiumDelta,
+  toneForWeeklyRegisteredDelta,
+} from '../lib/adminMetricTone'
+import {
+  fetchProductionSeriesPipeline,
+  type ProductionSeriesPipeline,
+} from '../lib/productionSeriesPipeline'
+import {
+  fetchRecentSignupFunnelRates,
+  type RecentSignupFunnelRates,
+} from '../lib/recentSignupActivation'
 import supabase from '../lib/supabase'
 import type { RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminHome'>
 
-type HubTile = {
-  title: string
-  lines: string[]
-  hint: string
-  onPress: () => void
-}
+const HOME_SECTION_ORDER: AdminHomeSectionId[] = ['analytics', 'assets', 'moderation']
 
-function HubSection({
-  sectionKey,
-  title,
-  subtitle,
-  badge,
-  tiles,
-  expanded,
-  onToggle,
+function SectionCard({
+  section,
+  counts,
+  usersThisWeek,
+  funnel,
+  seriesPipeline,
+  onPress,
 }: {
-  sectionKey: string
-  title: string
-  subtitle: string
-  badge?: string | null
-  tiles: HubTile[]
-  expanded: boolean
-  onToggle: (key: string) => void
+  section: AdminHomeSectionId
+  counts: AdminHomeCounts
+  usersThisWeek: number | null
+  funnel: RecentSignupFunnelRates | null
+  seriesPipeline: ProductionSeriesPipeline | null
+  onPress: () => void
 }) {
+  const meta = ADMIN_HOME_SECTIONS[section]
+  const badge = sectionBadge(section, counts)
+  const isAnalytics = section === 'analytics'
+  const isAssets = section === 'assets'
+  const isModeration = section === 'moderation'
+
+  const signupsThisWeek = usersThisWeek ?? 0
+  const registeredDeltaTone = toneForWeeklyRegisteredDelta(usersThisWeek)
+  const activationDeltaTone = toneForWeeklyActivationDelta(
+    funnel?.activatedThisWeek ?? null,
+    signupsThisWeek,
+  )
+  const premiumDeltaTone = toneForWeeklyPremiumDelta(
+    funnel?.premiumConvertedThisWeek ?? null,
+    signupsThisWeek,
+  )
+  const registeredValueTone = toneForRegisteredTotal(counts.usersTotal)
+  const activationValueTone = toneForActivationPercent(funnel?.activationPercent ?? null)
+  const premiumValueTone = toneForPremiumPercent(funnel?.premiumConversionPercent ?? null)
+
+  const showMetricWhy = (explanation: { title: string; message: string }) => {
+    Alert.alert(explanation.title, explanation.message)
+  }
+
   return (
-    <View style={styles.hubSection}>
-      <Pressable
-        style={({ pressed }) => [styles.hubHeaderButton, pressed && styles.hubHeaderButtonPressed]}
-        onPress={() => onToggle(sectionKey)}
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        accessibilityLabel={`${title}, ${expanded ? 'collapse' : 'expand'}`}
-      >
-        <View style={styles.hubHeaderText}>
-          <View style={styles.hubTitleRow}>
-            <Text style={styles.hubTitle}>{title}</Text>
-            <Text style={styles.hubChevron}>{expanded ? '▾' : '▸'}</Text>
-          </View>
-          <Text style={styles.hubSubtitle}>{subtitle}</Text>
+    <Pressable
+      style={({ pressed }) => [styles.sectionCard, pressed && styles.sectionCardPressed]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${meta.title}`}
+    >
+      <View style={styles.sectionHeaderRow}>
+        <View style={styles.sectionHeaderText}>
+          <Text style={styles.sectionTitle}>{meta.title}</Text>
+          <Text style={styles.sectionSubtitle}>{meta.subtitle}</Text>
         </View>
-        {badge ? <Text style={styles.hubBadge}>{badge}</Text> : null}
-      </Pressable>
-      {expanded
-        ? tiles.map((tile) => (
-            <Pressable
-              key={tile.title}
-              style={({ pressed }) => [styles.tile, pressed && styles.tilePressed]}
-              onPress={tile.onPress}
+        <Text style={styles.sectionChevron}>›</Text>
+      </View>
+
+      {isAnalytics ? (
+        <View style={styles.analyticsMetrics}>
+          <Pressable
+            style={styles.metricCard}
+            onLongPress={() =>
+              showMetricWhy(
+                explainRegisteredMetric({
+                  total: counts.usersTotal,
+                  thisWeek: usersThisWeek,
+                }),
+              )
+            }
+            delayLongPress={350}
+            accessibilityHint="Long press for color explanation"
+          >
+            <Text style={styles.metricCardLabel}>Registered</Text>
+            <Text style={[styles.metricCardValue, { color: METRIC_TONE_COLOR[registeredValueTone] }]}>
+              {counts.usersTotal ?? '—'}
+            </Text>
+            <Text style={[styles.metricCardDelta, { color: METRIC_TONE_COLOR[registeredDeltaTone] }]}>
+              {usersThisWeek != null ? `+${usersThisWeek} this week` : '—'}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={styles.metricCard}
+            onLongPress={() =>
+              showMetricWhy(
+                explainActivationMetric({
+                  percent: funnel?.activationPercent ?? null,
+                  activatedThisWeek: funnel?.activatedThisWeek ?? null,
+                  signupsThisWeek,
+                  activated: funnel?.activated ?? null,
+                  cohortSize: funnel?.cohortSize ?? null,
+                }),
+              )
+            }
+            delayLongPress={350}
+            accessibilityHint="Long press for color explanation"
+          >
+            <Text style={styles.metricCardLabel}>Activation</Text>
+            <Text style={[styles.metricCardValue, { color: METRIC_TONE_COLOR[activationValueTone] }]}>
+              {funnel?.activationPercent != null ? `${funnel.activationPercent.toFixed(0)}%` : '—'}
+            </Text>
+            <Text style={[styles.metricCardDelta, { color: METRIC_TONE_COLOR[activationDeltaTone] }]}>
+              {funnel != null ? `+${funnel.activatedThisWeek} this week` : '—'}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={styles.metricCard}
+            onLongPress={() =>
+              showMetricWhy(
+                explainPremiumMetric({
+                  percent: funnel?.premiumConversionPercent ?? null,
+                  paidThisWeek: funnel?.premiumConvertedThisWeek ?? null,
+                  signupsThisWeek,
+                  paid: funnel?.premiumConverted ?? null,
+                  cohortSize: funnel?.cohortSize ?? null,
+                }),
+              )
+            }
+            delayLongPress={350}
+            accessibilityHint="Long press for color explanation"
+          >
+            <Text style={styles.metricCardLabel}>Premium</Text>
+            <Text style={[styles.metricCardValue, { color: METRIC_TONE_COLOR[premiumValueTone] }]}>
+              {funnel?.premiumConversionPercent != null
+                ? `${funnel.premiumConversionPercent.toFixed(0)}%`
+                : '—'}
+            </Text>
+            <Text style={[styles.metricCardDelta, { color: METRIC_TONE_COLOR[premiumDeltaTone] }]}>
+              {funnel != null ? `+${funnel.premiumConvertedThisWeek} this week` : '—'}
+            </Text>
+          </Pressable>
+        </View>
+      ) : isAssets ? (
+        <View style={styles.seriesPipeline}>
+          <SeriesPipelineBlock pipeline={seriesPipeline} footer={badge} />
+        </View>
+      ) : isModeration ? (
+        <View style={styles.analyticsMetrics}>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricCardLabel}>Reports</Text>
+            <Text
+              style={[
+                styles.metricCardValue,
+                (counts.openDiscussionReports ?? 0) > 0 && styles.metricCardValueAttention,
+              ]}
             >
-              <Text style={styles.tileTitle}>{tile.title}</Text>
-              {tile.lines.map((line) => (
-                <Text key={line} style={styles.recordedLine}>
-                  {line}
-                </Text>
-              ))}
-              <Text style={styles.tileHint}>{tile.hint}</Text>
-            </Pressable>
-          ))
-        : null}
-    </View>
+              {counts.openDiscussionReports ?? '—'}
+            </Text>
+            <Text style={styles.metricCardDeltaMuted}>Open flags</Text>
+          </View>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricCardLabel}>Review queue</Text>
+            <Text
+              style={[
+                styles.metricCardValue,
+                (counts.pendingDiscussionReviews ?? 0) > 0 && styles.metricCardValueAttention,
+              ]}
+            >
+              {counts.pendingDiscussionReviews ?? '—'}
+            </Text>
+            <Text style={styles.metricCardDeltaMuted}>Pending AI hold</Text>
+          </View>
+        </View>
+      ) : badge ? (
+        <Text style={styles.sectionBadge}>{badge}</Text>
+      ) : null}
+    </Pressable>
   )
 }
 
 export default function AdminHomeScreen({ navigation }: Props) {
   const { setRole } = useAuth()
-  const [unapprovedCount, setUnapprovedCount] = useState<number | null>(null)
-  const [usersTotal, setUsersTotal] = useState<number | null>(null)
-  const [seriesTotal, setSeriesTotal] = useState<number | null>(null)
-  const [unapprovedSeriesCount, setUnapprovedSeriesCount] = useState<number | null>(null)
-  const [openDiscussionReports, setOpenDiscussionReports] = useState<number | null>(null)
-  const [pendingDiscussionReviews, setPendingDiscussionReviews] = useState<number | null>(null)
-  const [freeAccessCount, setFreeAccessCount] = useState<number | null>(null)
+  const [counts, setCounts] = useState<AdminHomeCounts>({
+    usersTotal: null,
+    freeAccessCount: null,
+    freeAccessNames: [],
+    seriesTotal: null,
+    unapprovedSeriesCount: null,
+    unapprovedCount: null,
+    pendingDiscussionReviews: null,
+    openDiscussionReports: null,
+  })
+  const [funnel, setFunnel] = useState<RecentSignupFunnelRates | null>(null)
+  const [seriesPipeline, setSeriesPipeline] = useState<ProductionSeriesPipeline | null>(null)
+  const [usersThisWeek, setUsersThisWeek] = useState<number | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [initialLoadDone, setInitialLoadDone] = useState(false)
   const [error, setError] = useState('')
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
   const isFirstFocus = useRef(true)
-
-  const toggleSection = useCallback((key: string) => {
-    setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }))
-  }, [])
 
   const loadCounts = useCallback(async () => {
     setError('')
+    const weekAgoIso = new Date(Date.now() - 7 * 86400000).toISOString()
     const [
       unapprovedRes,
       qubeeUnapprovedRes,
       fidelUnapprovedRes,
       usersRes,
+      usersWeekRes,
       seriesTotalRes,
       unapprovedSeriesRes,
       discussionReportsCount,
       discussionReviewCount,
       freeAccessRes,
+      funnelRes,
+      seriesPipelineRes,
     ] = await Promise.all([
       supabase.from('words').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
       supabase.from('qubee_letters').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
       supabase.from('fidel_letters').select('id', { count: 'exact', head: true }).eq('status', 'recorded'),
       supabase.rpc('admin_users_total_count'),
+      supabase.rpc('admin_users_count_since', { p_since: weekAgoIso }),
       supabase.from('lesson_series').select('id', { count: 'exact', head: true }),
       supabase
         .from('lesson_series')
@@ -118,6 +257,8 @@ export default function AdminHomeScreen({ navigation }: Props) {
       fetchOpenCommunityBoardReportsCount(),
       fetchPendingDiscussionReviewCount(),
       supabase.rpc('admin_complimentary_users_count'),
+      fetchRecentSignupFunnelRates(supabase, 50),
+      fetchProductionSeriesPipeline(supabase),
     ])
 
     const errs: string[] = []
@@ -128,37 +269,34 @@ export default function AdminHomeScreen({ navigation }: Props) {
     if (qubeeUnapprovedRes.error) errs.push(`qubee_letters: ${qubeeUnapprovedRes.error.message}`)
     if (fidelUnapprovedRes.error) errs.push(`fidel_letters: ${fidelUnapprovedRes.error.message}`)
     const pendingParts = [wordPending, qubeePending, fidelPending].filter((n) => n != null) as number[]
-    if (pendingParts.length > 0) {
-      setUnapprovedCount(pendingParts.reduce((sum, n) => sum + n, 0))
+
+    setCounts({
+      usersTotal: usersRes.error ? null : Number(usersRes.data ?? 0),
+      freeAccessCount: freeAccessRes?.error ? null : Number(freeAccessRes?.data ?? 0),
+      freeAccessNames: [],
+      seriesTotal: seriesTotalRes.error ? null : (seriesTotalRes.count ?? 0),
+      unapprovedSeriesCount: unapprovedSeriesRes.error ? null : (unapprovedSeriesRes.count ?? 0),
+      unapprovedCount: pendingParts.length ? pendingParts.reduce((sum, n) => sum + n, 0) : null,
+      pendingDiscussionReviews: discussionReviewCount,
+      openDiscussionReports: discussionReportsCount,
+    })
+
+    if (usersRes.error) errs.push(`users: ${usersRes.error.message}`)
+    if (usersWeekRes.error) {
+      errs.push(`users (week): ${usersWeekRes.error.message}`)
+      setUsersThisWeek(null)
     } else {
-      setUnapprovedCount(null)
+      setUsersThisWeek(Number(usersWeekRes.data ?? 0))
     }
-    if (usersRes.error) {
-      errs.push(`users: ${usersRes.error.message}`)
-      setUsersTotal(null)
-    } else {
-      setUsersTotal(Number(usersRes.data ?? 0))
-    }
-    if (seriesTotalRes.error) {
-      errs.push(`lesson_series (total): ${seriesTotalRes.error.message}`)
-      setSeriesTotal(null)
-    } else {
-      setSeriesTotal(seriesTotalRes.count ?? 0)
-    }
+    if (seriesTotalRes.error) errs.push(`lesson_series (total): ${seriesTotalRes.error.message}`)
     if (unapprovedSeriesRes.error) {
       errs.push(`lesson_series (unapproved): ${unapprovedSeriesRes.error.message}`)
-      setUnapprovedSeriesCount(null)
-    } else {
-      setUnapprovedSeriesCount(unapprovedSeriesRes.count ?? 0)
     }
-    setOpenDiscussionReports(discussionReportsCount)
-    setPendingDiscussionReviews(discussionReviewCount)
-    if (freeAccessRes?.error) {
-      errs.push(`free access: ${freeAccessRes.error.message}`)
-      setFreeAccessCount(null)
-    } else {
-      setFreeAccessCount(Number(freeAccessRes?.data ?? 0))
-    }
+    if (freeAccessRes?.error) errs.push(`free access: ${freeAccessRes.error.message}`)
+    if (funnelRes.error) errs.push(`funnel: ${funnelRes.error}`)
+    if (seriesPipelineRes.error) errs.push(`series pipeline: ${seriesPipelineRes.error}`)
+    setFunnel(funnelRes.data)
+    setSeriesPipeline(seriesPipelineRes.data)
     setError(errs.join('\n'))
   }, [])
 
@@ -210,15 +348,6 @@ export default function AdminHomeScreen({ navigation }: Props) {
     )
   }
 
-  const assetBadge =
-    unapprovedCount != null || unapprovedSeriesCount != null
-      ? `${(unapprovedCount ?? 0) + (unapprovedSeriesCount ?? 0)} pending`
-      : null
-  const moderationBadge =
-    openDiscussionReports != null || pendingDiscussionReviews != null
-      ? `${(pendingDiscussionReviews ?? 0) + (openDiscussionReports ?? 0)} open`
-      : null
-
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       {refreshing ? (
@@ -228,107 +357,23 @@ export default function AdminHomeScreen({ navigation }: Props) {
       ) : null}
       {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
 
-      <HubSection
-        sectionKey="assets"
-        title="Asset Management"
-        subtitle="Lessons, audio, vocab, and media that ship to learners"
-        badge={assetBadge}
-        expanded={Boolean(expandedSections.assets)}
-        onToggle={toggleSection}
-        tiles={[
-          {
-            title: 'Series Config',
-            lines: [
-              `Total Series : ${seriesTotal ?? '—'}`,
-              `Unapproved Series : ${unapprovedSeriesCount ?? '—'}`,
-            ],
-            hint: 'Edit lesson JSON, series metadata, and publish status',
-            onPress: () => navigation.navigate('LessonConfig'),
-          },
-          {
-            title: 'Voice Recording',
-            lines: [`Approval Requests : ${unapprovedCount ?? '—'}`],
-            hint: 'Vocabulary audio by series — record, review, approve',
-            onPress: () => navigation.navigate('AdminSeriesList'),
-          },
-          {
-            title: 'Vocab Center',
-            lines: ['Edit words + translations · generate/select pictures'],
-            hint: 'Lexical assets and illustration review for the Vocab tab',
-            onPress: () => navigation.navigate('AdminVocabIllustrationReview'),
-          },
-          {
-            title: 'Qubee Letters',
-            lines: ['Alphabet recordings + approval queue'],
-            hint: 'One audio clip per Oromo letter',
-            onPress: () => navigation.navigate('QubeeLettersHub'),
-          },
-          {
-            title: 'Fidel Letters',
-            lines: ["Ge'ez syllable recordings + approval queue"],
-            hint: 'Approve syllable clips used in Fidel Quiz',
-            onPress: () => navigation.navigate('FidelLettersHub'),
-          },
-          {
-            title: 'Songs / Music',
-            lines: ['YouTube catalog for Home → Songs (Oromo + Amharic)'],
-            hint: 'Add, edit, reorder, publish — learner app derives thumbnails',
-            onPress: () => navigation.navigate('AdminSongs'),
-          },
-        ]}
-      />
-
-      <HubSection
-        sectionKey="moderation"
-        title="Content Moderation"
-        subtitle="Community posts, reports, and curated learner sentences"
-        badge={moderationBadge}
-        expanded={Boolean(expandedSections.moderation)}
-        onToggle={toggleSection}
-        tiles={[
-          {
-            title: 'Discussion review queue',
-            lines: [`Pending AI review : ${pendingDiscussionReviews ?? '—'}`],
-            hint: 'Approve or reject posts held before publication',
-            onPress: () => navigation.navigate('AdminDiscussionReview'),
-          },
-          {
-            title: 'Lesson Discussion Reports',
-            lines: [`Open reports : ${openDiscussionReports ?? '—'}`],
-            hint: 'Dismiss or remove learner-flagged board posts',
-            onPress: () => navigation.navigate('AdminCommunityReports'),
-          },
-          {
-            title: 'Practice Suggestions',
-            lines: ['Curate “From the community” on Practice (7 per day, tied to Word of the Day)'],
-            hint: 'Pick sentences that use today’s WOTD — learners see your picks first',
-            onPress: () => navigation.navigate('AdminPracticeSuggestions'),
-          },
-        ]}
-      />
-
-      <HubSection
-        sectionKey="analytics"
-        title="Analytics"
-        subtitle="Product health, user insights, and support lookups"
-        badge={usersTotal != null ? `${usersTotal} users` : null}
-        expanded={Boolean(expandedSections.analytics)}
-        onToggle={toggleSection}
-        tiles={[
-          {
-            title: 'Analytics',
-            lines: [`Total Users : ${usersTotal ?? '—'}`],
-            hint: 'Dashboards, retention, waitlist, and Gemini Q&A (up to 10k events)',
-            onPress: () => navigation.navigate('AdminAnalytics'),
-          },
-          {
-            title: 'Free access',
-            lines: [`Complimentary Premium : ${freeAccessCount ?? '—'}`],
-            hint: 'Audit complimentary Premium grants · search by phone',
-            onPress: () => navigation.navigate('AdminFreeAccess'),
-          },
-        ]}
-      />
+      {HOME_SECTION_ORDER.map((section) => (
+        <SectionCard
+          key={section}
+          section={section}
+          counts={counts}
+          usersThisWeek={usersThisWeek}
+          funnel={funnel}
+          seriesPipeline={seriesPipeline}
+          onPress={() => {
+            if (section === 'analytics') {
+              navigation.navigate('AdminAnalytics')
+              return
+            }
+            navigation.navigate('AdminHubSection', { section })
+          }}
+        />
+      ))}
     </ScrollView>
   )
 }
@@ -341,7 +386,7 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
     paddingBottom: 40,
-    gap: 8,
+    gap: 12,
   },
   centered: {
     flex: 1,
@@ -368,15 +413,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     fontSize: 14,
   },
-  hubSection: {
-    marginBottom: 14,
-    gap: 10,
-  },
-  hubHeaderButton: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 12,
+  sectionCard: {
     backgroundColor: '#141414',
     borderRadius: 16,
     borderWidth: 1,
@@ -384,69 +421,82 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 16,
   },
-  hubHeaderButtonPressed: {
+  sectionCardPressed: {
     opacity: 0.9,
   },
-  hubHeaderText: {
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  sectionHeaderText: {
     flex: 1,
     minWidth: 0,
   },
-  hubTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  hubTitle: {
+  sectionTitle: {
     color: '#ffffff',
     fontSize: 13,
     fontWeight: '700',
     letterSpacing: 1.1,
     textTransform: 'uppercase',
   },
-  hubChevron: {
-    color: ADMIN_ACCENT_GOLD,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  hubSubtitle: {
+  sectionSubtitle: {
     color: '#8e8e93',
     fontSize: 13,
     lineHeight: 18,
     marginTop: 4,
   },
-  hubBadge: {
+  sectionChevron: {
+    color: ADMIN_ACCENT_GOLD,
+    fontSize: 28,
+    fontWeight: '300',
+    lineHeight: 28,
+    marginTop: -2,
+  },
+  sectionBadge: {
     color: '#fbbf24',
     fontSize: 12,
     fontWeight: '700',
-    marginTop: 2,
+    marginTop: 12,
   },
-  tile: {
+  seriesPipeline: {
+    marginTop: 14,
+  },
+  analyticsMetrics: {
+    marginTop: 14,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  metricCard: {
+    flex: 1,
     backgroundColor: '#1c1c1e',
-    borderRadius: 18,
-    paddingVertical: 18,
-    paddingHorizontal: 20,
-    marginBottom: 0,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
   },
-  tilePressed: {
-    opacity: 0.92,
+  metricCardLabel: {
+    fontSize: 11,
+    color: '#888888',
+    marginBottom: 4,
   },
-  tileTitle: {
-    color: ADMIN_ACCENT_GOLD,
-    fontSize: 18,
+  metricCardValue: {
+    fontSize: 22,
     fontWeight: '700',
+    color: '#fff',
+    lineHeight: 26,
   },
-  recordedLine: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '400',
-    marginTop: 10,
-    lineHeight: 20,
+  metricCardDelta: {
+    fontSize: 11,
+    marginTop: 4,
+    fontWeight: '600',
   },
-  tileHint: {
-    color: '#8e8e93',
-    fontSize: 13,
-    fontWeight: '400',
-    marginTop: 8,
-    lineHeight: 18,
+  metricCardDeltaMuted: {
+    fontSize: 11,
+    marginTop: 4,
+    fontWeight: '500',
+    color: '#6b7280',
+  },
+  metricCardValueAttention: {
+    color: '#fbbf24',
   },
 })

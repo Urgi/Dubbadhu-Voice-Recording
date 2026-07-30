@@ -16,6 +16,7 @@ import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfig
 import {
   fetchFreeAccessUsers,
   findUserByPhone,
+  freeAccessDisplayName,
   grantFreeAccess,
   revokeFreeAccess,
   type FreeAccessUserRow,
@@ -23,12 +24,6 @@ import {
 import type { RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminFreeAccess'>
-
-function displayName(row: FreeAccessUserRow): string {
-  const parts = [row.first_name, row.last_name].filter(Boolean)
-  if (parts.length) return parts.join(' ')
-  return row.phone ?? row.id.slice(0, 8)
-}
 
 export default function AdminFreeAccessScreen({ navigation }: Props) {
   const [rows, setRows] = useState<FreeAccessUserRow[]>([])
@@ -136,7 +131,7 @@ export default function AdminFreeAccessScreen({ navigation }: Props) {
     (row: FreeAccessUserRow) => {
       Alert.alert(
         'Revoke free access?',
-        `Remove complimentary Premium for ${displayName(row)}?`,
+        `Remove complimentary Premium for ${freeAccessDisplayName(row)}?`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -203,7 +198,7 @@ export default function AdminFreeAccessScreen({ navigation }: Props) {
 
       {foundUser ? (
         <View style={styles.foundCard}>
-          <Text style={styles.foundTitle}>{displayName(foundUser)}</Text>
+          <Text style={styles.foundTitle}>{freeAccessDisplayName(foundUser)}</Text>
           <Text style={styles.foundMeta}>{foundUser.phone ?? '—'}</Text>
           <Text style={styles.foundMeta}>
             isPremium: {String(foundUser.isPremium)} · ppid:{' '}
@@ -226,7 +221,7 @@ export default function AdminFreeAccessScreen({ navigation }: Props) {
       ) : (
         rows.map((row) => (
           <View key={row.id} style={styles.rowCard}>
-            <Text style={styles.rowName}>{displayName(row)}</Text>
+            <Text style={styles.rowName}>{freeAccessDisplayName(row)}</Text>
             <Text style={styles.rowMeta}>{row.phone ?? row.id}</Text>
             <Pressable
               style={({ pressed }) => [styles.revokeBtn, pressed && styles.btnPressed]}

@@ -12,6 +12,12 @@ export type FreeAccessUserRow = {
   created_at: string
 }
 
+export function freeAccessDisplayName(row: FreeAccessUserRow): string {
+  const parts = [row.first_name, row.last_name].filter(Boolean)
+  if (parts.length) return parts.join(' ')
+  return row.phone ?? row.id.slice(0, 8)
+}
+
 /** Search candidates for `users.phone` (E.164 and common US variants). */
 export function phoneLookupVariants(input: string): string[] {
   const raw = String(input || '').trim()

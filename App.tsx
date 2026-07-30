@@ -7,9 +7,11 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import LoginScreen from './src/screens/LoginScreen'
 import ProfessorHomeScreen from './src/screens/ProfessorHomeScreen'
 import AdminHomeScreen from './src/screens/AdminHomeScreen'
+import AdminHubSectionScreen from './src/screens/AdminHubSectionScreen'
 import AdminAnalyticsScreen from './src/screens/AdminAnalyticsScreen'
 import AdminFreeAccessScreen from './src/screens/AdminFreeAccessScreen'
 import AdminUsersScreen from './src/screens/AdminUsersScreen'
+import AdminUserTimelineScreen from './src/screens/AdminUserTimelineScreen'
 import AdminPracticeSuggestionsScreen from './src/screens/AdminPracticeSuggestionsScreen'
 import AdminCommunityReportsScreen from './src/screens/AdminCommunityReportsScreen'
 import AdminDiscussionReviewScreen from './src/screens/AdminDiscussionReviewScreen'
@@ -62,6 +64,7 @@ function AppStack() {
         <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />
         <Stack.Screen name="ProfessorHome" component={ProfessorHomeScreen} />
         <Stack.Screen name="AdminHome" component={AdminHomeScreen} options={{ title: 'Admin Control Center' }} />
+        <Stack.Screen name="AdminHubSection" component={AdminHubSectionScreen} />
         <Stack.Screen name="LessonConfig" component={LessonConfigScreen} options={{ title: 'Series Config' }} />
         <Stack.Screen name="LessonConfigSeries" component={LessonConfigSeriesScreen} />
         <Stack.Screen
@@ -77,6 +80,11 @@ function AppStack() {
           name="AdminUsers"
           component={AdminUsersScreen}
           options={{ title: 'Registered users' }}
+        />
+        <Stack.Screen
+          name="AdminUserTimeline"
+          component={AdminUserTimelineScreen}
+          options={{ title: 'User timeline' }}
         />
         <Stack.Screen
           name="AdminFreeAccess"

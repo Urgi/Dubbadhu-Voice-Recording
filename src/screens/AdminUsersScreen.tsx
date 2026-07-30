@@ -2,6 +2,7 @@ import { useFocusEffect } from '@react-navigation/native'
 import { useCallback, useLayoutEffect, useState } from 'react'
 import {
   ActivityIndicator,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -11,15 +12,17 @@ import {
 import type { StackScreenProps } from '@react-navigation/stack'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
 import {
+  fetchActiveUsersToday,
   fetchRegisteredUsers,
   registeredUserDisplayName,
+  userRowToTimelineParams,
   type AdminRegisteredUserRow,
 } from '../lib/adminUsers'
 import type { RootStackParamList } from '../types'
 
 type Props = StackScreenProps<RootStackParamList, 'AdminUsers'>
 
-function formatLastLogin(value: string | null): string {
+function formatLastLogin(value: string | null | undefined): string {
   if (!value) return '—'
   // DATE comes as YYYY-MM-DD; keep short and readable.
   const trimmed = String(value).slice(0, 10)
@@ -28,9 +31,34 @@ function formatLastLogin(value: string | null): string {
   return `${m}/${d}/${y}`
 }
 
-function UserRow({ row }: { row: AdminRegisteredUserRow }) {
+function formatLastEventAt(value: string | null | undefined): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return String(value).slice(0, 16)
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function UserRow({
+  row,
+  showLastEvent,
+  onPress,
+}: {
+  row: AdminRegisteredUserRow
+  showLastEvent: boolean
+  onPress: () => void
+}) {
   return (
-    <View style={styles.row}>
+    <Pressable
+      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Open timeline for ${registeredUserDisplayName(row)}`}
+    >
       <View style={styles.rowMain}>
         <Text style={styles.name} numberOfLines={1}>
           {registeredUserDisplayName(row)}
@@ -51,15 +79,23 @@ function UserRow({ row }: { row: AdminRegisteredUserRow }) {
           <Text style={styles.statLabel}>Top</Text>
         </View>
         <View style={[styles.stat, styles.statWide]}>
-          <Text style={styles.statValue}>{formatLastLogin(row.last_activity_date)}</Text>
-          <Text style={styles.statLabel}>Last login</Text>
+          <Text style={styles.statValue}>
+            {showLastEvent
+              ? formatLastEventAt(row.last_event_at)
+              : formatLastLogin(row.last_activity_date)}
+          </Text>
+          <Text style={styles.statLabel}>{showLastEvent ? 'Last active' : 'Last login'}</Text>
         </View>
       </View>
-    </View>
+      <Text style={styles.timelineHint}>Tap for signup → lesson timeline</Text>
+    </Pressable>
   )
 }
 
-export default function AdminUsersScreen({ navigation }: Props) {
+export default function AdminUsersScreen({ navigation, route }: Props) {
+  const mode = route.params?.mode === 'activeToday' ? 'activeToday' : 'registered'
+  const isActiveToday = mode === 'activeToday'
+
   const [rows, setRows] = useState<AdminRegisteredUserRow[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -67,14 +103,14 @@ export default function AdminUsersScreen({ navigation }: Props) {
 
   const loadList = useCallback(async () => {
     setError('')
-    const { data, error: err } = await fetchRegisteredUsers()
-    if (err) {
-      setError(err)
+    const result = isActiveToday ? await fetchActiveUsersToday(10) : await fetchRegisteredUsers()
+    if (result.error) {
+      setError(result.error)
       setRows([])
     } else {
-      setRows(data ?? [])
+      setRows(result.data ?? [])
     }
-  }, [])
+  }, [isActiveToday])
 
   useFocusEffect(
     useCallback(() => {
@@ -98,12 +134,12 @@ export default function AdminUsersScreen({ navigation }: Props) {
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: 'Registered users',
+      title: isActiveToday ? 'Active today' : 'Registered users',
       headerStyle: { backgroundColor: '#000000' },
       headerTitleStyle: { fontSize: 15, fontWeight: '700', color: '#ffffff' },
       headerTintColor: '#ffffff',
     })
-  }, [navigation])
+  }, [navigation, isActiveToday])
 
   if (loading) {
     return (
@@ -122,14 +158,27 @@ export default function AdminUsersScreen({ navigation }: Props) {
       }
     >
       <Text style={styles.lead}>
-        Name, streak, top streak, and last login (users.last_activity_date). Newest first.
+        {isActiveToday
+          ? 'Users with analytics activity today (Pacific). Most recent first, max 10. Tap a user for their lesson timeline.'
+          : 'Name, streak, top streak, and last login. Newest first. Tap a user for their lesson timeline.'}
       </Text>
       {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
       <Text style={styles.count}>{rows.length} shown</Text>
       {rows.length === 0 && !error ? (
-        <Text style={styles.empty}>No registered users found.</Text>
+        <Text style={styles.empty}>
+          {isActiveToday ? 'No active users today yet.' : 'No registered users found.'}
+        </Text>
       ) : (
-        rows.map((row) => <UserRow key={row.id} row={row} />)
+        rows.map((row) => (
+          <UserRow
+            key={row.id}
+            row={row}
+            showLastEvent={isActiveToday}
+            onPress={() =>
+              navigation.navigate('AdminUserTimeline', { user: userRowToTimelineParams(row) })
+            }
+          />
+        ))
       )}
     </ScrollView>
   )
@@ -183,6 +232,9 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 10,
   },
+  rowPressed: {
+    opacity: 0.88,
+  },
   rowMain: {
     gap: 2,
   },
@@ -222,5 +274,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.4,
+  },
+  timelineHint: {
+    color: '#6b7280',
+    fontSize: 11,
+    fontWeight: '500',
   },
 })

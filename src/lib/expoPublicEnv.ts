@@ -49,6 +49,13 @@ export function getExpoPublicVocabBatchSecret(): string {
   return (
     process.env.EXPO_PUBLIC_VOCAB_BATCH_SECRET ||
     fromExtra(Constants.expoConfig?.extra as Extra, 'EXPO_PUBLIC_VOCAB_BATCH_SECRET') ||
+    process.env.VOCAB_BATCH_SECRET ||
+    fromExtra(Constants.expoConfig?.extra as Extra, 'VOCAB_BATCH_SECRET') ||
     ''
   )
+}
+
+/** @deprecated Prefer getExpoPublicVocabBatchSecret — kept for call sites. */
+export function getVocabBatchSecret(): string {
+  return getExpoPublicVocabBatchSecret()
 }

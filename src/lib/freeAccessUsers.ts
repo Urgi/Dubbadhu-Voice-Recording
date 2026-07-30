@@ -66,55 +66,77 @@ type GrantApiResult =
   | { ok: false; needsConfirm: true; user: FreeAccessUserRow; message: string }
 
 async function invokeAdminGrantPremium(body: Record<string, unknown>): Promise<GrantApiResult> {
-  const secret = getVocabBatchSecret()
+  const secret = getVocabBatchSecret().trim()
   if (!secret) {
-    return { ok: false, error: 'Missing EXPO_PUBLIC_VOCAB_BATCH_SECRET (or VOCAB_BATCH_SECRET) in admin .env' }
-  }
-
-  const { data, error } = await supabase.functions.invoke('admin-grant-premium', {
-    body,
-    headers: { 'x-admin-premium-secret': secret },
-  })
-
-  if (error) {
-    return { ok: false, error: error.message || 'invoke_failed' }
-  }
-
-  const payload = data as {
-    ok?: boolean
-    needs_confirm?: boolean
-    message?: string
-    error?: string
-    user_id?: string
-  }
-
-  if (payload?.needs_confirm) {
     return {
       ok: false,
-      needsConfirm: true,
-      user: {
-        id: payload.user_id ?? '',
-        phone: null,
-        first_name: null,
-        last_name: null,
-        isPremium: true,
-        premium_product_id: null,
-        premium_source: 'store',
-        created_at: '',
-      },
-      message: payload.message ?? 'User has a store product id.',
+      error:
+        'Missing VOCAB_BATCH_SECRET (or EXPO_PUBLIC_VOCAB_BATCH_SECRET) in admin .env — restart Expo after setting it.',
     }
   }
 
-  if (payload?.error) {
-    return { ok: false, error: payload.error }
-  }
+  try {
+    const { data, error } = await supabase.functions.invoke('admin-grant-premium', {
+      body,
+      headers: { 'x-admin-premium-secret': secret },
+    })
 
-  if (payload?.ok) {
-    return { ok: true }
-  }
+    // Non-2xx: FunctionsHttpError — body may still be on error.context
+    let payload = data as {
+      ok?: boolean
+      needs_confirm?: boolean
+      message?: string
+      error?: string
+      user_id?: string
+    } | null
 
-  return { ok: false, error: 'unknown_response' }
+    if (error) {
+      const ctx = error as { context?: Response; message?: string }
+      if (ctx.context && typeof ctx.context.json === 'function') {
+        try {
+          payload = (await ctx.context.json()) as typeof payload
+        } catch {
+          /* keep payload null */
+        }
+      }
+      if (!payload?.needs_confirm && !payload?.error && !payload?.ok) {
+        return { ok: false, error: error.message || 'invoke_failed' }
+      }
+    }
+
+    if (payload?.needs_confirm) {
+      return {
+        ok: false,
+        needsConfirm: true,
+        user: {
+          id: payload.user_id ?? '',
+          phone: null,
+          first_name: null,
+          last_name: null,
+          isPremium: true,
+          premium_product_id: null,
+          premium_source: 'store',
+          created_at: '',
+        },
+        message: payload.message ?? 'User has a store product id.',
+      }
+    }
+
+    if (payload?.error) {
+      return { ok: false, error: payload.error }
+    }
+
+    if (payload?.ok) {
+      return { ok: true }
+    }
+
+    return { ok: false, error: 'unknown_response' }
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'grant_invoke_exception',
+    }
+  }
 }
 
 export async function grantFreeAccess(

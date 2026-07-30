@@ -33,6 +33,7 @@ export default function AdminFreeAccessScreen({ navigation }: Props) {
   const [phoneQuery, setPhoneQuery] = useState('')
   const [searchBusy, setSearchBusy] = useState(false)
   const [foundUser, setFoundUser] = useState<FreeAccessUserRow | null>(null)
+  const [grantBusy, setGrantBusy] = useState(false)
 
   const loadList = useCallback(async () => {
     setError('')
@@ -76,26 +77,36 @@ export default function AdminFreeAccessScreen({ navigation }: Props) {
 
   const runGrant = useCallback(
     async (userId: string, forceClearProductId: boolean) => {
-      const result = await grantFreeAccess(userId, { forceClearProductId })
-      if (result.ok) {
-        Alert.alert('Done', 'Free access granted (isPremium true, no product id).')
-        setFoundUser(null)
-        setPhoneQuery('')
-        await loadList()
-        return
+      setGrantBusy(true)
+      try {
+        const result = await grantFreeAccess(userId, { forceClearProductId })
+        if (result.ok) {
+          Alert.alert('Done', 'Free access granted (isPremium true, no product id).')
+          setFoundUser(null)
+          setPhoneQuery('')
+          await loadList()
+          return
+        }
+        if ('needsConfirm' in result && result.needsConfirm) {
+          Alert.alert('Store subscription on file', result.message, [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Grant anyway',
+              style: 'destructive',
+              onPress: () => void runGrant(userId, true),
+            },
+          ])
+          return
+        }
+        Alert.alert('Could not grant', 'error' in result ? result.error : 'Unknown error')
+      } catch (e) {
+        Alert.alert(
+          'Could not grant',
+          e instanceof Error ? e.message : 'Unexpected error',
+        )
+      } finally {
+        setGrantBusy(false)
       }
-      if ('needsConfirm' in result && result.needsConfirm) {
-        Alert.alert('Store subscription on file', result.message, [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Grant anyway',
-            style: 'destructive',
-            onPress: () => void runGrant(userId, true),
-          },
-        ])
-        return
-      }
-      Alert.alert('Could not grant', 'error' in result ? result.error : 'Unknown error')
     },
     [loadList],
   )
@@ -205,10 +216,18 @@ export default function AdminFreeAccessScreen({ navigation }: Props) {
             {foundUser.premium_product_id ?? '(null)'}
           </Text>
           <Pressable
-            style={({ pressed }) => [styles.primaryBtn, pressed && styles.btnPressed]}
+            style={({ pressed }) => [
+              styles.primaryBtn,
+              (pressed || grantBusy) && styles.btnPressed,
+            ]}
             onPress={onGrantFound}
+            disabled={grantBusy}
           >
-            <Text style={styles.primaryBtnText}>Grant free access</Text>
+            {grantBusy ? (
+              <ActivityIndicator color="#000" />
+            ) : (
+              <Text style={styles.primaryBtnText}>Grant free access</Text>
+            )}
           </Pressable>
         </View>
       ) : null}

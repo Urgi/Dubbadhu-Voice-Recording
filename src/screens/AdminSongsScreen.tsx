@@ -34,16 +34,13 @@ type SongRow = {
   updated_at?: string
 }
 
-type SongDraft = {
-  id?: string
-  language: 'oromo' | 'amharic'
-  type: string
+type RecRow = {
+  id: string
+  language: string
   title: string
-  artist: string
   youtube_url: string
-  description: string
-  phrasesText: string
-  is_published: boolean
+  status: string
+  created_at: string
 }
 
 const LANGS: Array<'oromo' | 'amharic'> = ['oromo', 'amharic']
@@ -96,6 +93,7 @@ export default function AdminSongsScreen({ navigation }: Props) {
   const [error, setError] = useState('')
   const [editorOpen, setEditorOpen] = useState(false)
   const [draft, setDraft] = useState<SongDraft>(() => emptyDraft('oromo'))
+  const [recs, setRecs] = useState<RecRow[]>([])
 
   const load = useCallback(async () => {
     setError('')
@@ -110,9 +108,17 @@ export default function AdminSongsScreen({ navigation }: Props) {
     if (err) {
       setError(err.message)
       setRows([])
-      return
+    } else {
+      setRows((data || []) as SongRow[])
     }
-    setRows((data || []) as SongRow[])
+
+    const { data: recData } = await supabase
+      .from('song_recommendations')
+      .select('id, language, title, youtube_url, status, created_at')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .limit(40)
+    setRecs((recData || []) as RecRow[])
   }, [language])
 
   useFocusEffect(
@@ -287,6 +293,51 @@ export default function AdminSongsScreen({ navigation }: Props) {
             Store YouTube links only. Thumbnails are derived in the learner app. Reorder with ↑↓.
             Saving bumps updated_at (Home yellow-dot).
           </Text>
+          {recs.length > 0 ? (
+            <View style={styles.recsBlock}>
+              <Text style={styles.recsTitle}>Pending recommendations ({recs.length})</Text>
+              {recs.map((rec) => (
+                <View key={rec.id} style={styles.recCard}>
+                  <Text style={styles.cardTitle}>{rec.title}</Text>
+                  <Text style={styles.cardMeta}>
+                    {rec.language} · {new Date(rec.created_at).toLocaleDateString()}
+                  </Text>
+                  <Text style={styles.cardUrl} numberOfLines={2}>
+                    {rec.youtube_url}
+                  </Text>
+                  <View style={styles.cardActions}>
+                    <Pressable
+                      onPress={() => {
+                        setDraft({
+                          ...emptyDraft(
+                            rec.language === 'amharic' ? 'amharic' : 'oromo',
+                          ),
+                          title: rec.title,
+                          youtube_url: rec.youtube_url,
+                        })
+                        setEditorOpen(true)
+                      }}
+                    >
+                      <Text style={styles.action}>Add as song</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        void (async () => {
+                          await supabase
+                            .from('song_recommendations')
+                            .update({ status: 'rejected' })
+                            .eq('id', rec.id)
+                          await load()
+                        })()
+                      }}
+                    >
+                      <Text style={[styles.action, styles.actionDanger]}>Dismiss</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : null}
           {rows.length === 0 ? (
             <Text style={styles.empty}>No songs yet for this language. Tap Add.</Text>
           ) : null}
@@ -438,6 +489,21 @@ const styles = StyleSheet.create({
   langChipText: { color: '#aaa', fontWeight: '600' },
   langChipTextOn: { color: ADMIN_ACCENT_GOLD },
   hint: { color: '#888', fontSize: 12, marginBottom: 12, lineHeight: 17 },
+  recsBlock: { marginBottom: 18 },
+  recsTitle: {
+    color: ADMIN_ACCENT_GOLD,
+    fontWeight: '800',
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  recCard: {
+    backgroundColor: '#1a1510',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(212,164,55,0.35)',
+    padding: 14,
+    marginBottom: 10,
+  },
   empty: { color: '#777', marginTop: 20 },
   error: { color: '#f87171', paddingHorizontal: 16, marginTop: 8 },
   card: {

@@ -30,6 +30,7 @@ export type HubTileConfig = {
     | 'AdminSongs'
     | 'AdminPromo'
     | 'AdminBroadcastPush'
+    | 'AdminForceUpgrade'
     | 'AdminDiscussionReview'
     | 'AdminCommunityReports'
     | 'AdminPracticeSuggestions'
@@ -86,6 +87,12 @@ export function buildSectionTiles(
         lines: [`Total Users : ${counts.usersTotal ?? '—'}`],
         hint: 'Dashboards, retention, waitlist, and Gemini Q&A (up to 10k events)',
         route: 'AdminAnalytics',
+      },
+      {
+        title: 'Force upgrade',
+        lines: ['Block old learner builds until they update'],
+        hint: 'Set min iOS/Android marketing versions after a breaking schema change',
+        route: 'AdminForceUpgrade',
       },
     ]
   }

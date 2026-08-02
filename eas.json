@@ -25,6 +25,19 @@
         "image": "macos-sequoia-15.6-xcode-26.2"
       }
     },
+    "staging": {
+      "distribution": "internal",
+      "channel": "staging",
+      "env": {
+        "EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP": "1",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://mdcphwigibyiiyjgcnyl.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kY3Bod2lnaWJ5aWl5amdjbnlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2OTUwNjAsImV4cCI6MjEwMTI3MTA2MH0.NoOdnQLOHaBTjySPV73-LcjWFmmb7ZScdgytzOqixW0"
+      },
+      "ios": {
+        "simulator": false,
+        "image": "macos-sequoia-15.6-xcode-26.2"
+      }
+    },
     "production": {
       "autoIncrement": true,
       "env": {

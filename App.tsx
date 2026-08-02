@@ -18,6 +18,7 @@ import AdminDiscussionReviewScreen from './src/screens/AdminDiscussionReviewScre
 import AdminSongsScreen from './src/screens/AdminSongsScreen'
 import AdminPromoScreen from './src/screens/AdminPromoScreen'
 import AdminBroadcastPushScreen from './src/screens/AdminBroadcastPushScreen'
+import AdminForceUpgradeScreen from './src/screens/AdminForceUpgradeScreen'
 import AdminSeriesListScreen from './src/screens/AdminSeriesListScreen'
 import AdminSeriesDetailScreen from './src/screens/AdminSeriesDetailScreen'
 import AdminAudioReviewScreen from './src/screens/AdminAudioReviewScreen'
@@ -122,6 +123,11 @@ function AppStack() {
           name="AdminBroadcastPush"
           component={AdminBroadcastPushScreen}
           options={{ title: 'Push broadcast' }}
+        />
+        <Stack.Screen
+          name="AdminForceUpgrade"
+          component={AdminForceUpgradeScreen}
+          options={{ title: 'Force upgrade' }}
         />
         <Stack.Screen name="AdminSeriesList" component={AdminSeriesListScreen} options={{ title: 'Voice Recording' }} />
         <Stack.Screen name="AdminSeriesDetail" component={AdminSeriesDetailScreen} />

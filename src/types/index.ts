@@ -60,6 +60,8 @@ export type RootStackParamList = {
   AdminPromo: undefined
   /** Global Expo push to all registered learner tokens. */
   AdminBroadcastPush: undefined
+  /** Force-upgrade min iOS/Android marketing versions. */
+  AdminForceUpgrade: undefined
   LessonConfig: undefined
   LessonConfigSeries: { seriesId: string }
   LessonConfigDetail: {

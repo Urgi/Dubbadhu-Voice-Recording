@@ -180,7 +180,11 @@ export default function AdminFreeAccessScreen({ navigation }: Props) {
     (row: PendingIdentityUserRow) => {
       Alert.alert(
         'Mark verified?',
-        `${freeAccessDisplayName(row)} — ${row.identity_verify_channel ?? 'messenger'} · ${row.phone ?? ''}`,
+        `${freeAccessDisplayName(row)} — ${row.identity_verify_channel ?? 'messenger'} · ${row.phone ?? ''}${
+          row.identity_telegram_username
+            ? ` · @${row.identity_telegram_username}`
+            : ''
+        }`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -268,8 +272,11 @@ export default function AdminFreeAccessScreen({ navigation }: Props) {
               {row.phone ?? '—'} · {row.email ?? 'no email'}
             </Text>
             <Text style={styles.rowMeta}>
-              via {row.identity_verify_channel ?? '?'} · lessons {row.lessons_completed} ·
-              premium {String(row.isPremium)}
+              via {row.identity_verify_channel ?? '?'}
+              {row.identity_telegram_username
+                ? ` · @${row.identity_telegram_username}`
+                : ''}{' '}
+              · lessons {row.lessons_completed} · premium {String(row.isPremium)}
             </Text>
             <View style={styles.rowActions}>
               <Pressable

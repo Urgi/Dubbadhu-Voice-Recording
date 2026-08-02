@@ -25,6 +25,7 @@ export type PendingIdentityUserRow = {
   isPremium: boolean
   identity_verify_channel: string | null
   identity_verify_status: string | null
+  identity_telegram_username?: string | null
   lessons_completed: number
   created_at: string
 }

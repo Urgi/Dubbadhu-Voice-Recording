@@ -28,6 +28,8 @@ export type HubTileConfig = {
     | 'QubeeLettersHub'
     | 'FidelLettersHub'
     | 'AdminSongs'
+    | 'AdminPromo'
+    | 'AdminBroadcastPush'
     | 'AdminDiscussionReview'
     | 'AdminCommunityReports'
     | 'AdminPracticeSuggestions'
@@ -127,6 +129,18 @@ export function buildSectionTiles(
         lines: ['YouTube catalog for Home → Songs (Oromo + Amharic)'],
         hint: 'Add, edit, reorder, publish — learner app derives thumbnails',
         route: 'AdminSongs',
+      },
+      {
+        title: 'App promo',
+        lines: ['Login popup — image, title, body, optional tab/tile CTA'],
+        hint: 'Activate one promo for learners to see once after sign-in',
+        route: 'AdminPromo',
+      },
+      {
+        title: 'Push broadcast',
+        lines: ['Send a push notification to all learners with tokens'],
+        hint: 'Title + body + optional open-on-tap destination',
+        route: 'AdminBroadcastPush',
       },
       {
         title: 'Free access',

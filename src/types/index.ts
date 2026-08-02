@@ -56,6 +56,10 @@ export type RootStackParamList = {
   AdminDiscussionReview: undefined
   /** Home Music catalog (YouTube links + phrases). */
   AdminSongs: undefined
+  /** In-app login promo modal (image + title + body + optional CTA). */
+  AdminPromo: undefined
+  /** Global Expo push to all registered learner tokens. */
+  AdminBroadcastPush: undefined
   LessonConfig: undefined
   LessonConfigSeries: { seriesId: string }
   LessonConfigDetail: {

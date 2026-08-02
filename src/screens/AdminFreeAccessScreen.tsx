@@ -15,11 +15,15 @@ import type { StackScreenProps } from '@react-navigation/stack'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
 import {
   fetchFreeAccessUsers,
+  fetchPendingIdentityUsers,
   findUserByPhone,
   freeAccessDisplayName,
   grantFreeAccess,
+  rejectIdentity,
   revokeFreeAccess,
+  verifyIdentity,
   type FreeAccessUserRow,
+  type PendingIdentityUserRow,
 } from '../lib/freeAccessUsers'
 import type { RootStackParamList } from '../types'
 
@@ -27,6 +31,7 @@ type Props = StackScreenProps<RootStackParamList, 'AdminFreeAccess'>
 
 export default function AdminFreeAccessScreen({ navigation }: Props) {
   const [rows, setRows] = useState<FreeAccessUserRow[]>([])
+  const [pendingIdentity, setPendingIdentity] = useState<PendingIdentityUserRow[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
@@ -37,12 +42,21 @@ export default function AdminFreeAccessScreen({ navigation }: Props) {
 
   const loadList = useCallback(async () => {
     setError('')
-    const { data, error: err } = await fetchFreeAccessUsers()
-    if (err) {
-      setError(err)
+    const [free, pending] = await Promise.all([
+      fetchFreeAccessUsers(),
+      fetchPendingIdentityUsers(),
+    ])
+    if (free.error) {
+      setError(free.error)
       setRows([])
     } else {
-      setRows(data ?? [])
+      setRows(free.data ?? [])
+    }
+    if (pending.error) {
+      setError((prev) => prev || pending.error || '')
+      setPendingIdentity([])
+    } else {
+      setPendingIdentity(pending.data ?? [])
     }
   }, [])
 
@@ -162,6 +176,62 @@ export default function AdminFreeAccessScreen({ navigation }: Props) {
     [loadList],
   )
 
+  const onVerifyIdentity = useCallback(
+    (row: PendingIdentityUserRow) => {
+      Alert.alert(
+        'Mark verified?',
+        `${freeAccessDisplayName(row)} — ${row.identity_verify_channel ?? 'messenger'} · ${row.phone ?? ''}`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Verified',
+            onPress: () => {
+              void (async () => {
+                const { ok, error: err } = await verifyIdentity(row.id)
+                if (!ok) Alert.alert('Failed', err ?? 'Unknown error')
+                else {
+                  Alert.alert(
+                    'Verified',
+                    'Identity verified — Ethiopia lesson access granted (practice tokens still apply).',
+                  )
+                  await loadList()
+                }
+              })()
+            },
+          },
+        ],
+      )
+    },
+    [loadList],
+  )
+
+  const onRejectIdentity = useCallback(
+    (row: PendingIdentityUserRow) => {
+      Alert.alert(
+        'Reject identity?',
+        `This sets Premium off, clamps lessons_completed to at most 1, and marks status rejected for ${freeAccessDisplayName(row)}.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Reject & restrict',
+            style: 'destructive',
+            onPress: () => {
+              void (async () => {
+                const { ok, error: err } = await rejectIdentity(row.id)
+                if (!ok) Alert.alert('Failed', err ?? 'Unknown error')
+                else {
+                  Alert.alert('Restricted', 'Account flagged rejected; free-tier only.')
+                  await loadList()
+                }
+              })()
+            },
+          },
+        ],
+      )
+    },
+    [loadList],
+  )
+
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -180,11 +250,46 @@ export default function AdminFreeAccessScreen({ navigation }: Props) {
     >
       <Text style={styles.lead}>
         Complimentary Premium: isPremium true and premium_product_id empty (learner app will not
-        client-downgrade these users).
+        client-downgrade these users). Rejected ET identity checks strip Premium and clamp progress
+        to free-tier (≤1 lesson).
       </Text>
       {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
 
-      <Text style={styles.sectionTitle}>Add by phone</Text>
+      <Text style={styles.sectionTitle}>
+        Pending identity ({pendingIdentity.length})
+      </Text>
+      {pendingIdentity.length === 0 ? (
+        <Text style={styles.empty}>No pending WhatsApp/Telegram reviews.</Text>
+      ) : (
+        pendingIdentity.map((row) => (
+          <View key={row.id} style={styles.rowCard}>
+            <Text style={styles.rowName}>{freeAccessDisplayName(row)}</Text>
+            <Text style={styles.rowMeta}>
+              {row.phone ?? '—'} · {row.email ?? 'no email'}
+            </Text>
+            <Text style={styles.rowMeta}>
+              via {row.identity_verify_channel ?? '?'} · lessons {row.lessons_completed} ·
+              premium {String(row.isPremium)}
+            </Text>
+            <View style={styles.rowActions}>
+              <Pressable
+                style={({ pressed }) => [styles.verifyBtn, pressed && styles.btnPressed]}
+                onPress={() => onVerifyIdentity(row)}
+              >
+                <Text style={styles.verifyBtnText}>Verified</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.revokeBtn, pressed && styles.btnPressed]}
+                onPress={() => onRejectIdentity(row)}
+              >
+                <Text style={styles.revokeBtnText}>Reject</Text>
+              </Pressable>
+            </View>
+          </View>
+        ))
+      )}
+
+      <Text style={[styles.sectionTitle, styles.sectionTitleSpaced]}>Add by phone</Text>
       <TextInput
         style={styles.input}
         placeholder="Phone (e.g. +16025551234)"
@@ -313,7 +418,16 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   rowName: { color: '#ffffff', fontSize: 16, fontWeight: '600' },
-  rowMeta: { color: '#8e8e93', fontSize: 13, marginTop: 4, marginBottom: 10 },
+  rowMeta: { color: '#8e8e93', fontSize: 13, marginTop: 4, marginBottom: 4 },
+  rowActions: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  verifyBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4ade80',
+  },
+  verifyBtnText: { color: '#4ade80', fontSize: 14, fontWeight: '600' },
   revokeBtn: {
     alignSelf: 'flex-start',
     paddingVertical: 8,

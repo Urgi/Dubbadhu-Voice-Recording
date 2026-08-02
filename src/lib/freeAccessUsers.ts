@@ -10,9 +10,31 @@ export type FreeAccessUserRow = {
   premium_product_id: string | null
   premium_source: string | null
   created_at: string
+  email?: string | null
+  identity_verify_channel?: string | null
+  identity_verify_status?: string | null
+  lessons_completed?: number | null
 }
 
-export function freeAccessDisplayName(row: FreeAccessUserRow): string {
+export type PendingIdentityUserRow = {
+  id: string
+  phone: string | null
+  email: string | null
+  first_name: string | null
+  last_name: string | null
+  isPremium: boolean
+  identity_verify_channel: string | null
+  identity_verify_status: string | null
+  lessons_completed: number
+  created_at: string
+}
+
+export function freeAccessDisplayName(row: {
+  id: string
+  phone?: string | null
+  first_name?: string | null
+  last_name?: string | null
+}): string {
   const parts = [row.first_name, row.last_name].filter(Boolean)
   if (parts.length) return parts.join(' ')
   return row.phone ?? row.id.slice(0, 8)
@@ -174,4 +196,44 @@ export async function revokeFreeAccess(userId: string): Promise<{ ok: boolean; e
   })
   if (result.ok) return { ok: true, error: null }
   return { ok: false, error: 'error' in result ? result.error : 'revoke_failed' }
+}
+
+export async function fetchPendingIdentityUsers(limit = 80): Promise<{
+  data: PendingIdentityUserRow[] | null
+  error: string | null
+}> {
+  const { data, error } = await supabase.rpc('admin_list_pending_identity_users', {
+    p_limit: limit,
+  })
+  if (error) return { data: null, error: error.message }
+  return { data: (data ?? []) as PendingIdentityUserRow[], error: null }
+}
+
+export async function verifyIdentity(
+  userId: string,
+  note?: string,
+): Promise<{ ok: boolean; error: string | null }> {
+  const result = await invokeAdminGrantPremium({
+    action: 'verify_identity',
+    user_id: userId,
+    granted_by: 'admin_app',
+    note: note ?? 'whatsapp_telegram_ok',
+  })
+  if (result.ok) return { ok: true, error: null }
+  return { ok: false, error: 'error' in result ? result.error : 'verify_failed' }
+}
+
+/** Reject ET identity: Premium off, lessons_completed ≤ 1, status=rejected. */
+export async function rejectIdentity(
+  userId: string,
+  note?: string,
+): Promise<{ ok: boolean; error: string | null }> {
+  const result = await invokeAdminGrantPremium({
+    action: 'reject_identity',
+    user_id: userId,
+    granted_by: 'admin_app',
+    note: note ?? 'identity_failed',
+  })
+  if (result.ok) return { ok: true, error: null }
+  return { ok: false, error: 'error' in result ? result.error : 'reject_failed' }
 }

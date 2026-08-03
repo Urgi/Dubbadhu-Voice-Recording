@@ -88,12 +88,6 @@ export function buildSectionTiles(
         hint: 'Dashboards, retention, waitlist, and Gemini Q&A (up to 10k events)',
         route: 'AdminAnalytics',
       },
-      {
-        title: 'Force upgrade',
-        lines: ['Block old learner builds until they update'],
-        hint: 'Set min iOS/Android marketing versions after a breaking schema change',
-        route: 'AdminForceUpgrade',
-      },
     ]
   }
   if (section === 'assets') {
@@ -182,6 +176,12 @@ export function buildSectionTiles(
       lines: ['Curate “From the community” on Practice (7 per day, tied to Word of the Day)'],
       hint: 'Pick sentences that use today’s WOTD — learners see your picks first',
       route: 'AdminPracticeSuggestions',
+    },
+    {
+      title: 'Force upgrade',
+      lines: ['Block old learner builds until they update'],
+      hint: 'Set min iOS/Android marketing versions after a breaking schema change',
+      route: 'AdminForceUpgrade',
     },
   ]
 }

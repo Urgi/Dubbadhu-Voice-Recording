@@ -12,12 +12,14 @@ import {
 import { useFocusEffect } from '@react-navigation/native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
+import { PushNotificationPreview } from '../components/PushNotificationPreview'
 import {
   previewBroadcastRecipients,
   sendAdminBroadcastPush,
 } from '../lib/adminBroadcastPush'
 import {
   APP_PROMO_CTA_TARGETS,
+  labelForPromoCtaTarget,
   type AppPromoCtaTarget,
 } from '../lib/appPromoTargets'
 import type { RootStackParamList } from '../types'
@@ -117,6 +119,12 @@ export default function AdminBroadcastPushScreen({ navigation }: Props) {
           <Text style={styles.refresh}>Refresh</Text>
         </Pressable>
       </View>
+
+      <PushNotificationPreview
+        title={title}
+        body={body}
+        openHint={ctaTarget ? labelForPromoCtaTarget(ctaTarget) : 'Home'}
+      />
 
       <Text style={styles.label}>Title *</Text>
       <TextInput

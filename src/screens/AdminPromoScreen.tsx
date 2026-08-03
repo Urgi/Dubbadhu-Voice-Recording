@@ -20,6 +20,7 @@ import { useFocusEffect } from '@react-navigation/native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import * as ImagePicker from 'expo-image-picker'
 import { AdminTextInput } from '../components/AdminTextInput'
+import { AppPromoCardPreview } from '../components/AppPromoCardPreview'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
 import { APP_PROMO_IMAGE_ASPECT, uploadAppPromoImage } from '../lib/appPromoImage'
 import {
@@ -402,6 +403,15 @@ export default function AdminPromoScreen({ navigation }: Props) {
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="interactive"
             >
+              <AppPromoCardPreview
+                title={draft.title}
+                body={draft.body}
+                imageUri={previewUri}
+                eventDate={draft.event_date}
+                ctaLabel={draft.cta_label}
+                hasCta={Boolean(draft.cta_target)}
+              />
+
               <Text style={styles.label}>Title *</Text>
               <AdminTextInput
                 style={styles.input}
@@ -424,9 +434,6 @@ export default function AdminPromoScreen({ navigation }: Props) {
                 }
               />
               <Text style={styles.label}>Image *</Text>
-              {previewUri ? (
-                <Image source={{ uri: previewUri }} style={styles.preview} />
-              ) : null}
               <Pressable
                 style={styles.secondaryBtn}
                 onPress={() => {

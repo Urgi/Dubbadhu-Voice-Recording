@@ -1,21 +1,25 @@
-import { useCallback, useLayoutEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
   Image,
+  InputAccessoryView,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
-  TextInput,
   View,
 } from 'react-native'
 import { useFocusEffect } from '@react-navigation/native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import * as ImagePicker from 'expo-image-picker'
+import { AdminTextInput } from '../components/AdminTextInput'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
 import { APP_PROMO_IMAGE_ASPECT, uploadAppPromoImage } from '../lib/appPromoImage'
 import {
@@ -26,6 +30,9 @@ import {
 import supabase from '../lib/supabase'
 import type { RootStackParamList } from '../types'
 
+/** iOS keyboard accessory — blue checkmark to dismiss (esp. multiline fields). */
+const PROMO_KEYBOARD_ACCESSORY_ID = 'adminPromoKeyboardDone'
+
 type Props = StackScreenProps<RootStackParamList, 'AdminPromo'>
 
 type PromoRow = {
@@ -35,6 +42,7 @@ type PromoRow = {
   image_url: string
   cta_target: AppPromoCtaTarget | null
   cta_label: string | null
+  event_date: string | null
   is_active: boolean
   updated_at?: string
 }
@@ -46,6 +54,8 @@ type PromoDraft = {
   image_url: string
   cta_target: AppPromoCtaTarget | null
   cta_label: string
+  /** Optional YYYY-MM-DD for learner date badge. */
+  event_date: string
   is_active: boolean
   /** Local uri pending upload on save (new rows without id yet). */
   localImageUri?: string | null
@@ -58,9 +68,18 @@ function emptyDraft(): PromoDraft {
     image_url: '',
     cta_target: null,
     cta_label: 'Learn more',
+    event_date: '',
     is_active: false,
     localImageUri: null,
   }
+}
+
+/** Normalize to YYYY-MM-DD or empty. */
+function normalizeEventDateInput(raw: string): string {
+  const s = String(raw || '').trim()
+  if (!s) return ''
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : ''
 }
 
 export default function AdminPromoScreen({ navigation }: Props) {
@@ -72,18 +91,39 @@ export default function AdminPromoScreen({ navigation }: Props) {
   const [error, setError] = useState('')
   const [editorOpen, setEditorOpen] = useState(false)
   const [draft, setDraft] = useState<PromoDraft>(() => emptyDraft())
+  const [keyboardVisible, setKeyboardVisible] = useState(false)
+
+  useEffect(() => {
+    if (!editorOpen || Platform.OS !== 'android') {
+      setKeyboardVisible(false)
+      return undefined
+    }
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true))
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false))
+    return () => {
+      show.remove()
+      hide.remove()
+    }
+  }, [editorOpen])
 
   const load = useCallback(async () => {
     setError('')
     const { data, error: err } = await supabase
       .from('app_promos')
-      .select('id, title, body, image_url, cta_target, cta_label, is_active, updated_at')
+      .select('id, title, body, image_url, cta_target, cta_label, event_date, is_active, updated_at')
       .order('updated_at', { ascending: false })
     if (err) {
       setError(err.message)
       setRows([])
     } else {
-      setRows((data || []) as PromoRow[])
+      setRows(
+        (data || []).map((row) => ({
+          ...(row as PromoRow),
+          event_date: row.event_date
+            ? normalizeEventDateInput(String(row.event_date))
+            : null,
+        })),
+      )
     }
   }, [])
 
@@ -135,6 +175,7 @@ export default function AdminPromoScreen({ navigation }: Props) {
       image_url: row.image_url || '',
       cta_target: row.cta_target,
       cta_label: row.cta_label || 'Learn more',
+      event_date: row.event_date || '',
       is_active: row.is_active === true,
       localImageUri: null,
     })
@@ -183,6 +224,16 @@ export default function AdminPromoScreen({ navigation }: Props) {
       return
     }
 
+    const eventDateRaw = draft.event_date.trim()
+    let eventDate: string | null = null
+    if (eventDateRaw) {
+      eventDate = normalizeEventDateInput(eventDateRaw)
+      if (!eventDate) {
+        Alert.alert('Invalid date', 'Use YYYY-MM-DD for the optional event date, or leave it blank.')
+        return
+      }
+    }
+
     setSaving(true)
     try {
       let savedId = draft.id || ''
@@ -197,6 +248,7 @@ export default function AdminPromoScreen({ navigation }: Props) {
             image_url: '',
             cta_target: draft.cta_target,
             cta_label: draft.cta_target ? draft.cta_label.trim() || 'Learn more' : null,
+            event_date: eventDate,
             is_active: false,
           })
           .select('id')
@@ -234,6 +286,7 @@ export default function AdminPromoScreen({ navigation }: Props) {
           image_url: imageUrl,
           cta_target: draft.cta_target,
           cta_label: draft.cta_target ? draft.cta_label.trim() || 'Learn more' : null,
+          event_date: eventDate,
           is_active: draft.is_active,
         })
         .eq('id', savedId)
@@ -310,6 +363,7 @@ export default function AdminPromoScreen({ navigation }: Props) {
                   </Text>
                   <Text style={styles.cardMeta}>
                     CTA: {labelForPromoCtaTarget(row.cta_target)}
+                    {row.event_date ? ` · ${row.event_date}` : ''}
                   </Text>
                 </View>
               </Pressable>
@@ -326,25 +380,48 @@ export default function AdminPromoScreen({ navigation }: Props) {
         </ScrollView>
       )}
 
-      <Modal visible={editorOpen} animationType="slide" transparent>
-        <View style={styles.modalRoot}>
+      <Modal
+        visible={editorOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => {
+          Keyboard.dismiss()
+          setEditorOpen(false)
+        }}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalRoot}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+        >
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>{draft.id ? 'Edit promo' : 'Add promo'}</Text>
-            <ScrollView style={{ maxHeight: 520 }}>
+            <ScrollView
+              style={styles.modalScroll}
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
               <Text style={styles.label}>Title *</Text>
-              <TextInput
+              <AdminTextInput
                 style={styles.input}
                 placeholderTextColor="#666"
                 value={draft.title}
                 onChangeText={(title) => setDraft((d) => ({ ...d, title }))}
+                inputAccessoryViewID={
+                  Platform.OS === 'ios' ? PROMO_KEYBOARD_ACCESSORY_ID : undefined
+                }
               />
               <Text style={styles.label}>Body *</Text>
-              <TextInput
+              <AdminTextInput
                 style={[styles.input, styles.inputMulti]}
-                multiline
+                allowMultiline
                 placeholderTextColor="#666"
                 value={draft.body}
                 onChangeText={(body) => setDraft((d) => ({ ...d, body }))}
+                inputAccessoryViewID={
+                  Platform.OS === 'ios' ? PROMO_KEYBOARD_ACCESSORY_ID : undefined
+                }
               />
               <Text style={styles.label}>Image *</Text>
               {previewUri ? (
@@ -352,13 +429,34 @@ export default function AdminPromoScreen({ navigation }: Props) {
               ) : null}
               <Pressable
                 style={styles.secondaryBtn}
-                onPress={() => void pickImage()}
+                onPress={() => {
+                  Keyboard.dismiss()
+                  void pickImage()
+                }}
                 disabled={uploading}
               >
                 <Text style={styles.secondaryBtnText}>
                   {uploading ? 'Uploading…' : previewUri ? 'Change image' : 'Pick image'}
                 </Text>
               </Pressable>
+
+              <Text style={styles.label}>Event date (optional)</Text>
+              <AdminTextInput
+                style={styles.input}
+                placeholderTextColor="#666"
+                placeholder="YYYY-MM-DD"
+                value={draft.event_date}
+                onChangeText={(event_date) => setDraft((d) => ({ ...d, event_date }))}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="numbers-and-punctuation"
+                inputAccessoryViewID={
+                  Platform.OS === 'ios' ? PROMO_KEYBOARD_ACCESSORY_ID : undefined
+                }
+              />
+              <Text style={styles.fieldHint}>
+                Shown as a gold badge (e.g. 15 August). Leave blank for no badge.
+              </Text>
 
               <Text style={styles.label}>CTA destination (optional)</Text>
               <View style={styles.typeRow}>
@@ -382,12 +480,15 @@ export default function AdminPromoScreen({ navigation }: Props) {
               {draft.cta_target ? (
                 <>
                   <Text style={styles.label}>CTA button label</Text>
-                  <TextInput
+                  <AdminTextInput
                     style={styles.input}
                     placeholderTextColor="#666"
                     placeholder="Learn more"
                     value={draft.cta_label}
                     onChangeText={(cta_label) => setDraft((d) => ({ ...d, cta_label }))}
+                    inputAccessoryViewID={
+                      Platform.OS === 'ios' ? PROMO_KEYBOARD_ACCESSORY_ID : undefined
+                    }
                   />
                 </>
               ) : null}
@@ -402,17 +503,57 @@ export default function AdminPromoScreen({ navigation }: Props) {
               </View>
             </ScrollView>
             <View style={styles.modalActions}>
-              <Pressable onPress={() => setEditorOpen(false)} disabled={saving}>
+              <Pressable
+                onPress={() => {
+                  Keyboard.dismiss()
+                  setEditorOpen(false)
+                }}
+                disabled={saving}
+              >
                 <Text style={styles.action}>Cancel</Text>
               </Pressable>
-              <Pressable onPress={() => void saveDraft()} disabled={saving || uploading}>
+              <Pressable
+                onPress={() => {
+                  Keyboard.dismiss()
+                  void saveDraft()
+                }}
+                disabled={saving || uploading}
+              >
                 <Text style={[styles.action, styles.actionPrimary]}>
                   {saving ? 'Saving…' : 'Save'}
                 </Text>
               </Pressable>
             </View>
           </View>
-        </View>
+
+          {Platform.OS === 'ios' ? (
+            <InputAccessoryView nativeID={PROMO_KEYBOARD_ACCESSORY_ID}>
+              <View style={styles.keyboardAccessory}>
+                <View style={{ flex: 1 }} />
+                <Pressable
+                  onPress={() => Keyboard.dismiss()}
+                  hitSlop={12}
+                  accessibilityRole="button"
+                  accessibilityLabel="Dismiss keyboard"
+                  style={styles.keyboardAccessoryBtn}
+                >
+                  <Text style={styles.keyboardAccessoryCheck}>✓</Text>
+                </Pressable>
+              </View>
+            </InputAccessoryView>
+          ) : null}
+
+          {Platform.OS === 'android' && keyboardVisible ? (
+            <Pressable
+              onPress={() => Keyboard.dismiss()}
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss keyboard"
+              style={styles.androidKeyboardDismiss}
+            >
+              <Text style={styles.keyboardAccessoryCheck}>✓</Text>
+            </Pressable>
+          ) : null}
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   )
@@ -454,9 +595,13 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 16,
     padding: 16,
     maxHeight: '92%',
+    flexGrow: 0,
   },
+  modalScroll: { maxHeight: 520 },
+  modalScrollContent: { paddingBottom: 16 },
   modalTitle: { color: '#fff', fontSize: 17, fontWeight: '700', marginBottom: 12 },
   label: { color: '#9ca3af', fontSize: 12, marginBottom: 6, marginTop: 10 },
+  fieldHint: { color: '#6b7280', fontSize: 11, marginTop: 4, lineHeight: 15 },
   input: {
     backgroundColor: '#1a1a1a',
     borderWidth: 1,
@@ -468,6 +613,40 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   inputMulti: { minHeight: 88, textAlignVertical: 'top' },
+  keyboardAccessory: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1c1c1e',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#3a3a3c',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  keyboardAccessoryBtn: {
+    minWidth: 36,
+    minHeight: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  keyboardAccessoryCheck: {
+    color: '#0A84FF',
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  androidKeyboardDismiss: {
+    position: 'absolute',
+    right: 16,
+    bottom: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#1c1c1e',
+    borderWidth: 1,
+    borderColor: '#0A84FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+  },
   preview: {
     width: '100%',
     aspectRatio: 4 / 5,

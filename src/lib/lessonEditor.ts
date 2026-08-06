@@ -1732,6 +1732,150 @@ export function celebrateExposureWordRows(screens: LessonScreen[]): { afaan: str
   return out
 }
 
+/** Match editor pair row (`left` = Afaan, `right` = English). */
+export type MatchEditorPair = { left: string; right: string }
+
+/**
+ * Push Afaan↔English into a Match pair list (case-insensitive Afaan dedupe).
+ * Prefer keeping the first Afaan form; fill empty English when a later hit has a gloss.
+ */
+export function pushMatchEditorPair(
+  out: MatchEditorPair[],
+  seen: Map<string, number>,
+  afaanRaw: string,
+  englishRaw: string,
+): void {
+  const left = String(afaanRaw ?? '').trim()
+  if (!left) return
+  const right = String(englishRaw ?? '').trim()
+  const key = celebrateAfaanDedupeKey(left)
+  const existingIdx = seen.get(key)
+  if (existingIdx != null) {
+    if (right && !String(out[existingIdx]?.right ?? '').trim()) {
+      out[existingIdx] = { ...out[existingIdx], right }
+    }
+    return
+  }
+  seen.set(key, out.length)
+  out.push({ left, right })
+}
+
+/**
+ * Afaan↔English pairs introduced in lesson screens (not the voice bank).
+ * Sources: audio exposure, match, video-review vocab, speaking practice, repetition practice.
+ */
+export function collectMatchPairsFromScreens(screens: LessonScreen[]): MatchEditorPair[] {
+  const out: MatchEditorPair[] = []
+  const seen = new Map<string, number>()
+  if (!Array.isArray(screens)) return out
+
+  for (const s of screens) {
+    if (!s || typeof s !== 'object') continue
+    const c = s.content
+    if (c == null || typeof c !== 'object' || Array.isArray(c)) continue
+    const cr = c as Record<string, unknown>
+
+    if (s.type === 'audioExposure') {
+      const words = cr.words
+      if (!Array.isArray(words)) continue
+      for (const w of words) {
+        if (w == null || typeof w !== 'object' || Array.isArray(w)) continue
+        const rec = w as Record<string, unknown>
+        pushMatchEditorPair(
+          out,
+          seen,
+          String(rec.word ?? rec.oromo ?? rec.text ?? ''),
+          String(rec.translation ?? rec.english ?? ''),
+        )
+      }
+      continue
+    }
+
+    if (s.type === 'match') {
+      const pairs = cr.pairs
+      if (!Array.isArray(pairs)) continue
+      for (const p of pairs) {
+        if (p == null || typeof p !== 'object' || Array.isArray(p)) continue
+        const rec = p as Record<string, unknown>
+        pushMatchEditorPair(out, seen, String(rec.left ?? ''), String(rec.right ?? ''))
+      }
+      continue
+    }
+
+    if (s.type === 'videoReview') {
+      const lines = cr.lines
+      if (!Array.isArray(lines)) continue
+      for (const line of lines) {
+        if (line == null || typeof line !== 'object' || Array.isArray(line)) continue
+        const ln = line as Record<string, unknown>
+        const vw = Array.isArray(ln.vocabWords)
+          ? ln.vocabWords
+          : Array.isArray(ln.words)
+            ? ln.words
+            : null
+        if (!vw) continue
+        for (const item of vw) {
+          if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
+          const rec = item as Record<string, unknown>
+          pushMatchEditorPair(
+            out,
+            seen,
+            String(rec.word ?? rec.oromo ?? rec.text ?? ''),
+            String(rec.translation ?? rec.english ?? ''),
+          )
+        }
+      }
+      continue
+    }
+
+    if (s.type === 'speakingPractice') {
+      pushMatchEditorPair(
+        out,
+        seen,
+        String(cr.word ?? cr.prompt ?? ''),
+        String(cr.phraseEnglish ?? cr.translation ?? cr.english ?? ''),
+      )
+      continue
+    }
+
+    if (s.type === 'repetitionPractice') {
+      const pairs = cr.pairs
+      if (!Array.isArray(pairs)) continue
+      for (const pair of pairs) {
+        if (pair == null || typeof pair !== 'object' || Array.isArray(pair)) continue
+        const pr = pair as Record<string, unknown>
+        for (const side of ['base', 'answer'] as const) {
+          const item = pr[side]
+          if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
+          const rec = item as Record<string, unknown>
+          pushMatchEditorPair(
+            out,
+            seen,
+            String(rec.oromo ?? rec.word ?? rec.text ?? ''),
+            String(rec.english ?? rec.translation ?? ''),
+          )
+        }
+      }
+    }
+  }
+
+  return out
+}
+
+/**
+ * Merge pair lists in order (earlier lessons win Afaan form; later hits can fill empty English).
+ */
+export function mergeMatchEditorPairLists(lists: MatchEditorPair[][]): MatchEditorPair[] {
+  const out: MatchEditorPair[] = []
+  const seen = new Map<string, number>()
+  for (const list of lists) {
+    for (const row of list) {
+      pushMatchEditorPair(out, seen, row.left, row.right)
+    }
+  }
+  return out
+}
+
 export function celebrateLearnedWordsFromScreens(screens: LessonScreen[]): string[] {
   return celebrateExposureWordRows(screens).map((r) => r.afaan)
 }

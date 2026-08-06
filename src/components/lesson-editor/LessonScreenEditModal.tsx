@@ -49,6 +49,7 @@ import {
   normalizeQuizOptionRowForEditor,
   normalizeSpeakingPracticeContentForSave,
 } from '../../lib/lessonEditor'
+import { fetchSeriesMatchPairsFromLessons } from '../../lib/fetchSeriesMatchPairs'
 import { WORD_DISCRIMINATION_SCENE_PREVIEW_ASPECT } from '../../lib/wordDiscriminationSceneSpec'
 import {
   generateLessonImageScreenDraft,
@@ -109,6 +110,8 @@ type Props = {
   lessonScreenIndex?: number | null
   /** Optional: series id for word-bank checks from parent (Audio exposure, etc.). */
   lessonSeries?: string | null
+  /** Current lesson row id — used when filling Match pairs from the whole series. */
+  lessonId?: string | null
   /** Optional: `lesson.content.series` string (e.g. "Mastering Greetings") for `words.series` matching. */
   lessonContentSeries?: string | null
   /** Resolved series video used by dialogue clips (no-translation preferred, translated fallback). */
@@ -2453,6 +2456,7 @@ export function LessonScreenEditModal({
   lessonScreens = [],
   lessonScreenIndex = null,
   lessonSeries = null,
+  lessonId = null,
   lessonContentSeries = null,
   seriesNoTranslationVideoUrl = null,
   wordBankLanguage = VOICE_BANK_LANGUAGE,
@@ -2467,6 +2471,7 @@ export function LessonScreenEditModal({
   const [jsonFallback, setJsonFallback] = useState('')
   const [jsonError, setJsonError] = useState('')
   const [screenSaveBusy, setScreenSaveBusy] = useState(false)
+  const [seriesMatchFillBusy, setSeriesMatchFillBusy] = useState(false)
   const modalScrollRef = useRef<ScrollView>(null)
   /** Which quiz question index is showing the “correct answer” picker (`null` = closed). */
   const [quizCorrectModalQ, setQuizCorrectModalQ] = useState<number | null>(null)
@@ -2763,6 +2768,76 @@ export function LessonScreenEditModal({
     },
     [isReadOnly],
   )
+
+  const applySeriesMatchPairs = useCallback(
+    async (replace: boolean) => {
+      const sid = String(lessonSeries ?? '').trim()
+      if (!sid || isReadOnly) return
+      setSeriesMatchFillBusy(true)
+      setJsonError('')
+      try {
+        const { pairs, lessonCount } = await fetchSeriesMatchPairsFromLessons(sid, {
+          currentLessonId: lessonId,
+          currentScreens: lessonScreens,
+        })
+        if (pairs.length === 0) {
+          setJsonError(
+            lessonCount === 0
+              ? 'No lessons found in this series.'
+              : 'No Afaan↔English pairs found across this series yet (exposure, match, video-review vocab, speaking, repetition).',
+          )
+          return
+        }
+        patchDraftContent((cur) => {
+          if (replace) return { ...cur, pairs }
+          const existing = Array.isArray(cur.pairs) ? (cur.pairs as Record<string, unknown>[]) : []
+          const seen = new Set(
+            existing
+              .map((p) => celebrateAfaanDedupeKey(String(p.left ?? '')))
+              .filter(Boolean),
+          )
+          const merged = [...existing]
+          for (const row of pairs) {
+            const k = celebrateAfaanDedupeKey(row.left)
+            if (!k || seen.has(k)) continue
+            seen.add(k)
+            merged.push({ left: row.left, right: row.right })
+          }
+          return { ...cur, pairs: merged }
+        })
+      } catch (e) {
+        setJsonError(e instanceof Error ? e.message : 'Could not load series pairs.')
+      } finally {
+        setSeriesMatchFillBusy(false)
+      }
+    },
+    [isReadOnly, lessonSeries, lessonId, lessonScreens, patchDraftContent],
+  )
+
+  const onPressQuizAllFromSeries = useCallback(() => {
+    if (isReadOnly || seriesMatchFillBusy) return
+    const sid = String(lessonSeries ?? '').trim()
+    if (!sid) {
+      setJsonError('This lesson has no series id — open it from a curriculum series.')
+      return
+    }
+    const curPairs = Array.isArray((draftRef.current?.content as Record<string, unknown> | undefined)?.pairs)
+      ? ((draftRef.current!.content as Record<string, unknown>).pairs as unknown[])
+      : []
+    const hasPairs = curPairs.some((p) => {
+      if (p == null || typeof p !== 'object') return false
+      return Boolean(String((p as Record<string, unknown>).left ?? '').trim())
+    })
+    if (!hasPairs) {
+      void applySeriesMatchPairs(true)
+      return
+    }
+    Alert.alert('Quiz all from series', 'Replace existing pairs, or add only missing Afaan words?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Add missing', onPress: () => void applySeriesMatchPairs(false) },
+      { text: 'Replace all', style: 'destructive', onPress: () => void applySeriesMatchPairs(true) },
+    ])
+  }, [isReadOnly, seriesMatchFillBusy, lessonSeries, applySeriesMatchPairs])
 
   if (!visible || !screen || !draft) return null
 
@@ -3090,6 +3165,25 @@ export function LessonScreenEditModal({
         }
         return (
           <View style={styles.form}>
+            {!readOnlyMode ? (
+              <Pressable
+                style={[styles.fillFromExposureBtn, seriesMatchFillBusy && { opacity: 0.6 }]}
+                disabled={seriesMatchFillBusy}
+                onPress={onPressQuizAllFromSeries}
+              >
+                {seriesMatchFillBusy ? (
+                  <ActivityIndicator color="#e4e4e7" />
+                ) : (
+                  <>
+                    <Text style={styles.fillFromExposureBtnText}>Quiz all from series</Text>
+                    <Text style={styles.fillFromExposureBtnSub}>
+                      Fills pairs from every lesson in this series (audio exposure, match, video-review
+                      vocab, speaking, repetition). Uses lesson JSON — voice bank not required.
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            ) : null}
             {pairs.length === 0 ? (
               <View style={styles.matchEmptyBlock}>
                 <Text style={styles.hint}>

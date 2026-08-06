@@ -1357,6 +1357,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
         lessonScreenIndex={editingIndex}
         // Needed for Audio exposure → word bank sync + audio availability checks.
         lessonSeries={row?.series_id ?? null}
+        lessonId={row?.id ?? null}
         lessonContentSeries={
           draft?.series != null && typeof draft.series === 'string' && draft.series.trim()
             ? draft.series.trim()
@@ -1381,6 +1382,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
         lessonScreens={draft?.screens ?? []}
         lessonScreenIndex={previewReadOnlyIndex}
         lessonSeries={row?.series_id ?? null}
+        lessonId={row?.id ?? null}
         lessonContentSeries={
           draft?.series != null && typeof draft.series === 'string' && draft.series.trim()
             ? draft.series.trim()

@@ -164,6 +164,23 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
     return v + s > 0
   }, [summaries, vocabSummary])
 
+  const awaitingApprovalCount = useMemo(() => {
+    const v = vocabSummary.recorded
+    const s = summaries.reduce((n, x) => n + x.recorded, 0)
+    return v + s
+  }, [summaries, vocabSummary])
+
+  const openAwaitingApproval = useCallback(
+    (opts?: { series?: string; language?: string; vocabOnly?: boolean }) => {
+      if (opts) {
+        navigation.navigate('VoiceActorAwaitingApproval', opts)
+      } else {
+        navigation.navigate('VoiceActorAwaitingApproval')
+      }
+    },
+    [navigation],
+  )
+
   const startRecordingAll = useCallback(async () => {
     const langVals = voiceBankLanguageSqlValues()
     const [vRes, sRes] = await Promise.all([
@@ -232,6 +249,24 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
     [navigation],
   )
 
+  const onSeriesPress = useCallback(
+    (item: SeriesSummary) => {
+      const canRecord = item.pending + item.rerecordRequested > 0
+      if (canRecord) {
+        void startSeriesRecording(item)
+        return
+      }
+      if (item.recorded > 0) {
+        if (item.series === VOCABULARY_MERGED_SERIES) {
+          openAwaitingApproval({ vocabOnly: true })
+        } else {
+          openAwaitingApproval({ series: item.series, language: item.language })
+        }
+      }
+    },
+    [openAwaitingApproval, startSeriesRecording],
+  )
+
   const showQueueEmptyMessage =
     !hasRemainingWords && (summaries.length > 0 || vocabSummary.total > 0)
 
@@ -246,25 +281,40 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
         ) : showQueueEmptyMessage ? (
           <Text style={styles.queueEmptyText}>There are no words in the queue …</Text>
         ) : null}
+        {awaitingApprovalCount > 0 ? (
+          <Pressable
+            style={styles.awaitingBtn}
+            onPress={() => openAwaitingApproval()}
+          >
+            <Text style={styles.awaitingBtnText}>
+              Review awaiting approval ({awaitingApprovalCount})
+            </Text>
+            <Text style={styles.awaitingBtnSub}>Listen or re-record submitted takes</Text>
+          </Pressable>
+        ) : null}
         <Text style={styles.sectionTitle}>Vocabulary (word bank)</Text>
         <Text style={styles.sectionHint}>
           {VOCABULARY_MERGED_SERIES} · {vocabSummary.language} — text-approved, pending audio
         </Text>
         <SeriesTileCard
           item={vocabSummary}
-          disabled={vocabSummary.pending + vocabSummary.rerecordRequested <= 0}
-          onPress={() => void startSeriesRecording(vocabSummary)}
+          disabled={
+            vocabSummary.pending + vocabSummary.rerecordRequested + vocabSummary.recorded <= 0
+          }
+          onPress={() => onSeriesPress(vocabSummary)}
         />
         <Text style={[styles.sectionTitle, styles.sectionTitleSpaced]}>Lesson series</Text>
       </View>
     ),
     [
+      awaitingApprovalCount,
       error,
       hasRemainingWords,
+      onSeriesPress,
+      openAwaitingApproval,
       showQueueEmptyMessage,
       startRecordingAll,
       vocabSummary,
-      startSeriesRecording,
     ],
   )
 
@@ -291,8 +341,8 @@ export default function VoiceActorDashboardScreen({ navigation }: Props) {
         renderItem={({ item }) => (
           <SeriesTileCard
             item={item}
-            disabled={item.pending + item.rerecordRequested <= 0}
-            onPress={() => void startSeriesRecording(item)}
+            disabled={item.pending + item.rerecordRequested + item.recorded <= 0}
+            onPress={() => onSeriesPress(item)}
           />
         )}
         ListEmptyComponent={
@@ -377,6 +427,26 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '700',
+  },
+  awaitingBtn: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fbbf24',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  awaitingBtnText: {
+    color: '#fbbf24',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  awaitingBtnSub: {
+    color: '#a1a1aa',
+    fontSize: 13,
+    marginTop: 4,
   },
   queueEmptyText: {
     color: '#22c55e',

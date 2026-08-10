@@ -80,6 +80,14 @@ export type RootStackParamList = {
   AdminSeriesAudioReview: { seriesName: string; language: string }
   VoiceActorHome: undefined
   VoiceActorDashboard: undefined
+  /** Voice actor: listen / re-record takes still awaiting admin approval. */
+  VoiceActorAwaitingApproval:
+    | {
+        series?: string
+        language?: string
+        vocabOnly?: boolean
+      }
+    | undefined
   Recording: {
     words: RecordingWord[]
     /** Default `words`; Qubee alphabet uses `qubee_letters`. */

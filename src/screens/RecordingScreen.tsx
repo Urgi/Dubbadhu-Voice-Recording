@@ -13,6 +13,7 @@ import Slider from '@react-native-community/slider'
 import { trim as nativeTrim } from 'react-native-video-trim'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { useAudioRecorder } from '../hooks/useAudioRecorder'
+import { useRemoteAudioUrl } from '../hooks/useRemoteAudioUrl'
 import { useAuth } from '../context/AuthContext'
 import supabase from '../lib/supabase'
 import { formatQubeeLetterDisplay } from '../lib/qubeeLetters'
@@ -197,6 +198,7 @@ export default function RecordingScreen({ navigation, route }: Props) {
   const { words: initialWords, mergeIntoSession, seriesSession, recordingTable = 'words' } = route.params
   const { role } = useAuth()
   const audio = useAudioRecorder()
+  const { playUrl, playingId } = useRemoteAudioUrl()
 
   useEffect(() => {
     if (recordingTable === 'fidel_letters' && role !== 'fidel') {
@@ -820,7 +822,37 @@ export default function RecordingScreen({ navigation, route }: Props) {
           <Text style={styles.wordRerecordPillText}>Re-record</Text>
         </Pressable>
       </View>
-      {/* Status pill removed from this screen; re-record is now handled by the word-level action pill. */}
+
+      {!isSingleTake &&
+      (current.status === 'recorded' || current.status === 'rerecord_requested') &&
+      (current.slow_audio_url || current.fast_audio_url) ? (
+        <View style={styles.priorTakeBox}>
+          <Text style={styles.priorTakeLabel}>Previous take on server</Text>
+          <View style={styles.priorTakeActions}>
+            {current.slow_audio_url ? (
+              <Pressable
+                style={styles.priorTakePill}
+                onPress={() => void playUrl(current.slow_audio_url, `${current.id}-prior-slow`)}
+              >
+                <Text style={styles.priorTakePillText}>
+                  {playingId === `${current.id}-prior-slow` ? 'Stop slow' : 'Play slow'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {current.fast_audio_url ? (
+              <Pressable
+                style={styles.priorTakePill}
+                onPress={() => void playUrl(current.fast_audio_url, `${current.id}-prior-fast`)}
+              >
+                <Text style={styles.priorTakePillText}>
+                  {playingId === `${current.id}-prior-fast` ? 'Stop fast' : 'Play fast'}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+          <Text style={styles.priorTakeHint}>Record new clips below to replace this take.</Text>
+        </View>
+      ) : null}
 
       {slotCard('slow', isSingleTake ? 'Pronunciation' : 'Slow')}
       {!isSingleTake ? slotCard('fast', 'Fast') : null}
@@ -970,6 +1002,44 @@ const styles = StyleSheet.create({
     color: PILL_PURPLE_TEXT,
     fontSize: 14,
     fontWeight: '700',
+  },
+  priorTakeBox: {
+    backgroundColor: '#141414',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#3f3f46',
+    padding: 12,
+    marginBottom: 14,
+  },
+  priorTakeLabel: {
+    color: '#fbbf24',
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  priorTakeActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  priorTakePill: {
+    backgroundColor: '#2e1064',
+    borderWidth: 1,
+    borderColor: '#7C3AED',
+    borderRadius: 999,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    marginRight: 8,
+    marginBottom: 6,
+  },
+  priorTakePillText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  priorTakeHint: {
+    color: '#71717a',
+    fontSize: 12,
+    marginTop: 4,
   },
   card: {
     backgroundColor: '#1a1a1a',

@@ -29,6 +29,7 @@ import LessonConfigSeriesScreen from './src/screens/LessonConfigSeriesScreen'
 import LessonConfigDetailScreen from './src/screens/LessonConfigDetailScreen'
 import VoiceActorHomeScreen from './src/screens/VoiceActorHomeScreen'
 import VoiceActorDashboardScreen from './src/screens/VoiceActorDashboardScreen'
+import VoiceActorAwaitingApprovalScreen from './src/screens/VoiceActorAwaitingApprovalScreen'
 import QubeeLettersHubScreen from './src/screens/QubeeLettersHubScreen'
 import FidelRecorderHomeScreen from './src/screens/FidelRecorderHomeScreen'
 import FidelLettersHubScreen from './src/screens/FidelLettersHubScreen'
@@ -147,6 +148,11 @@ function AppStack() {
           name="VoiceActorDashboard"
           component={VoiceActorDashboardScreen}
           options={{ title: 'Voice Recording' }}
+        />
+        <Stack.Screen
+          name="VoiceActorAwaitingApproval"
+          component={VoiceActorAwaitingApprovalScreen}
+          options={{ title: 'Awaiting approval' }}
         />
         <Stack.Screen
           name="QubeeLettersHub"

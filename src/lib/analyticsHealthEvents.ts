@@ -54,6 +54,14 @@ function pickDetail(eventName: string, properties: Record<string, unknown> | nul
   return keys.map((k) => `${k}: ${String(p[k]).slice(0, 40)}`).join(' · ')
 }
 
+/** Compact property line for admin event lists. */
+export function formatAnalyticsEventDetail(
+  eventName: string,
+  properties: Record<string, unknown> | null,
+): string {
+  return pickDetail(eventName, properties)
+}
+
 /** Aggregate reliability rows for the last-24h admin card. */
 export function summarizeReliabilityEvents24h(rows: ReliabilityEventRow[]): Reliability24hSummary {
   const reliability = rows.filter((r) => isReliabilityAnalyticsEvent(r.event_name))

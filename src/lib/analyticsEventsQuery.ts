@@ -63,3 +63,28 @@ export async function fetchRecentAnalyticsEventsForGemini(
 
   return { data: rows, error: null }
 }
+
+/** Newest analytics_events for one user (admin Registered → timeline). */
+export async function fetchUserAnalyticsEvents(
+  client: SupabaseClient,
+  userId: string,
+  limit = 20,
+): Promise<{ data: AnalyticsEventRow[]; error: string | null }> {
+  const uid = String(userId || '').trim()
+  if (!uid) return { data: [], error: 'Missing user id' }
+
+  const cap = Math.max(1, Math.min(limit, 100))
+  const { data, error } = await client.rpc('admin_fetch_user_analytics_events', {
+    p_user_id: uid,
+    p_limit: cap,
+  })
+
+  if (error) {
+    return { data: [], error: error.message }
+  }
+
+  const rows = ((data ?? []) as Record<string, unknown>[]).map((row) =>
+    normalizeAnalyticsEventRow(row),
+  )
+  return { data: rows, error: null }
+}

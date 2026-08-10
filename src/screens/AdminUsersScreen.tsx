@@ -87,7 +87,7 @@ function UserRow({
           <Text style={styles.statLabel}>{showLastEvent ? 'Last active' : 'Last login'}</Text>
         </View>
       </View>
-      <Text style={styles.timelineHint}>Tap for signup → lesson timeline</Text>
+      <Text style={styles.timelineHint}>Tap for timeline + recent events</Text>
     </Pressable>
   )
 }

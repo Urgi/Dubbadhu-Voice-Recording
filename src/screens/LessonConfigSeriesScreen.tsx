@@ -228,7 +228,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       return 'Add vocabulary in lessons (audio exposure / celebrate) so we can detect when all VA audio is done.'
     }
     if (!vaProgress.allLessonWordsInVoiceBank) {
-      return 'Not all lesson batch words are in this voice-bank series yet — approve curriculum (or re-open this screen after lesson edits) to add pending rows.'
+      return 'Not all new lesson words are in this series voice bank yet — reopen this screen (approved series auto-syncs pending rows) or approve curriculum again.'
     }
     if (vaProgress.needRecording > 0) {
       return `${vaProgress.needRecording} word${
@@ -309,7 +309,11 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       gaps.push('No vocabulary tokens found in lessons for this series.')
     }
     if (!vaProgress.allLessonWordsInVoiceBank) {
-      gaps.push('Some lesson tokens are not yet in the voice-bank series for this curriculum.')
+      gaps.push(
+        vaProgress.syncableNewRowCount > 0
+          ? `${vaProgress.syncableNewRowCount} new lesson word(s) are not in this series voice bank yet — pull to refresh to sync.`
+          : 'Some lesson tokens are not yet in the voice-bank series for this curriculum.',
+      )
     }
     if (vaProgress.needRecording > 0) {
       gaps.push(
@@ -1568,10 +1572,13 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                     <Text style={styles.seriesRemainingCount}>
                       {(() => {
                         const needVa = Boolean(wordBankReview && (wordBankReview.needsVaRecording?.length ?? 0) > 0)
+                        const needNewBank = Boolean(vaProgress && !vaProgress.allLessonWordsInVoiceBank)
                         const needCover = !Boolean(listCoverUrl?.trim())
                         const needIntro = !Boolean(introVideoUrl?.trim())
                         const needReviewClips = videoReviewGaps.length > 0
-                        const remaining = [needVa, needCover, needIntro, needReviewClips].filter(Boolean).length
+                        const remaining = [needVa, needNewBank, needCover, needIntro, needReviewClips].filter(
+                          Boolean,
+                        ).length
                         return `Number of Items Remaining — ${remaining}`
                       })()}
                     </Text>
@@ -1600,6 +1607,29 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                               … +{wordBankReview.needsVaRecording.length - 10} more
                             </Text>
                           </Pressable>
+                        ) : null}
+                      </>
+                    ) : null}
+
+                    <Text style={styles.wordBankReviewLine}>
+                      {vaProgress && !vaProgress.allLessonWordsInVoiceBank
+                        ? `☐ New words not in this series bank — ${vaProgress.syncableNewRowCount}`
+                        : '✓ Lesson tokens covered (this series bank or shared from another series).'}
+                    </Text>
+                    {wordBankReview && wordBankReview.blockedOtherSeries.length > 0 ? (
+                      <>
+                        <Text style={styles.wordBankReviewLegend}>
+                          Shared (already in another series — not duplicated here):
+                        </Text>
+                        {wordBankReview.blockedOtherSeries.slice(0, 8).map((b) => (
+                          <Text key={b.word} style={styles.wordBankReviewLine}>
+                            {'  '}— “{b.word}” → {b.existingSeries}
+                          </Text>
+                        ))}
+                        {wordBankReview.blockedOtherSeries.length > 8 ? (
+                          <Text style={styles.wordBankReviewMore}>
+                            … +{wordBankReview.blockedOtherSeries.length - 8} more
+                          </Text>
                         ) : null}
                       </>
                     ) : null}

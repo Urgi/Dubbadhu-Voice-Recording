@@ -846,8 +846,9 @@ export async function fetchSeriesWordsVaProgress(params: {
   const { harvested, toInsert, blockedOtherSeries, wordsSeriesLabel } = plan
   const totalLessonWords = harvested.length
   const syncableNewRowCount = toInsert.length
-  const allLessonWordsInVoiceBank =
-    totalLessonWords > 0 && syncableNewRowCount === 0 && blockedOtherSeries.length === 0
+  // Shared vocab that already lives under another series is intentional (not duplicated).
+  // Mark-complete only waits on tokens that still need a *new* row in this curriculum's bank.
+  const allLessonWordsInVoiceBank = totalLessonWords > 0 && syncableNewRowCount === 0
 
   let withRecording = 0
   let needRecording = 0

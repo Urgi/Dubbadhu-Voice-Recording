@@ -16,6 +16,7 @@ import AdminPracticeSuggestionsScreen from './src/screens/AdminPracticeSuggestio
 import AdminCommunityReportsScreen from './src/screens/AdminCommunityReportsScreen'
 import AdminDiscussionReviewScreen from './src/screens/AdminDiscussionReviewScreen'
 import AdminSongsScreen from './src/screens/AdminSongsScreen'
+import AdminProverbsScreen from './src/screens/AdminProverbsScreen'
 import AdminPromoScreen from './src/screens/AdminPromoScreen'
 import AdminBroadcastPushScreen from './src/screens/AdminBroadcastPushScreen'
 import AdminForceUpgradeScreen from './src/screens/AdminForceUpgradeScreen'
@@ -114,6 +115,11 @@ function AppStack() {
           name="AdminSongs"
           component={AdminSongsScreen}
           options={{ title: 'Songs / Music' }}
+        />
+        <Stack.Screen
+          name="AdminProverbs"
+          component={AdminProverbsScreen}
+          options={{ title: 'Proverbs' }}
         />
         <Stack.Screen
           name="AdminPromo"

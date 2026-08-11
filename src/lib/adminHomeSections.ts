@@ -28,6 +28,7 @@ export type HubTileConfig = {
     | 'QubeeLettersHub'
     | 'FidelLettersHub'
     | 'AdminSongs'
+    | 'AdminProverbs'
     | 'AdminPromo'
     | 'AdminBroadcastPush'
     | 'AdminForceUpgrade'
@@ -130,6 +131,12 @@ export function buildSectionTiles(
         lines: ['YouTube catalog for Home → Songs (Oromo + Amharic)'],
         hint: 'Add, edit, reorder, publish — learner app derives thumbnails',
         route: 'AdminSongs',
+      },
+      {
+        title: 'Proverbs',
+        lines: ['Sayings for Home → Proverbs (Oromo + Amharic)'],
+        hint: 'Add, edit, reorder, publish native text + English',
+        route: 'AdminProverbs',
       },
       {
         title: 'App promo',

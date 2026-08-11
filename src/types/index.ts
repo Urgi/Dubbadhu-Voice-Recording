@@ -48,6 +48,8 @@ export type RootStackParamList = {
   AdminUserTimeline: { user: AdminRegisteredUserRow }
   /** Complimentary Premium (isPremium, no premium_product_id). */
   AdminFreeAccess: undefined
+  /** Amharic / Fidel beta allowlist (phone search → grant/revoke). */
+  AdminFidelBeta: undefined
   /** Curate Practice tab “From the community” picks per WOTD day (max 7). */
   AdminPracticeSuggestions: undefined
   /** Lesson discussion post reports from the learner app. */

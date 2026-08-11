@@ -2,6 +2,22 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert } from 'react-native'
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av'
 
+async function restoreRecordingMode() {
+  try {
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
+      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+      shouldDuckAndroid: true,
+      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+      playThroughEarpieceAndroid: false,
+      staysActiveInBackground: false,
+    })
+  } catch {
+    /* next startRecording will retry */
+  }
+}
+
 /**
  * Play remote HTTPS audio (e.g. Supabase public URLs). Tracks which logical clip is playing for UI.
  * Uses polling to detect end — `didJustFinish` / `isPlaying` are unreliable on some iOS builds.
@@ -40,6 +56,7 @@ export function useRemoteAudioUrl() {
       soundRef.current = null
     }
     setPlaying(null)
+    await restoreRecordingMode()
   }, [clearPlaybackPoll, setPlaying])
 
   const finishPlayback = useCallback(
@@ -59,6 +76,7 @@ export function useRemoteAudioUrl() {
         soundRef.current = null
         setPlaying(null)
       }
+      await restoreRecordingMode()
     },
     [clearPlaybackPoll, setPlaying],
   )

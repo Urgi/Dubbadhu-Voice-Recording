@@ -22,6 +22,7 @@ export type HubTileConfig = {
   route:
     | 'AdminAnalytics'
     | 'AdminFreeAccess'
+    | 'AdminFidelBeta'
     | 'LessonConfig'
     | 'AdminSeriesList'
     | 'AdminVocabIllustrationReview'
@@ -162,6 +163,12 @@ export function buildSectionTiles(
         ],
         hint: 'Audit complimentary Premium grants · search by phone',
         route: 'AdminFreeAccess',
+      },
+      {
+        title: 'Amharic beta',
+        lines: ['Fidel Continue allowlist · add/remove by phone'],
+        hint: 'Grant Amharic Fidel without a new learner build',
+        route: 'AdminFidelBeta',
       },
     ]
   }

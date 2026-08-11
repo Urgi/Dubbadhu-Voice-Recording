@@ -10,6 +10,7 @@ import AdminHomeScreen from './src/screens/AdminHomeScreen'
 import AdminHubSectionScreen from './src/screens/AdminHubSectionScreen'
 import AdminAnalyticsScreen from './src/screens/AdminAnalyticsScreen'
 import AdminFreeAccessScreen from './src/screens/AdminFreeAccessScreen'
+import AdminFidelBetaScreen from './src/screens/AdminFidelBetaScreen'
 import AdminUsersScreen from './src/screens/AdminUsersScreen'
 import AdminUserTimelineScreen from './src/screens/AdminUserTimelineScreen'
 import AdminPracticeSuggestionsScreen from './src/screens/AdminPracticeSuggestionsScreen'
@@ -95,6 +96,11 @@ function AppStack() {
           name="AdminFreeAccess"
           component={AdminFreeAccessScreen}
           options={{ title: 'Free access' }}
+        />
+        <Stack.Screen
+          name="AdminFidelBeta"
+          component={AdminFidelBetaScreen}
+          options={{ title: 'Amharic beta' }}
         />
         <Stack.Screen
           name="AdminPracticeSuggestions"

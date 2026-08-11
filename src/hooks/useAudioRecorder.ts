@@ -197,17 +197,19 @@ export function useAudioRecorder() {
       throw new Error('Missing audio recording permission.')
     }
     setPermissionGranted(true)
-    if (!recordingModePrimedRef.current) {
-      await setModeForRecording()
-    }
+    // Always re-enable recording mode. Playback (this hook or useRemoteAudioUrl) sets
+    // allowsRecordingIOS=false; skipping here leaves iOS rejecting prepare/start with
+    // "Recording not allowed on iOS. Enable with Audio.setAudioModeAsync."
+    await setModeForRecording()
+    recordingModePrimedRef.current = true
     const recording = new Audio.Recording()
     recordingRef.current = recording
     try {
       await recording.prepareToRecordAsync(VOICE_RECORDING_OPTIONS as never)
       await recording.startAsync()
-      recordingModePrimedRef.current = true
     } catch (e) {
       recordingRef.current = null
+      recordingModePrimedRef.current = false
       throw e
     }
     setIsRecording(true)

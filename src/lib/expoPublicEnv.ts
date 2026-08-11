@@ -29,6 +29,19 @@ export function getExpoPublicSupabaseAnonKey(): string {
   )
 }
 
+/**
+ * Internal admin writes only. Never ship this in the learner app.
+ * Prefer EAS secret / .env SUPABASE_SERVICE_ROLE_KEY (not EXPO_PUBLIC_*).
+ */
+export function getSupabaseServiceRoleKey(): string {
+  const extra = Constants.expoConfig?.extra as Extra
+  return (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    fromExtra(extra, 'SUPABASE_SERVICE_ROLE_KEY') ||
+    ''
+  )
+}
+
 export function getExpoPublicGeminiKey(): string {
   const extra = Constants.expoConfig?.extra as Extra
   return (

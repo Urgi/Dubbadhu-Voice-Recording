@@ -92,6 +92,14 @@ export type MatchContent = { title?: string; pairs: MatchPair[]; [k: string]: un
 /** `concept` screen — learner animates `targetWord` and up to three `bullets`. */
 export type ConceptContent = { targetWord: string; bullets: string[] };
 
+/** Standalone community chat. Same moderation as celebration discussion. */
+export type CommunityBoardContent = {
+  /** Shown to learners. Spell the target word exactly as they must type it. */
+  prompt?: string;
+  /** Extra context for moderation; not shown to learners. */
+  topic?: string;
+};
+
 export type QuizOption = string | { text: string; audioRef: string; [k: string]: unknown };
 export type QuizQuestion = {
   question: string;

@@ -289,6 +289,8 @@ export function defaultScreen(type: ScreenType): LessonScreen {
       }
     case 'CelebrateScreen':
       return { type, content: { message: 'Nice work.' } }
+    case 'communityBoard':
+      return { type, content: { prompt: '', topic: '' } }
     case 'patternPractice':
       return {
         type,
@@ -1273,8 +1275,15 @@ export function sanitizeScreenContentForPersistence(
       }
       return base
     }
-    case 'communityBoard':
-      return pickAllowedKeys(content, new Set(['prompt', 'topic']))
+    case 'communityBoard': {
+      const base = pickAllowedKeys(content, new Set(['prompt', 'topic']))
+      for (const k of ['prompt', 'topic'] as const) {
+        const v = base[k]
+        if (v == null || !String(v).trim()) delete base[k]
+        else base[k] = String(v).trim()
+      }
+      return base
+    }
     case 'word-breakdown': {
       const base = pickAllowedKeys(content, new Set(['original', 'words', 'tip']))
       delete (base as Record<string, unknown>).heading

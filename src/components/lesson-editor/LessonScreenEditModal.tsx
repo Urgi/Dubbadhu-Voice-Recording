@@ -93,7 +93,21 @@ const STRUCTURED_SCREEN_TYPES_FOR_HEADER_SAVE = new Set([
   'repetition',
   'repetitionPractice',
   'sentenceBuilder',
+  'communityBoard',
 ])
+
+const COMMUNITY_PROMPT_AUTHORING_NOTES =
+  'Name the target word spelled exactly as learners must type it. Moderation (and the fallback if AI is down) looks for that spelling as a whole word.\n\n' +
+  'Do this:\n' +
+  '• Quote it: Say “akkam” to other learners in Afaan Oromo.\n' +
+  '• Or start with Say + the word: Say Akkam to the class.\n\n' +
+  'Typos like Akaam or akam do not count as the lesson word.\n\n' +
+  'If AI moderation is down, learners are told to include that word spelled exactly like the prompt.\n\n' +
+  'Celebration only: “Allowed English / non-Oromo” is a note for the AI. Learners never see it. Use it for names, “hello”, etc.'
+
+function showCommunityPromptAuthoringNotes() {
+  Alert.alert('How to write the community prompt', COMMUNITY_PROMPT_AUTHORING_NOTES)
+}
 
 /** Public storage bucket for Word discrimination quiz question images (Supabase dashboard). */
 const WORD_DISCRIMINATION_IMAGES_BUCKET = 'word-comparison-images'
@@ -4179,7 +4193,7 @@ export function LessonScreenEditModal({
                 })
               }
             />
-            <Row label="Community discussion">
+            <Row label="Community discussion" onInfoPress={showCommunityPromptAuthoringNotes}>
               <Switch
                 value={Boolean(communityOn)}
                 onValueChange={(on) =>
@@ -4204,8 +4218,12 @@ export function LessonScreenEditModal({
                   label="Discussion prompt"
                   value={String(c.communityDiscussionPrompt ?? '')}
                   allowMultiline
+                  onInfoPress={showCommunityPromptAuthoringNotes}
                   onChangeText={(t) => setContent((cur) => ({ ...cur, communityDiscussionPrompt: t }))}
                 />
+                <Text style={styles.hint}>
+                  Spell the target word exactly as learners must type it (quote it, or “Say Akkam…”). Tap i for the full notes.
+                </Text>
                 <Field
                   label="Allowed English / non-Oromo (AI only, optional)"
                   value={String(c.communityDiscussionAllowedEnglish ?? '')}
@@ -4221,7 +4239,7 @@ export function LessonScreenEditModal({
               </>
             ) : (
               <Text style={styles.hint}>
-                Off = classic celebration. On = live community chat on this screen; posts use the same AI moderation as Lesson Discussions.
+                Off = classic celebration. On = live community chat on this screen; posts use the same AI moderation as Lesson Discussions. Tap i for how to write the prompt.
               </Text>
             )}
             <View style={styles.learnedBlock}>
@@ -4277,6 +4295,39 @@ export function LessonScreenEditModal({
                 <Text style={styles.addBtnText}>+ Add word</Text>
               </Pressable>
             </View>
+          </View>
+        )
+      }
+      case 'communityBoard': {
+        primaryScreenSaveRef.current = () => {
+          const d = draftRef.current
+          if (!d) return
+          saveStructured({ ...(d.content as Record<string, unknown>) })
+        }
+        return (
+          <View style={styles.form}>
+            <View style={styles.labelRow}>
+              <Text style={[styles.label, styles.labelInRow]}>Community board</Text>
+              <InfoCircleButton onPress={showCommunityPromptAuthoringNotes} />
+            </View>
+            <Text style={styles.hint}>
+              Learners see the prompt and post to the same moderated community chat as celebration discussion. Tap i for how to spell the target word.
+            </Text>
+            <Field
+              label="Prompt (shown to learners)"
+              value={String(c.prompt ?? '')}
+              allowMultiline
+              onInfoPress={showCommunityPromptAuthoringNotes}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, prompt: t }))}
+            />
+            <Field
+              label="Topic (optional, AI context only)"
+              value={String(c.topic ?? '')}
+              onChangeText={(t) => setContent((cur) => ({ ...cur, topic: t }))}
+            />
+            <Text style={styles.hint}>
+              Topic is extra context for moderation. Learners see the prompt, not this field.
+            </Text>
           </View>
         )
       }
@@ -5543,6 +5594,20 @@ export function LessonScreenEditModal({
   )
 }
 
+function InfoCircleButton(props: { onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={props.onPress}
+      hitSlop={8}
+      style={styles.infoBtn}
+      accessibilityRole="button"
+      accessibilityLabel="How this works"
+    >
+      <Text style={styles.infoBtnText}>i</Text>
+    </Pressable>
+  )
+}
+
 function Field(props: {
   label: string
   value: string
@@ -5556,6 +5621,7 @@ function Field(props: {
   keyboardType?: 'default' | 'number-pad' | 'decimal-pad'
   onFocus?: () => void
   editable?: boolean
+  onInfoPress?: () => void
 }) {
   const ro = useLessonEditorReadOnly()
   const allowMl = props.allowMultiline === true || props.multiline === true
@@ -5564,7 +5630,14 @@ function Field(props: {
   const editable = props.editable !== false && !ro
   return (
     <View style={styles.field}>
-      <Text style={styles.label}>{props.label}</Text>
+      {props.onInfoPress ? (
+        <View style={styles.labelRow}>
+          <Text style={[styles.label, styles.labelInRow]}>{props.label}</Text>
+          <InfoCircleButton onPress={props.onInfoPress} />
+        </View>
+      ) : (
+        <Text style={styles.label}>{props.label}</Text>
+      )}
       <AdminTextInput
         style={[
           styles.input,
@@ -5586,10 +5659,13 @@ function Field(props: {
   )
 }
 
-function Row(props: { label: string; children: ReactNode }) {
+function Row(props: { label: string; children: ReactNode; onInfoPress?: () => void }) {
   return (
     <View style={styles.rowSwitch}>
-      <Text style={styles.label}>{props.label}</Text>
+      <View style={[styles.labelRow, styles.rowSwitchLabel]}>
+        <Text style={[styles.label, styles.labelInRow]}>{props.label}</Text>
+        {props.onInfoPress ? <InfoCircleButton onPress={props.onInfoPress} /> : null}
+      </View>
       {props.children}
     </View>
   )
@@ -5655,6 +5731,24 @@ const styles = StyleSheet.create({
   },
   field: { marginBottom: 14 },
   label: { color: '#d4d4d8', fontSize: 13, fontWeight: '600', marginBottom: 6 },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  labelInRow: { marginBottom: 0, flexShrink: 1 },
+  rowSwitchLabel: { flex: 1, marginBottom: 0, marginRight: 12 },
+  infoBtn: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#71717a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoBtnText: { fontSize: 11, color: '#a1a1aa', fontWeight: '700' },
   input: {
     backgroundColor: '#18181b',
     borderWidth: 1,

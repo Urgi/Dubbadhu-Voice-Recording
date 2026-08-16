@@ -279,7 +279,7 @@ This one is important: the type is **exactly** `"CelebrateScreen"`.
 - `learned_extra`: `string[]` (optional; admin-only extras merged into `learned`)
 - `xpEarned`: `number` (optional)
 - `communityDiscussionEnabled`: `boolean` (optional; default off — classic celebration)
-- `communityDiscussionPrompt`: `string` (optional; shown when community discussion is on; posts go through `discussion-moderate`)
+- `communityDiscussionPrompt`: `string` (optional; shown when community discussion is on; posts go through `discussion-moderate`). Spell the target word exactly as learners must type it — quote it (`Say “akkam”…`) or start with `Say Akkam…`. Typos like Akaam do not count. If AI is down, learners are told to include that spelling.
 - `communityDiscussionAllowedEnglish`: `string` (optional; author note for AI — which English / non-Oromo words or patterns are allowed; not shown to learners)
 - `vocabSectionId`: `string` (optional; Vocab tab section key e.g. `Greetings`. When set, Celebrate CTA is “Series Vocab” and opens that section. When omitted, CTA is “Language Vocab” and opens all vocabulary.)
 
@@ -301,6 +301,20 @@ With community chat:
   "communityDiscussionEnabled": true,
   "communityDiscussionPrompt": "Say “akkam” to other learners in Afaan Oromo.",
   "communityDiscussionAllowedEnglish": "English names and “hello” are OK."
+}
+```
+
+### `communityBoard`
+Standalone community chat (same AI moderation as celebration discussion / Lesson Discussions).
+
+**content**
+- `prompt`: `string` — shown to learners. Spell the target word exactly as they must type it (quote it, or `Say Akkam…`). Whole-word match only; Akaam / akam do not count.
+- `topic`: `string` (optional) — extra context for moderation; learners see `prompt`, not this field.
+
+```json
+{
+  "prompt": "Say “akkam” to other learners in Afaan Oromo.",
+  "topic": "Greetings"
 }
 ```
 
@@ -416,7 +430,6 @@ The following exist in the app but weren’t fully documented above (they depend
 - `audioRecognition`
 - `audioResponse`
 - `audioDiscrimination`
-- `communityBoard`
 - `moduleComplete`
 
 For these, your admin UI should either:

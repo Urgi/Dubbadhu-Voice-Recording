@@ -1,3 +1,4 @@
+import type { AnalyticsCountryScope } from './analyticsEventsQuery'
 import supabase from './supabase'
 import { isAnalyticsExcludedUser } from './analyticsExcludedUsers'
 
@@ -14,12 +15,20 @@ export type AdminRegisteredUserRow = {
   last_event_at?: string | null
 }
 
-export async function fetchRegisteredUsers(limit = 200): Promise<{
+function normalizeCountryScope(scope?: AnalyticsCountryScope | null): AnalyticsCountryScope {
+  return scope === 'et' || scope === 'non_et' ? scope : 'all'
+}
+
+export async function fetchRegisteredUsers(
+  limit = 200,
+  countryScope: AnalyticsCountryScope = 'all',
+): Promise<{
   data: AdminRegisteredUserRow[] | null
   error: string | null
 }> {
   const { data, error } = await supabase.rpc('admin_list_registered_users', {
     p_limit: limit,
+    p_country_scope: normalizeCountryScope(countryScope),
   })
   if (error) return { data: null, error: error.message }
   const rows = ((data ?? []) as AdminRegisteredUserRow[]).filter(
@@ -29,13 +38,17 @@ export async function fetchRegisteredUsers(limit = 200): Promise<{
 }
 
 /** Users with any analytics event today (Pacific), most recent first. Caps at 10. */
-export async function fetchActiveUsersToday(limit = 10): Promise<{
+export async function fetchActiveUsersToday(
+  limit = 10,
+  countryScope: AnalyticsCountryScope = 'all',
+): Promise<{
   data: AdminRegisteredUserRow[] | null
   error: string | null
 }> {
   const capped = Math.max(1, Math.min(limit, 10))
   const { data, error } = await supabase.rpc('admin_list_active_users_today', {
     p_limit: capped,
+    p_country_scope: normalizeCountryScope(countryScope),
   })
   if (error) return { data: null, error: error.message }
   const rows = ((data ?? []) as AdminRegisteredUserRow[]).filter(

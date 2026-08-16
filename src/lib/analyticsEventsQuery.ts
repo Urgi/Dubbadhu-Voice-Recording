@@ -23,16 +23,20 @@ function normalizeAnalyticsEventRow(raw: Record<string, unknown>): AnalyticsEven
   }
 }
 
+export type AnalyticsCountryScope = 'all' | 'et' | 'non_et'
+
 /** Newest analytics_events rows for Gemini context (up to limit, paginated when needed). */
 export async function fetchRecentAnalyticsEventsForGemini(
   client: SupabaseClient,
   limit = ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT,
+  countryScope: AnalyticsCountryScope = 'all',
 ): Promise<{ data: AnalyticsEventRow[]; error: string | null }> {
   const cap = Math.max(1, Math.min(limit, ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT))
   const rows: AnalyticsEventRow[] = []
   let offset = 0
   /** Extra pages allowed while skipping excluded seed/dev accounts. */
   const maxOffset = cap * 3
+  const scope = countryScope === 'et' || countryScope === 'non_et' ? countryScope : 'all'
 
   while (rows.length < cap && offset < maxOffset) {
     const pageSize = Math.min(FETCH_PAGE_SIZE, Math.max(cap - rows.length, 200))
@@ -40,6 +44,7 @@ export async function fetchRecentAnalyticsEventsForGemini(
       p_since: null,
       p_limit: pageSize,
       p_offset: offset,
+      p_country_scope: scope,
     })
 
     if (error) {

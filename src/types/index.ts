@@ -43,7 +43,9 @@ export type RootStackParamList = {
   LubbuDubbadhu: undefined
   AdminAnalytics: undefined
   /** Registered learners list, or active-today (max 10) when mode is set. */
-  AdminUsers: { mode?: 'activeToday' } | undefined
+  AdminUsers:
+    | { mode?: 'activeToday'; countryScope?: 'all' | 'et' | 'non_et' }
+    | undefined
   /** Signup → lesson timeline for one user (from Active today / Registered). */
   AdminUserTimeline: { user: AdminRegisteredUserRow }
   /** Complimentary Premium (isPremium, no premium_product_id). */

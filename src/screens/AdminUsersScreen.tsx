@@ -95,6 +95,12 @@ function UserRow({
 export default function AdminUsersScreen({ navigation, route }: Props) {
   const mode = route.params?.mode === 'activeToday' ? 'activeToday' : 'registered'
   const isActiveToday = mode === 'activeToday'
+  const countryScope =
+    route.params?.countryScope === 'et' || route.params?.countryScope === 'non_et'
+      ? route.params.countryScope
+      : 'all'
+  const scopeLabel =
+    countryScope === 'et' ? 'Ethiopia (+251)' : countryScope === 'non_et' ? 'Non-Ethiopia' : null
 
   const [rows, setRows] = useState<AdminRegisteredUserRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -103,14 +109,16 @@ export default function AdminUsersScreen({ navigation, route }: Props) {
 
   const loadList = useCallback(async () => {
     setError('')
-    const result = isActiveToday ? await fetchActiveUsersToday(10) : await fetchRegisteredUsers()
+    const result = isActiveToday
+      ? await fetchActiveUsersToday(10, countryScope)
+      : await fetchRegisteredUsers(200, countryScope)
     if (result.error) {
       setError(result.error)
       setRows([])
     } else {
       setRows(result.data ?? [])
     }
-  }, [isActiveToday])
+  }, [isActiveToday, countryScope])
 
   useFocusEffect(
     useCallback(() => {
@@ -161,6 +169,7 @@ export default function AdminUsersScreen({ navigation, route }: Props) {
         {isActiveToday
           ? 'Users with analytics activity today (Pacific). Most recent first, max 10. Tap a user for their lesson timeline.'
           : 'Name, streak, top streak, and last login. Newest first. Tap a user for their lesson timeline.'}
+        {scopeLabel ? ` Filtered to ${scopeLabel}.` : ''}
       </Text>
       {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
       <Text style={styles.count}>{rows.length} shown</Text>

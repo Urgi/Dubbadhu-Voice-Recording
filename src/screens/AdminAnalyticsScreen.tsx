@@ -22,7 +22,10 @@ import {
   type Reliability24hSummary,
   type ReliabilityEventRow,
 } from '../lib/analyticsHealthEvents'
-import { fetchRecentAnalyticsEventsForGemini } from '../lib/analyticsEventsQuery'
+import {
+  fetchRecentAnalyticsEventsForGemini,
+  type AnalyticsCountryScope,
+} from '../lib/analyticsEventsQuery'
 import { isAnalyticsExcludedUserId } from '../lib/analyticsExcludedUsers'
 import {
   ANALYTICS_GEMINI_CONTEXT_EVENT_LIMIT,
@@ -62,6 +65,7 @@ type AnalyticsEventRow = {
 }
 
 type RetentionRange = '7d' | '30d' | 'all'
+type CountryScope = AnalyticsCountryScope
 
 const ORANGE = '#f5a623'
 const PURPLE = '#5b5bd6'
@@ -174,25 +178,34 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
   const [askLoading, setAskLoading] = useState(false)
   const [askError, setAskError] = useState('')
   const [retentionRange, setRetentionRange] = useState<RetentionRange>('30d')
+  const [countryScope, setCountryScope] = useState<CountryScope>('all')
   const [seriesPipeline, setSeriesPipeline] = useState<ProductionSeriesPipeline | null>(null)
   const scrollRef = useRef<ScrollView>(null)
   const askSectionY = useRef(0)
 
   const load = useCallback(async () => {
     const errs: string[] = []
+    const scope = countryScope === 'et' || countryScope === 'non_et' ? countryScope : 'all'
 
-    const usersRes = await supabase.rpc('admin_users_total_count')
+    const usersRes = await supabase.rpc('admin_users_total_count', {
+      p_country_scope: scope,
+    })
     if (usersRes.error) errs.push(`users: ${usersRes.error.message}`)
     else setUsersTotal(Number(usersRes.data ?? 0))
 
     const weekAgoIso = new Date(Date.now() - 7 * 86400000).toISOString()
-    const usersWeekRes = await supabase.rpc('admin_users_count_since', { p_since: weekAgoIso })
+    const usersWeekRes = await supabase.rpc('admin_users_count_since', {
+      p_since: weekAgoIso,
+      p_country_scope: scope,
+    })
     if (usersWeekRes.error) {
       errs.push(`users (week): ${usersWeekRes.error.message}`)
       setUsersThisWeek(null)
     } else setUsersThisWeek(Number(usersWeekRes.data ?? 0))
 
-    const evToday = await supabase.rpc('admin_count_active_users_today')
+    const evToday = await supabase.rpc('admin_count_active_users_today', {
+      p_country_scope: scope,
+    })
     if (evToday.error) {
       if (!evToday.error.message.includes('does not exist')) {
         errs.push(`analytics_events (today): ${evToday.error.message}`)
@@ -202,7 +215,10 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
       setActiveToday(Number(evToday.data ?? 0))
     }
 
-    const retRes = await supabase.rpc('admin_get_retention_cohorts', { p_limit: 500 })
+    const retRes = await supabase.rpc('admin_get_retention_cohorts', {
+      p_limit: 500,
+      p_country_scope: scope,
+    })
     if (retRes.error) errs.push(`retention_cohorts: ${retRes.error.message}`)
     else
       setRetention(
@@ -227,7 +243,7 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
       )
     }
 
-    const evRes = await fetchRecentAnalyticsEventsForGemini(supabase)
+    const evRes = await fetchRecentAnalyticsEventsForGemini(supabase, undefined, scope)
     if (evRes.error) errs.push(`analytics_events: ${evRes.error}`)
     else setEvents(evRes.data)
 
@@ -236,6 +252,7 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
       p_since: since24h,
       p_limit: 500,
       p_offset: 0,
+      p_country_scope: scope,
     })
     if (ev24Res.error) {
       errs.push(`analytics_events (24h): ${ev24Res.error.message}`)
@@ -256,7 +273,7 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
     setSeriesPipeline(pipelineRes.data)
 
     setLoadErrors(errs)
-  }, [])
+  }, [countryScope])
 
   const retentionSlice = useMemo(() => cohortsInRange(retention, retentionRange), [retention, retentionRange])
   const retentionStats = useMemo(() => weightedRetention(retentionSlice), [retentionSlice])
@@ -402,11 +419,47 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
         </View>
       ) : null}
 
+      <View style={styles.countryFilter}>
+        {(
+          [
+            { key: 'all' as const, label: 'All' },
+            { key: 'et' as const, label: 'Ethiopia' },
+            { key: 'non_et' as const, label: 'Non-ET' },
+          ] as const
+        ).map(({ key, label }) => (
+          <Pressable
+            key={key}
+            onPress={() => setCountryScope(key)}
+            style={[styles.tfBtn, countryScope === key && styles.tfBtnActive]}
+            hitSlop={4}
+            accessibilityRole="button"
+            accessibilityState={{ selected: countryScope === key }}
+            accessibilityLabel={`Filter ${label} users`}
+          >
+            <Text style={[styles.tfBtnText, countryScope === key && styles.tfBtnTextActive]}>
+              {label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {countryScope !== 'all' ? (
+        <Text style={styles.countryHint}>
+          {countryScope === 'et'
+            ? 'Showing users with +251 phones.'
+            : 'Showing users without +251 phones.'}{' '}
+          Waitlist & pipeline stay global.
+        </Text>
+      ) : null}
+
       <Text style={styles.sectionLabel}>Users</Text>
       <View style={styles.metricRow}>
         <Pressable
           style={styles.metricCard}
-          onPress={() => navigation.navigate('AdminUsers')}
+          onPress={() =>
+            navigation.navigate('AdminUsers', {
+              countryScope: countryScope === 'all' ? undefined : countryScope,
+            })
+          }
           accessibilityRole="button"
           accessibilityLabel="View registered users"
         >
@@ -430,7 +483,12 @@ export default function AdminAnalyticsScreen({ navigation }: Props) {
         </Pressable>
         <Pressable
           style={styles.metricCard}
-          onPress={() => navigation.navigate('AdminUsers', { mode: 'activeToday' })}
+          onPress={() =>
+            navigation.navigate('AdminUsers', {
+              mode: 'activeToday',
+              countryScope: countryScope === 'all' ? undefined : countryScope,
+            })
+          }
           accessibilityRole="button"
           accessibilityLabel="View users active today"
         >
@@ -724,6 +782,19 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 2,
     marginBottom: 12,
+  },
+  countryFilter: {
+    flexDirection: 'row',
+    backgroundColor: '#2a2a2a',
+    borderRadius: 8,
+    padding: 2,
+    marginBottom: 8,
+  },
+  countryHint: {
+    fontSize: 11,
+    color: '#666666',
+    marginBottom: 10,
+    lineHeight: 15,
   },
   tfBtn: {
     flex: 1,

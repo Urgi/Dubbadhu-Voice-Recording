@@ -1,9 +1,19 @@
 /**
  * Accounts excluded from product analytics (admin reads + Gemini).
  * Keep in sync with Dubbadhu/constants/analyticsExcludedUserIds.js
+ *
+ * Operator QA (Urji + Test): `users.lessons_completed` is routinely reset to 0
+ * for notification / Speak tests. Not real learners.
  */
 
+/** Urji — operator phone; also internal Speak catalog QA. */
 const DEV_EXCLUDED = '7c39d3b7-72f3-4b2d-ad1c-4225404ffb63'
+
+/** Named "Test" operator accounts (same purpose as Urji). */
+const OPERATOR_TEST_EXCLUDED = [
+  '855fea80-c5e8-449e-9fb4-a9acb0234f1c',
+  '60257c41-2874-4229-b3ed-dcae8017c100',
+]
 
 /** Family / permanent / incomplete Premium — pollutes paid conversion. */
 const FAMILY_PREMIUM_EXCLUDED = [
@@ -27,6 +37,7 @@ const DISCUSSION_SEED_EXCLUDED = [
 
 export const ANALYTICS_EXCLUDED_USER_IDS = new Set([
   DEV_EXCLUDED,
+  ...OPERATOR_TEST_EXCLUDED,
   ...FAMILY_PREMIUM_EXCLUDED,
   ...DISCUSSION_SEED_EXCLUDED,
 ])

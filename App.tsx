@@ -21,6 +21,7 @@ import AdminProverbsScreen from './src/screens/AdminProverbsScreen'
 import AdminPromoScreen from './src/screens/AdminPromoScreen'
 import AdminBroadcastPushScreen from './src/screens/AdminBroadcastPushScreen'
 import AdminForceUpgradeScreen from './src/screens/AdminForceUpgradeScreen'
+import AdminHomeHeroPreviewScreen from './src/screens/AdminHomeHeroPreviewScreen'
 import AdminSeriesListScreen from './src/screens/AdminSeriesListScreen'
 import AdminSeriesDetailScreen from './src/screens/AdminSeriesDetailScreen'
 import AdminAudioReviewScreen from './src/screens/AdminAudioReviewScreen'
@@ -141,6 +142,11 @@ function AppStack() {
           name="AdminForceUpgrade"
           component={AdminForceUpgradeScreen}
           options={{ title: 'Force upgrade' }}
+        />
+        <Stack.Screen
+          name="AdminHomeHeroPreview"
+          component={AdminHomeHeroPreviewScreen}
+          options={{ title: 'Home hero preview' }}
         />
         <Stack.Screen name="AdminSeriesList" component={AdminSeriesListScreen} options={{ title: 'Voice Recording' }} />
         <Stack.Screen name="AdminSeriesDetail" component={AdminSeriesDetailScreen} />

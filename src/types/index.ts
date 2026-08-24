@@ -68,6 +68,8 @@ export type RootStackParamList = {
   AdminBroadcastPush: undefined
   /** Force-upgrade min iOS/Android marketing versions. */
   AdminForceUpgrade: undefined
+  /** Learner Home series cover preview height + crop offset. */
+  AdminHomeHeroPreview: undefined
   LessonConfig: undefined
   LessonConfigSeries: { seriesId: string }
   LessonConfigDetail: {

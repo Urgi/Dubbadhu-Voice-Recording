@@ -33,6 +33,7 @@ export type HubTileConfig = {
     | 'AdminPromo'
     | 'AdminBroadcastPush'
     | 'AdminForceUpgrade'
+    | 'AdminHomeHeroPreview'
     | 'AdminDiscussionReview'
     | 'AdminCommunityReports'
     | 'AdminPracticeSuggestions'
@@ -144,6 +145,12 @@ export function buildSectionTiles(
         lines: ['Login popup — image, title, body, optional tab/tile CTA'],
         hint: 'Activate one promo for learners to see once after sign-in',
         route: 'AdminPromo',
+      },
+      {
+        title: 'Home hero preview',
+        lines: ['Cover height + vertical crop offset on learner Home'],
+        hint: 'Tune series intro preview without a new learner build',
+        route: 'AdminHomeHeroPreview',
       },
       {
         title: 'Push broadcast',

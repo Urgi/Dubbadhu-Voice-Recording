@@ -1,0 +1,29 @@
+/**
+ * Learner Home continue-card photo clip (objectBoundingBox).
+ * Keep in sync with Dubbadhu/components/home/heroSweepClipPath.js
+ */
+export const HERO_SWEEP_CLIP_PATH_OBJECT =
+  'M0.212,0 C0.805,0.013 0.243,0.688 1,0.737 L1,0 Z'
+
+/** Scale objectBoundingBox path coords to pixel width/height. */
+export function scaleHeroSweepPath(w: number, h: number): string {
+  const width = Math.max(1, Number(w) || 1)
+  const height = Math.max(1, Number(h) || 1)
+  return HERO_SWEEP_CLIP_PATH_OBJECT.replace(
+    /([MLCZmlcz])([^MLCZmlcz]*)/g,
+    (_m, cmd: string, body: string) => {
+      const nums = String(body)
+        .trim()
+        .split(/[\s,]+/)
+        .filter(Boolean)
+        .map(Number)
+      if (!nums.length) return cmd
+      const scaled = nums.map((n, i) => {
+        const isX = i % 2 === 0
+        const v = isX ? n * width : n * height
+        return Number.isFinite(v) ? Math.round(v * 1000) / 1000 : n
+      })
+      return `${cmd}${scaled.join(' ')}`
+    },
+  )
+}

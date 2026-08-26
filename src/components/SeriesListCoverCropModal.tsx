@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Image,
@@ -12,6 +12,7 @@ import {
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as ImageManipulator from 'expo-image-manipulator'
+import HomeHeroCoverShapePreview from './HomeHeroCoverShapePreview'
 
 const MIN_CROP = 56
 const HANDLE = 32
@@ -247,6 +248,18 @@ export default function SeriesListCoverCropModal({
 
   const ready = !!crop && fittedW > 0 && fittedH > 0 && !loadErr
 
+  const liveCrop = useMemo(() => {
+    if (!crop || fittedW <= 0 || fittedH <= 0) return null
+    return {
+      x: crop.x,
+      y: crop.y,
+      w: crop.w,
+      h: crop.h,
+      sourceW: fittedW,
+      sourceH: fittedH,
+    }
+  }, [crop, fittedW, fittedH])
+
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onCancel}>
       <GestureHandlerRootView style={styles.flex1}>
@@ -257,10 +270,11 @@ export default function SeriesListCoverCropModal({
             Position cover
           </Text>
         </View>
-        <Text style={styles.hint} numberOfLines={4}>
-          Drag the gold frame to move. Drag corner dots to resize.{' '}
-          <Text style={styles.hintEm}>Save cover</Text> applies this crop;{' '}
-          <Text style={styles.hintEm}>Cancel</Text> discards and goes back.
+        <Text style={styles.hint} numberOfLines={5}>
+          Drag the gold frame to move. Drag corner dots to resize. Check the{' '}
+          <Text style={styles.hintEm}>Home continue</Text> preview below for the learner
+          curve. <Text style={styles.hintEm}>Save cover</Text> applies this crop;{' '}
+          <Text style={styles.hintEm}>Cancel</Text> discards.
         </Text>
         <View
           style={styles.stage}
@@ -314,6 +328,17 @@ export default function SeriesListCoverCropModal({
             </View>
           )}
         </View>
+
+        <View style={styles.homePreviewBlock}>
+          <Text style={styles.homePreviewLabel}>Home continue card</Text>
+          <HomeHeroCoverShapePreview
+            imageUri={imageUri}
+            liveCrop={liveCrop}
+            height={140}
+            showChrome
+          />
+        </View>
+
         <View style={styles.footer}>
           <View style={styles.footerRow}>
             <Pressable
@@ -397,6 +422,19 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   hintEm: { color: '#e4e4e7', fontWeight: '600' },
+  homePreviewBlock: {
+    flexShrink: 0,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  homePreviewLabel: {
+    color: '#a1a1aa',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 6,
+    letterSpacing: 0.3,
+  },
   stage: {
     flex: 1,
     minHeight: 120,

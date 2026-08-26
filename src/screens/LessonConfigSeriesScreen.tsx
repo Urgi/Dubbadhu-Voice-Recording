@@ -54,6 +54,7 @@ import {
 } from '../lib/seedWordsFromLessons'
 import SeriesIntroVideoBlock from '../components/SeriesIntroVideoBlock'
 import SeriesListCoverCropModal from '../components/SeriesListCoverCropModal'
+import HomeHeroCoverShapePreview from '../components/HomeHeroCoverShapePreview'
 import {
   SERIES_LIST_COVER_ASPECT,
   SERIES_LIST_COVER_ASPECT_HEIGHT,
@@ -1352,6 +1353,15 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
               </View>
             )}
           </View>
+          <Text style={styles.coverHomeLabel}>Home continue card (learner)</Text>
+          <Text style={styles.coverHomeHint}>
+            Same cover, clipped by the Home hero curve — check framing before publish.
+          </Text>
+          <HomeHeroCoverShapePreview
+            imageUri={listCoverDisplayUri}
+            height={196}
+            style={styles.coverHomePreview}
+          />
           <View style={styles.coverActionsRow}>
             <Pressable
               style={[
@@ -2189,6 +2199,21 @@ const styles = StyleSheet.create({
     color: '#636366',
     textAlign: 'center',
     lineHeight: 18,
+  },
+  coverHomeLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#e4e4e7',
+    marginBottom: 4,
+  },
+  coverHomeHint: {
+    fontSize: 12,
+    color: '#636366',
+    lineHeight: 16,
+    marginBottom: 8,
+  },
+  coverHomePreview: {
+    marginBottom: 12,
   },
   coverActionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   statusBlock: { marginBottom: 8 },

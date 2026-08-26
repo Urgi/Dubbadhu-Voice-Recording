@@ -12,51 +12,76 @@ import {
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as ImageManipulator from 'expo-image-manipulator'
-import HomeHeroCoverShapePreview from './HomeHeroCoverShapePreview'
+import Svg, { Path } from 'react-native-svg'
+import { scaleHeroSweepPath } from '../lib/homeHeroSweepClipPath'
 
-const MIN_CROP = 56
-const HANDLE = 32
+const PANEL = '#16281F'
+const GOLD = '#c9a227'
+const CREAM = '#F3F1E9'
+const MUTED = '#BCC9B6'
+const SPROUT_SOFT = '#8FDD97'
+const INK = '#12240F'
+const MIN_USER_SCALE = 1
+const MAX_USER_SCALE = 4
 
 export type SeriesListCoverCropModalProps = {
   visible: boolean
   imageUri: string | null
-  /** Crop target aspect = width / height (e.g. 961 / 661). */
+  /** Crop / upload target aspect = width / height. */
   aspectWidth: number
   aspectHeight: number
   onCancel: () => void
-  /** Called with a new JPEG file URI after crop. */
   onDone: (croppedFileUri: string) => void | Promise<void>
 }
 
-type Crop = { x: number; y: number; w: number; h: number }
+type Transform = { scale: number; tx: number; ty: number }
 
-function maxCenteredCrop(dispW: number, dispH: number, ar: number): Crop {
-  let w: number
-  let h: number
-  if (dispW / dispH > ar) {
-    h = dispH
-    w = h * ar
-  } else {
-    w = dispW
-    h = w / ar
-  }
-  return { x: (dispW - w) / 2, y: (dispH - h) / 2, w, h }
+function coverScale(natW: number, natH: number, viewW: number, viewH: number) {
+  if (natW <= 0 || natH <= 0 || viewW <= 0 || viewH <= 0) return 1
+  return Math.max(viewW / natW, viewH / natH)
 }
 
-function clampCrop(c: Crop, dispW: number, dispH: number, ar: number): Crop {
-  let w = Math.max(MIN_CROP, Math.min(c.w, dispW))
-  let h = w / ar
-  if (h > dispH) {
-    h = dispH
-    w = h * ar
-  }
-  let x = Math.max(0, Math.min(c.x, dispW - w))
-  let y = Math.max(0, Math.min(c.y, dispH - h))
-  if (x + w > dispW) x = dispW - w
-  if (y + h > dispH) y = dispH - h
-  return { x, y, w, h }
+function clampTransform(
+  t: Transform,
+  natW: number,
+  natH: number,
+  viewW: number,
+  viewH: number,
+): Transform {
+  const scale = Math.min(MAX_USER_SCALE, Math.max(MIN_USER_SCALE, t.scale))
+  const base = coverScale(natW, natH, viewW, viewH)
+  const total = base * scale
+  const imgW = natW * total
+  const imgH = natH * total
+  const minTx = Math.min(0, viewW - imgW)
+  const minTy = Math.min(0, viewH - imgH)
+  const tx = Math.max(minTx, Math.min(0, t.tx))
+  const ty = Math.max(minTy, Math.min(0, t.ty))
+  return { scale, tx, ty }
 }
 
+function centeredCoverTransform(
+  natW: number,
+  natH: number,
+  viewW: number,
+  viewH: number,
+): Transform {
+  const base = coverScale(natW, natH, viewW, viewH)
+  const imgW = natW * base
+  const imgH = natH * base
+  return clampTransform(
+    { scale: 1, tx: (viewW - imgW) / 2, ty: (viewH - imgH) / 2 },
+    natW,
+    natH,
+    viewW,
+    viewH,
+  )
+}
+
+/**
+ * Cover cropper whose viewport is the Home continue-card sweep — pan/pinch the
+ * photo under a fixed curve instead of a rectangular gold frame.
+ */
 export default function SeriesListCoverCropModal({
   visible,
   imageUri,
@@ -65,35 +90,46 @@ export default function SeriesListCoverCropModal({
   onCancel,
   onDone,
 }: SeriesListCoverCropModalProps) {
-  const ar = aspectWidth / aspectHeight
+  const ar = aspectWidth / Math.max(1, aspectHeight)
   const [natW, setNatW] = useState(0)
   const [natH, setNatH] = useState(0)
   const [slotW, setSlotW] = useState(0)
   const [slotH, setSlotH] = useState(0)
-  const [crop, setCrop] = useState<Crop | null>(null)
+  const [transform, setTransform] = useState<Transform>({ scale: 1, tx: 0, ty: 0 })
   const [busy, setBusy] = useState(false)
   const [loadErr, setLoadErr] = useState<string | null>(null)
-  const startCropRef = useRef<Crop>({ x: 0, y: 0, w: 0, h: 0 })
-  const didInitCrop = useRef(false)
+  const startRef = useRef<Transform>({ scale: 1, tx: 0, ty: 0 })
+  const pinchStartRef = useRef<Transform>({ scale: 1, tx: 0, ty: 0 })
+  const transformRef = useRef(transform)
+  transformRef.current = transform
+  const didInit = useRef(false)
 
-  const scaleFit =
-    natW > 0 && natH > 0 && slotW > 0 && slotH > 0
-      ? Math.min(slotW / natW, slotH / natH)
-      : 0
-  const fittedW = natW * scaleFit
-  const fittedH = natH * scaleFit
+  const viewSize = useMemo(() => {
+    if (slotW <= 0 || slotH <= 0) return { w: 0, h: 0 }
+    let w = slotW
+    let h = w / ar
+    if (h > slotH) {
+      h = slotH
+      w = h * ar
+    }
+    return { w: Math.floor(w), h: Math.floor(h) }
+  }, [slotW, slotH, ar])
+
+  const { w: viewW, h: viewH } = viewSize
+  const sweepPath = viewW > 0 && viewH > 0 ? scaleHeroSweepPath(viewW, viewH) : ''
+  const titleMax = Math.round(viewW * 0.45)
 
   useEffect(() => {
     if (!visible || !imageUri) {
       setNatW(0)
       setNatH(0)
-      setCrop(null)
+      setTransform({ scale: 1, tx: 0, ty: 0 })
       setLoadErr(null)
-      didInitCrop.current = false
+      didInit.current = false
       return
     }
     setLoadErr(null)
-    didInitCrop.current = false
+    didInit.current = false
     Image.getSize(
       imageUri,
       (w, h) => {
@@ -105,137 +141,104 @@ export default function SeriesListCoverCropModal({
   }, [visible, imageUri])
 
   useEffect(() => {
-    if (!visible || fittedW <= 0 || fittedH <= 0) return
-    if (didInitCrop.current) return
-    setCrop(maxCenteredCrop(fittedW, fittedH, ar))
-    didInitCrop.current = true
-  }, [visible, fittedW, fittedH, ar])
+    if (!visible || natW <= 0 || natH <= 0 || viewW <= 0 || viewH <= 0) return
+    if (didInit.current) return
+    setTransform(centeredCoverTransform(natW, natH, viewW, viewH))
+    didInit.current = true
+  }, [visible, natW, natH, viewW, viewH])
 
-  const applyMove = useCallback(
-    (tx: number, ty: number) => {
-      const s = startCropRef.current
-      setCrop((prev) => {
-        if (!prev || fittedW <= 0 || fittedH <= 0) return prev
-        return clampCrop(
-          { ...prev, x: s.x + tx, y: s.y + ty },
-          fittedW,
-          fittedH,
-          ar,
-        )
-      })
+  const base = coverScale(natW, natH, viewW, viewH)
+  const totalScale = base * transform.scale
+  const imgW = natW * totalScale
+  const imgH = natH * totalScale
+
+  const applyPan = useCallback(
+    (tx: number, ty: number, baseTx: number, baseTy: number, scale: number) => {
+      setTransform(
+        clampTransform(
+          { scale, tx: baseTx + tx, ty: baseTy + ty },
+          natW,
+          natH,
+          viewW,
+          viewH,
+        ),
+      )
     },
-    [fittedW, fittedH, ar],
+    [natW, natH, viewW, viewH],
   )
 
-  const applyBR = useCallback(
-    (tx: number) => {
-      const s = startCropRef.current
-      const w = s.w + tx
-      setCrop((prev) => {
-        if (!prev || fittedW <= 0 || fittedH <= 0) return prev
-        return clampCrop({ x: s.x, y: s.y, w, h: w / ar }, fittedW, fittedH, ar)
-      })
+  const applyPinch = useCallback(
+    (nextScale: number, baseTx: number, baseTy: number, baseScale: number) => {
+      const prevTotal = base * baseScale
+      const clamped = Math.min(MAX_USER_SCALE, Math.max(MIN_USER_SCALE, nextScale))
+      const nextTotal = base * clamped
+      if (prevTotal <= 0) return
+      const ratio = nextTotal / prevTotal
+      const cx = viewW / 2
+      const cy = viewH / 2
+      const tx = cx - (cx - baseTx) * ratio
+      const ty = cy - (cy - baseTy) * ratio
+      setTransform(
+        clampTransform({ scale: clamped, tx, ty }, natW, natH, viewW, viewH),
+      )
     },
-    [fittedW, fittedH, ar],
+    [base, natW, natH, viewW, viewH],
   )
 
-  const applyTL = useCallback(
-    (tx: number, ty: number) => {
-      const s = startCropRef.current
-      const brx = s.x + s.w
-      const bry = s.y + s.h
-      let w = s.w - tx
-      let h = w / ar
-      let x = brx - w
-      let y = bry - h
-      setCrop((prev) => {
-        if (!prev || fittedW <= 0 || fittedH <= 0) return prev
-        return clampCrop({ x, y, w, h }, fittedW, fittedH, ar)
-      })
-    },
-    [fittedW, fittedH, ar],
-  )
-
-  const applyTR = useCallback(
-    (tx: number, ty: number) => {
-      const s = startCropRef.current
-      const blx = s.x
-      const bly = s.y + s.h
-      let w = s.w + tx
-      let h = w / ar
-      let y = bly - h
-      let x = blx
-      setCrop((prev) => {
-        if (!prev || fittedW <= 0 || fittedH <= 0) return prev
-        return clampCrop({ x, y, w, h }, fittedW, fittedH, ar)
-      })
-    },
-    [fittedW, fittedH, ar],
-  )
-
-  const applyBL = useCallback(
-    (tx: number, ty: number) => {
-      const s = startCropRef.current
-      const trx = s.x + s.w
-      const tryY = s.y
-      let h = s.h + ty
-      let w = h * ar
-      let x = trx - w
-      let y = tryY
-      setCrop((prev) => {
-        if (!prev || fittedW <= 0 || fittedH <= 0) return prev
-        return clampCrop({ x, y, w, h }, fittedW, fittedH, ar)
-      })
-    },
-    [fittedW, fittedH, ar],
-  )
-
-  const movePan = Gesture.Pan()
+  const pan = Gesture.Pan()
+    .runOnJS(true)
     .onBegin(() => {
-      if (crop) startCropRef.current = { ...crop }
+      startRef.current = { ...transformRef.current }
     })
-    .onUpdate((e) => applyMove(e.translationX, e.translationY))
+    .onUpdate((e) => {
+      applyPan(
+        e.translationX,
+        e.translationY,
+        startRef.current.tx,
+        startRef.current.ty,
+        startRef.current.scale,
+      )
+    })
 
-  const brPan = Gesture.Pan()
+  const pinch = Gesture.Pinch()
+    .runOnJS(true)
     .onBegin(() => {
-      if (crop) startCropRef.current = { ...crop }
+      pinchStartRef.current = { ...transformRef.current }
     })
-    .onUpdate((e) => applyBR(e.translationX))
+    .onUpdate((e) => {
+      applyPinch(
+        pinchStartRef.current.scale * e.scale,
+        pinchStartRef.current.tx,
+        pinchStartRef.current.ty,
+        pinchStartRef.current.scale,
+      )
+    })
 
-  const tlPan = Gesture.Pan()
-    .onBegin(() => {
-      if (crop) startCropRef.current = { ...crop }
-    })
-    .onUpdate((e) => applyTL(e.translationX, e.translationY))
-
-  const trPan = Gesture.Pan()
-    .onBegin(() => {
-      if (crop) startCropRef.current = { ...crop }
-    })
-    .onUpdate((e) => applyTR(e.translationX, e.translationY))
-
-  const blPan = Gesture.Pan()
-    .onBegin(() => {
-      if (crop) startCropRef.current = { ...crop }
-    })
-    .onUpdate((e) => applyBL(e.translationX, e.translationY))
+  const composed = Gesture.Simultaneous(pan, pinch)
 
   const confirm = useCallback(async () => {
-    if (!imageUri || !crop || natW <= 0 || natH <= 0 || fittedW <= 0) return
-    const s = natW / fittedW
-    let ox = Math.round(crop.x * s)
-    let oy = Math.round(crop.y * s)
-    let cw = Math.round(crop.w * s)
-    let ch = Math.round(crop.h * s)
+    if (!imageUri || natW <= 0 || natH <= 0 || viewW <= 0 || viewH <= 0) return
+    const s = coverScale(natW, natH, viewW, viewH) * transform.scale
+    if (s <= 0) return
+    let ox = Math.round(-transform.tx / s)
+    let oy = Math.round(-transform.ty / s)
+    let cw = Math.round(viewW / s)
+    let ch = Math.round(viewH / s)
     ox = Math.max(0, Math.min(ox, natW - 1))
     oy = Math.max(0, Math.min(oy, natH - 1))
     cw = Math.max(1, Math.min(cw, natW - ox))
     ch = Math.max(1, Math.min(ch, natH - oy))
+    // Keep upload aspect: crop then resize to target pixel ratio frame
+    const outW = aspectWidth
+    const outH = aspectHeight
     setBusy(true)
     try {
       const out = await ImageManipulator.manipulateAsync(
         imageUri,
-        [{ crop: { originX: ox, originY: oy, width: cw, height: ch } }],
+        [
+          { crop: { originX: ox, originY: oy, width: cw, height: ch } },
+          { resize: { width: outW, height: outH } },
+        ],
         { compress: 0.92, format: ImageManipulator.SaveFormat.JPEG },
       )
       onDone(out.uri)
@@ -244,156 +247,128 @@ export default function SeriesListCoverCropModal({
     } finally {
       setBusy(false)
     }
-  }, [imageUri, crop, natW, natH, fittedW, onDone])
+  }, [
+    imageUri,
+    natW,
+    natH,
+    viewW,
+    viewH,
+    transform,
+    aspectWidth,
+    aspectHeight,
+    onDone,
+  ])
 
-  const ready = !!crop && fittedW > 0 && fittedH > 0 && !loadErr
-
-  const liveCrop = useMemo(() => {
-    if (!crop || fittedW <= 0 || fittedH <= 0) return null
-    return {
-      x: crop.x,
-      y: crop.y,
-      w: crop.w,
-      h: crop.h,
-      sourceW: fittedW,
-      sourceH: fittedH,
-    }
-  }, [crop, fittedW, fittedH])
+  const ready = natW > 0 && natH > 0 && viewW > 0 && viewH > 0 && !loadErr && !busy
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onCancel}>
       <GestureHandlerRootView style={styles.flex1}>
         <StatusBar barStyle="light-content" />
         <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            Position cover
-          </Text>
-        </View>
-        <Text style={styles.hint} numberOfLines={5}>
-          Drag the gold frame to move. Drag corner dots to resize. Check the{' '}
-          <Text style={styles.hintEm}>Home continue</Text> preview below for the learner
-          curve. <Text style={styles.hintEm}>Save cover</Text> applies this crop;{' '}
-          <Text style={styles.hintEm}>Cancel</Text> discards.
-        </Text>
-        <View
-          style={styles.stage}
-          onLayout={(e) => {
-            const { width, height } = e.nativeEvent.layout
-            setSlotW(width)
-            setSlotH(height)
-          }}
-        >
-          {!imageUri || natW <= 0 ? (
-            <ActivityIndicator color="#888" />
-          ) : loadErr ? (
-            <Text style={styles.err}>{loadErr}</Text>
-          ) : (
-            <View style={[styles.imageSlot, { width: fittedW, height: fittedH }]}>
-              <Image source={{ uri: imageUri }} style={styles.image} resizeMode="contain" />
-              {crop && (
-                <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-                  <DimBands crop={crop} dispW={fittedW} dispH={fittedH} />
-                  <GestureDetector gesture={movePan}>
-                    <View
-                      style={[
-                        styles.cropHit,
-                        {
-                          left: crop.x,
-                          top: crop.y,
-                          width: crop.w,
-                          height: crop.h,
-                        },
-                      ]}
-                    />
-                  </GestureDetector>
-                  <View
-                    pointerEvents="none"
-                    style={[
-                      styles.cropOutline,
-                      {
-                        left: crop.x,
-                        top: crop.y,
-                        width: crop.w,
-                        height: crop.h,
-                      },
-                    ]}
-                  />
-                  <CornerHandle gesture={tlPan} left={crop.x - HANDLE / 2} top={crop.y - HANDLE / 2} />
-                  <CornerHandle gesture={trPan} left={crop.x + crop.w - HANDLE / 2} top={crop.y - HANDLE / 2} />
-                  <CornerHandle gesture={blPan} left={crop.x - HANDLE / 2} top={crop.y + crop.h - HANDLE / 2} />
-                  <CornerHandle gesture={brPan} left={crop.x + crop.w - HANDLE / 2} top={crop.y + crop.h - HANDLE / 2} />
-                </View>
-              )}
-            </View>
-          )}
-        </View>
-
-        <View style={styles.homePreviewBlock}>
-          <Text style={styles.homePreviewLabel}>Home continue card</Text>
-          <HomeHeroCoverShapePreview
-            imageUri={imageUri}
-            liveCrop={liveCrop}
-            height={140}
-            showChrome
-          />
-        </View>
-
-        <View style={styles.footer}>
-          <View style={styles.footerRow}>
-            <Pressable
-              onPress={onCancel}
-              style={({ pressed }) => [styles.footerCancel, pressed && styles.footerCancelPressed]}
-              hitSlop={8}
-              disabled={busy}
-            >
-              <Text style={[styles.footerCancelText, busy && styles.footerCancelDisabled]}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => void confirm()}
-              style={({ pressed }) => [
-                styles.footerBtn,
-                (!ready || busy) && styles.footerBtnDisabled,
-                pressed && ready && !busy && styles.footerBtnPressed,
-              ]}
-              disabled={!ready || busy}
-            >
-              <Text style={styles.footerBtnText}>{busy ? 'Saving…' : 'Save cover'}</Text>
-            </Pressable>
+          <View style={styles.header}>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              Position Home cover
+            </Text>
           </View>
-        </View>
+          <Text style={styles.hint}>
+            Drag to move · pinch to zoom. The curved window is what learners see on
+            Home — the green side stays covered. Speaks tab still uses the full
+            rectangle behind this shape.
+          </Text>
+
+          <View
+            style={styles.stage}
+            onLayout={(e) => {
+              const { width, height } = e.nativeEvent.layout
+              setSlotW(width)
+              setSlotH(height)
+            }}
+          >
+            {!imageUri || natW <= 0 || viewW <= 0 ? (
+              <ActivityIndicator color="#888" />
+            ) : loadErr ? (
+              <Text style={styles.err}>{loadErr}</Text>
+            ) : (
+              <GestureDetector gesture={composed}>
+                <View style={[styles.viewport, { width: viewW, height: viewH }]}>
+                  <Image
+                    source={{ uri: imageUri }}
+                    style={{
+                      position: 'absolute',
+                      width: imgW,
+                      height: imgH,
+                      left: transform.tx,
+                      top: transform.ty,
+                    }}
+                    resizeMode="stretch"
+                  />
+
+                  {/* Panel covers non-sweep; sweep is a hole showing the photo */}
+                  <Svg
+                    width={viewW}
+                    height={viewH}
+                    style={StyleSheet.absoluteFill}
+                    pointerEvents="none"
+                  >
+                    <Path
+                      d={`M0 0 H${viewW} V${viewH} H0 Z ${sweepPath}`}
+                      fill={PANEL}
+                      fillRule="evenodd"
+                    />
+                    <Path
+                      d={sweepPath}
+                      fill="none"
+                      stroke={GOLD}
+                      strokeWidth={2}
+                    />
+                  </Svg>
+
+                  <View style={styles.chrome} pointerEvents="none">
+                    <Text style={styles.lessonNo}>LESSON …</Text>
+                    <Text style={[styles.title, { maxWidth: titleMax }]} numberOfLines={2}>
+                      Home continue card
+                    </Text>
+                    <View style={styles.pill}>
+                      <Text style={styles.pillText}>LESSON PROGRESS</Text>
+                    </View>
+                    <View style={styles.continue}>
+                      <Text style={styles.continueText}>Continue • … min</Text>
+                    </View>
+                  </View>
+                </View>
+              </GestureDetector>
+            )}
+          </View>
+
+          <View style={styles.footer}>
+            <View style={styles.footerRow}>
+              <Pressable
+                onPress={onCancel}
+                style={({ pressed }) => [styles.footerCancel, pressed && styles.footerCancelPressed]}
+                hitSlop={8}
+                disabled={busy}
+              >
+                <Text style={[styles.footerCancelText, busy && styles.footerCancelDisabled]}>
+                  Cancel
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void confirm()}
+                style={({ pressed }) => [
+                  styles.footerBtn,
+                  (!ready || busy) && styles.footerBtnDisabled,
+                  pressed && ready && !busy && styles.footerBtnPressed,
+                ]}
+                disabled={!ready || busy}
+              >
+                <Text style={styles.footerBtnText}>{busy ? 'Saving…' : 'Save cover'}</Text>
+              </Pressable>
+            </View>
+          </View>
         </SafeAreaView>
       </GestureHandlerRootView>
     </Modal>
-  )
-}
-
-function DimBands({ crop, dispW, dispH }: { crop: Crop; dispW: number; dispH: number }) {
-  const { x, y, w, h } = crop
-  return (
-    <>
-      <View style={[styles.dim, { left: 0, top: 0, width: dispW, height: y }]} />
-      <View style={[styles.dim, { left: 0, top: y + h, width: dispW, height: Math.max(0, dispH - y - h) }]} />
-      <View style={[styles.dim, { left: 0, top: y, width: x, height: h }]} />
-      <View style={[styles.dim, { left: x + w, top: y, width: Math.max(0, dispW - x - w), height: h }]} />
-    </>
-  )
-}
-
-function CornerHandle({
-  gesture,
-  left,
-  top,
-}: {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RNGH gesture union
-  gesture: any
-  left: number
-  top: number
-}) {
-  return (
-    <GestureDetector gesture={gesture}>
-      <View style={[styles.handle, { left, top }]} />
-    </GestureDetector>
   )
 }
 
@@ -421,27 +396,66 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
     lineHeight: 18,
   },
-  hintEm: { color: '#e4e4e7', fontWeight: '600' },
-  homePreviewBlock: {
-    flexShrink: 0,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 4,
-  },
-  homePreviewLabel: {
-    color: '#a1a1aa',
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 6,
-    letterSpacing: 0.3,
-  },
   stage: {
     flex: 1,
-    minHeight: 120,
+    minHeight: 160,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  viewport: {
+    borderRadius: 22,
+    overflow: 'hidden',
+    backgroundColor: PANEL,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(243,241,233,0.12)',
+  },
+  chrome: {
+    ...StyleSheet.absoluteFillObject,
+    paddingTop: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+  },
+  lessonNo: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 1.1,
+    color: GOLD,
+    marginBottom: 6,
+  },
+  title: {
+    fontSize: 16,
+    fontWeight: '600',
+    lineHeight: 20,
+    color: CREAM,
+    marginBottom: 8,
+  },
+  pill: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(243,241,233,0.085)',
+    marginBottom: 10,
+  },
+  pillText: {
+    fontSize: 9,
+    fontWeight: '600',
+    letterSpacing: 0.9,
+    color: MUTED,
+  },
+  continue: {
+    marginTop: 'auto',
+    borderRadius: 999,
+    backgroundColor: SPROUT_SOFT,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  continueText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: INK,
   },
   footer: {
     flexShrink: 0,
@@ -471,7 +485,7 @@ const styles = StyleSheet.create({
   footerCancelDisabled: { opacity: 0.4 },
   footerBtn: {
     flex: 1,
-    backgroundColor: '#c9a227',
+    backgroundColor: GOLD,
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: 'center',
@@ -483,34 +497,6 @@ const styles = StyleSheet.create({
     color: '#0a0a0a',
     fontSize: 17,
     fontWeight: '700',
-  },
-  imageSlot: {
-    position: 'relative',
-    overflow: 'hidden',
-    backgroundColor: '#111',
-  },
-  image: { width: '100%', height: '100%' },
-  dim: {
-    position: 'absolute',
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
-  cropHit: {
-    position: 'absolute',
-    backgroundColor: 'transparent',
-  },
-  cropOutline: {
-    position: 'absolute',
-    borderWidth: 2,
-    borderColor: 'rgba(201,162,39,0.95)',
-  },
-  handle: {
-    position: 'absolute',
-    width: HANDLE,
-    height: HANDLE,
-    borderRadius: HANDLE / 2,
-    backgroundColor: 'rgba(255,255,255,0.95)',
-    borderWidth: 2,
-    borderColor: '#c9a227',
   },
   err: { color: '#f87171', padding: 16, textAlign: 'center' },
 })

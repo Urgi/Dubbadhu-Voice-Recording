@@ -43,6 +43,23 @@ export async function uploadSeriesListCoverImage(
   /** Match learner/catalog ids (`series1`, …) — avoids duplicate `Series1` vs `series1` objects in Storage. */
   const folder = safeId.toLowerCase()
   const path = `${folder}/list-cover.jpg`
+  return uploadSeriesCoverJpeg(localUri, path)
+}
+
+export async function uploadSeriesHomeCoverImage(
+  localUri: string,
+  seriesId: string,
+): Promise<{ publicUrl: string } | { error: string }> {
+  const safeId = seriesId.trim().replace(/[^a-zA-Z0-9_-]/g, '_')
+  const folder = safeId.toLowerCase()
+  const path = `${folder}/home-cover.jpg`
+  return uploadSeriesCoverJpeg(localUri, path)
+}
+
+async function uploadSeriesCoverJpeg(
+  localUri: string,
+  path: string,
+): Promise<{ publicUrl: string } | { error: string }> {
   try {
     /** RN `fetch(file://…)` often yields an empty `Blob` — read bytes via expo-file-system instead. */
     const b64 = await FileSystem.readAsStringAsync(localUri, {

@@ -62,7 +62,9 @@ import {
   SERIES_LIST_COVER_DISPLAY_ASPECT_RATIO,
   SERIES_LIST_COVER_DISPLAY_SQUASH,
   uploadSeriesListCoverImage,
+  uploadSeriesHomeCoverImage,
 } from '../lib/seriesListCover'
+import { HOME_CONTINUE_CARD_ASPECT } from '../lib/homeHeroCover'
 import supabase from '../lib/supabase'
 import { findVideoReviewScreensMissingUrl, type VideoReviewGap } from '../lib/lessonVideoReviewGate'
 import { VOICE_BANK_LANGUAGE, wordsBankSeriesLabelFromSeriesId } from '../lib/voiceBankLabels'
@@ -175,12 +177,17 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   const [wordBankReview, setWordBankReview] = useState<SeriesWordBankReviewSummary | null>(null)
   const [wordBankReviewError, setWordBankReviewError] = useState<string | null>(null)
   const [listCoverUrl, setListCoverUrl] = useState<string | null>(null)
+  const [homeCoverUrl, setHomeCoverUrl] = useState<string | null>(null)
   const [listCoverPreviewNonce, setListCoverPreviewNonce] = useState(0)
+  const [homeCoverPreviewNonce, setHomeCoverPreviewNonce] = useState(0)
   const [coverUploading, setCoverUploading] = useState(false)
+  const [homeCoverUploading, setHomeCoverUploading] = useState(false)
   const [coverCropVisible, setCoverCropVisible] = useState(false)
   const [coverCropUri, setCoverCropUri] = useState<string | null>(null)
-  /** New key each pick so the crop modal remounts (same `file://` URI twice would otherwise keep stale crop state). */
   const [coverCropSession, setCoverCropSession] = useState(0)
+  const [homeCoverCropVisible, setHomeCoverCropVisible] = useState(false)
+  const [homeCoverCropUri, setHomeCoverCropUri] = useState<string | null>(null)
+  const [homeCoverCropSession, setHomeCoverCropSession] = useState(0)
   const [introVideoUrl, setIntroVideoUrl] = useState<string | null>(null)
   const [introVideoNoTranslationUrl, setIntroVideoNoTranslationUrl] = useState<string | null>(null)
   const [introVideoSaving, setIntroVideoSaving] = useState(false)
@@ -348,7 +355,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     try {
       const { data: seriesRow, error: seriesErr } = await supabase
         .from('lesson_series')
-        .select('title,intro_script,intro_video_url,intro_video_no_translation_url,approved,audio_recorded,series_status,list_cover_url')
+        .select('title,intro_script,intro_video_url,intro_video_no_translation_url,approved,audio_recorded,series_status,list_cover_url,home_cover_url')
         .eq('id', seriesId)
         .maybeSingle()
 
@@ -367,6 +374,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
           audio_recorded?: boolean | null
           series_status?: string | null
           list_cover_url?: string | null
+          home_cover_url?: string | null
           intro_video_url?: string | null
           intro_video_no_translation_url?: string | null
         }
@@ -376,6 +384,11 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
           const raw = sr.list_cover_url
           const trimmed = typeof raw === 'string' ? raw.trim() : ''
           setListCoverUrl(trimmed || null)
+        }
+        {
+          const rawHome = sr.home_cover_url
+          const trimmedHome = typeof rawHome === 'string' ? rawHome.trim() : ''
+          setHomeCoverUrl(trimmedHome || null)
         }
         {
           const rawV = sr.intro_video_url
@@ -400,6 +413,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
         setLessonSeriesRowExists(false)
         setIntroScript(null)
         setListCoverUrl(null)
+        setHomeCoverUrl(null)
         resolvedStatus = 'draft'
         setSeriesStatus('draft')
       }
@@ -718,6 +732,107 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
     },
     [persistSpeakListCoverFile],
   )
+
+  const persistHomeCoverFile = useCallback(
+    async (localUri: string) => {
+      if (shouldConfirmAdminLiveSeriesSave(role ?? undefined, seriesStatus)) {
+        const proceed = await confirmAdminLiveSeriesSave(seriesStatus, 'Home cover')
+        if (!proceed) return
+      }
+      setHomeCoverUploading(true)
+      const up = await uploadSeriesHomeCoverImage(localUri, seriesId)
+      if ('error' in up) {
+        setHomeCoverUploading(false)
+        Alert.alert(
+          'Could not upload Home cover',
+          `${up.error}\n\nCreate a public bucket "series-list-covers" if missing and run sql/storage_series_list_covers.sql in the Supabase SQL Editor.`,
+        )
+        return
+      }
+      const versionedUrl = listCoverUrlWithVersion(up.publicUrl)
+      const { data: rowAfter, error: dbErr } = await supabase
+        .from('lesson_series')
+        .update({ home_cover_url: versionedUrl })
+        .eq('id', seriesId)
+        .select('id')
+        .maybeSingle()
+      setHomeCoverUploading(false)
+      if (dbErr) {
+        Alert.alert('Could not save URL', withLessonSeriesRlsHint(dbErr.message))
+        return
+      }
+      if (!rowAfter) {
+        Alert.alert(
+          'Cover uploaded but not linked',
+          'Storage has the new file, but no lesson_series row matched this series id.',
+        )
+        return
+      }
+      setHomeCoverUrl(versionedUrl)
+      setHomeCoverPreviewNonce((n) => n + 1)
+      Alert.alert('Home cover saved', 'Learner Home continue card will use this after catalog refresh.')
+    },
+    [role, seriesId, seriesStatus],
+  )
+
+  const pickHomeCover = useCallback(async () => {
+    if (!lessonSeriesRowExists) {
+      Alert.alert('Series row required', 'Save the series script once so a lesson_series row exists, then add a cover.')
+      return
+    }
+    if (!scriptEditable) {
+      Alert.alert('View only', 'Cover can be changed when the series is editable (same rules as script).')
+      return
+    }
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (!perm.granted) {
+      Alert.alert('Permission needed', 'Allow photo library access to choose a cover image.')
+      return
+    }
+    const picked = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 1,
+    })
+    if (picked.canceled || !picked.assets?.[0]?.uri) return
+    setHomeCoverCropSession((s) => s + 1)
+    setHomeCoverCropUri(picked.assets[0].uri)
+    setHomeCoverCropVisible(true)
+  }, [lessonSeriesRowExists, scriptEditable])
+
+  const onHomeCoverCropCancel = useCallback(() => {
+    setHomeCoverCropVisible(false)
+    setHomeCoverCropUri(null)
+  }, [])
+
+  const onHomeCoverCropDone = useCallback(
+    async (croppedUri: string) => {
+      setHomeCoverCropVisible(false)
+      setHomeCoverCropUri(null)
+      await persistHomeCoverFile(croppedUri)
+    },
+    [persistHomeCoverFile],
+  )
+
+  const clearHomeCover = useCallback(async () => {
+    if (!lessonSeriesRowExists || !scriptEditable) return
+    if (shouldConfirmAdminLiveSeriesSave(role ?? undefined, seriesStatus)) {
+      const proceed = await confirmAdminLiveSeriesSave(seriesStatus, 'Home cover')
+      if (!proceed) return
+    }
+    setHomeCoverUploading(true)
+    const { error: dbErr } = await supabase
+      .from('lesson_series')
+      .update({ home_cover_url: null })
+      .eq('id', seriesId)
+    setHomeCoverUploading(false)
+    if (dbErr) {
+      Alert.alert('Could not clear Home cover', withLessonSeriesRlsHint(dbErr.message))
+      return
+    }
+    setHomeCoverUrl(null)
+    setHomeCoverPreviewNonce((n) => n + 1)
+  }, [lessonSeriesRowExists, scriptEditable, role, seriesId, seriesStatus])
 
   const clearSpeakListCover = useCallback(async () => {
     if (!lessonSeriesRowExists || !scriptEditable) return
@@ -1307,6 +1422,8 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
   }
 
   const listCoverDisplayUri = listCoverPreviewUri(listCoverUrl, listCoverPreviewNonce)
+  const homeCoverDisplayUri = listCoverPreviewUri(homeCoverUrl, homeCoverPreviewNonce)
+  const homePreviewUri = homeCoverDisplayUri ?? listCoverDisplayUri
 
   const listHeader = (
     <>
@@ -1337,6 +1454,9 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
       {showSpeakTabCoverSection ? (
         <View style={styles.coverBlock}>
           <AdminSectionHeader label="Speak tab cover" emphasis="gold" />
+          <Text style={styles.coverHomeHint}>
+            Full-width rectangle on the Speak locked-series strip.
+          </Text>
           <View style={styles.coverPreviewOuter}>
             {listCoverDisplayUri ? (
               <Image
@@ -1348,20 +1468,11 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
             ) : (
               <View style={styles.coverPreviewPlaceholder}>
                 <Text style={styles.coverPreviewPlaceholderText}>
-                  No custom cover — learner app uses bundled asset or HTML-style silhouette.
+                  No Speak cover — learner app uses bundled asset or silhouette.
                 </Text>
               </View>
             )}
           </View>
-          <Text style={styles.coverHomeLabel}>Home continue card (learner)</Text>
-          <Text style={styles.coverHomeHint}>
-            Same cover, clipped by the Home hero curve — check framing before publish.
-          </Text>
-          <HomeHeroCoverShapePreview
-            imageUri={listCoverDisplayUri}
-            height={196}
-            style={styles.coverHomePreview}
-          />
           <View style={styles.coverActionsRow}>
             <Pressable
               style={[
@@ -1372,7 +1483,7 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
               disabled={!scriptEditable || coverUploading || !lessonSeriesRowExists}
             >
               <Text style={styles.secondaryBtnText}>
-                {coverUploading ? 'Working…' : 'Choose image & position'}
+                {coverUploading ? 'Working…' : 'Choose & position Speak cover'}
               </Text>
             </Pressable>
             {listCoverUrl ? (
@@ -1382,6 +1493,43 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
                 disabled={!scriptEditable || coverUploading}
               >
                 <Text style={styles.secondaryBtnText}>Clear</Text>
+              </Pressable>
+            ) : null}
+          </View>
+
+          <AdminSectionHeader label="Home continue cover" emphasis="gold" />
+          <Text style={styles.coverHomeHint}>
+            Separate image for the Home continue card (curved clip). Falls back to Speak cover if unset.
+          </Text>
+          <HomeHeroCoverShapePreview
+            imageUri={homePreviewUri}
+            height={196}
+            style={styles.coverHomePreview}
+          />
+          <View style={styles.coverActionsRow}>
+            <Pressable
+              style={[
+                styles.secondaryBtn,
+                (!scriptEditable || homeCoverUploading || !lessonSeriesRowExists) &&
+                  styles.btnDisabledOpacity,
+              ]}
+              onPress={() => void pickHomeCover()}
+              disabled={!scriptEditable || homeCoverUploading || !lessonSeriesRowExists}
+            >
+              <Text style={styles.secondaryBtnText}>
+                {homeCoverUploading ? 'Working…' : 'Choose & position Home cover'}
+              </Text>
+            </Pressable>
+            {homeCoverUrl ? (
+              <Pressable
+                style={[
+                  styles.secondaryBtn,
+                  (!scriptEditable || homeCoverUploading) && styles.btnDisabledOpacity,
+                ]}
+                onPress={() => void clearHomeCover()}
+                disabled={!scriptEditable || homeCoverUploading}
+              >
+                <Text style={styles.secondaryBtnText}>Clear Home cover</Text>
               </Pressable>
             ) : null}
           </View>
@@ -2150,10 +2298,21 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
         key={`cover-crop-${coverCropSession}`}
         visible={coverCropVisible}
         imageUri={coverCropUri}
+        variant="speak"
         aspectWidth={SERIES_LIST_COVER_ASPECT[0]}
         aspectHeight={SERIES_LIST_COVER_ASPECT[1]}
         onCancel={onCoverCropCancel}
         onDone={onCoverCropDone}
+      />
+      <SeriesListCoverCropModal
+        key={`home-cover-crop-${homeCoverCropSession}`}
+        visible={homeCoverCropVisible}
+        imageUri={homeCoverCropUri}
+        variant="home"
+        aspectWidth={HOME_CONTINUE_CARD_ASPECT[0]}
+        aspectHeight={HOME_CONTINUE_CARD_ASPECT[1]}
+        onCancel={onHomeCoverCropCancel}
+        onDone={onHomeCoverCropDone}
       />
     </View>
   )

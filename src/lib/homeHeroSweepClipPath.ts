@@ -6,6 +6,9 @@
 export const HERO_SWEEP_CLIP_PATH_OBJECT =
   'M0.284,0 C0.76,0.034 0.29,0.762 1,0.699 L1,0 Z'
 
+/** Left edge of visible photo at top (objectBoundingBox x). */
+export const HOME_SWEEP_HOLE_MIN_X_RATIO = 0.284
+
 /** Scale objectBoundingBox path coords to pixel width/height. */
 export function scaleHeroSweepPath(w: number, h: number): string {
   const width = Math.max(1, Number(w) || 1)

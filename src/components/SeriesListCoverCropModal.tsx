@@ -13,7 +13,11 @@ import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-g
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as ImageManipulator from 'expo-image-manipulator'
 import Svg, { Path } from 'react-native-svg'
-import { scaleHeroSweepPath } from '../lib/homeHeroSweepClipPath'
+import { scaleHeroSweepPath, HOME_SWEEP_HOLE_MIN_X_RATIO } from '../lib/homeHeroSweepClipPath'
+import {
+  HOME_CONTINUE_CARD_OUTPUT_HEIGHT,
+  HOME_CONTINUE_CARD_OUTPUT_WIDTH,
+} from '../lib/homeHeroCover'
 
 const PANEL = '#16281F'
 const GOLD = '#c9a227'
@@ -24,12 +28,19 @@ const INK = '#12240F'
 const MIN_USER_SCALE = 1
 const MAX_USER_SCALE = 4
 
+export type CoverCropVariant = 'speak' | 'home'
+
 export type SeriesListCoverCropModalProps = {
   visible: boolean
   imageUri: string | null
   /** Crop / upload target aspect = width / height. */
   aspectWidth: number
   aspectHeight: number
+  /** Speak = full rectangle; Home = curved continue-card window. */
+  variant?: CoverCropVariant
+  /** JPEG output size on save (defaults to aspectWidth × aspectHeight). */
+  outputWidth?: number
+  outputHeight?: number
   onCancel: () => void
   onDone: (croppedFileUri: string) => void | Promise<void>
 }
@@ -47,6 +58,7 @@ function clampTransform(
   natH: number,
   viewW: number,
   viewH: number,
+  variant: CoverCropVariant,
 ): Transform {
   const scale = Math.min(MAX_USER_SCALE, Math.max(MIN_USER_SCALE, t.scale))
   const base = coverScale(natW, natH, viewW, viewH)
@@ -55,7 +67,9 @@ function clampTransform(
   const imgH = natH * total
   const minTx = Math.min(0, viewW - imgW)
   const minTy = Math.min(0, viewH - imgH)
-  const tx = Math.max(minTx, Math.min(0, t.tx))
+  /** Home: left ~28% is panel — allow shifting photo right so framing matches the curved window. */
+  const maxTx = variant === 'home' ? viewW * HOME_SWEEP_HOLE_MIN_X_RATIO : 0
+  const tx = Math.max(minTx, Math.min(maxTx, t.tx))
   const ty = Math.max(minTy, Math.min(0, t.ty))
   return { scale, tx, ty }
 }
@@ -65,6 +79,7 @@ function centeredCoverTransform(
   natH: number,
   viewW: number,
   viewH: number,
+  variant: CoverCropVariant,
 ): Transform {
   const base = coverScale(natW, natH, viewW, viewH)
   const imgW = natW * base
@@ -75,6 +90,7 @@ function centeredCoverTransform(
     natH,
     viewW,
     viewH,
+    variant,
   )
 }
 
@@ -87,9 +103,15 @@ export default function SeriesListCoverCropModal({
   imageUri,
   aspectWidth,
   aspectHeight,
+  variant = 'home',
+  outputWidth,
+  outputHeight,
   onCancel,
   onDone,
 }: SeriesListCoverCropModalProps) {
+  const isHome = variant === 'home'
+  const outW = outputWidth ?? (isHome ? HOME_CONTINUE_CARD_OUTPUT_WIDTH : aspectWidth)
+  const outH = outputHeight ?? (isHome ? HOME_CONTINUE_CARD_OUTPUT_HEIGHT : aspectHeight)
   const ar = aspectWidth / Math.max(1, aspectHeight)
   const [natW, setNatW] = useState(0)
   const [natH, setNatH] = useState(0)
@@ -143,9 +165,9 @@ export default function SeriesListCoverCropModal({
   useEffect(() => {
     if (!visible || natW <= 0 || natH <= 0 || viewW <= 0 || viewH <= 0) return
     if (didInit.current) return
-    setTransform(centeredCoverTransform(natW, natH, viewW, viewH))
+    setTransform(centeredCoverTransform(natW, natH, viewW, viewH, variant))
     didInit.current = true
-  }, [visible, natW, natH, viewW, viewH])
+  }, [visible, natW, natH, viewW, viewH, variant])
 
   const base = coverScale(natW, natH, viewW, viewH)
   const totalScale = base * transform.scale
@@ -161,10 +183,11 @@ export default function SeriesListCoverCropModal({
           natH,
           viewW,
           viewH,
+          variant,
         ),
       )
     },
-    [natW, natH, viewW, viewH],
+    [natW, natH, viewW, viewH, variant],
   )
 
   const applyPinch = useCallback(
@@ -179,10 +202,10 @@ export default function SeriesListCoverCropModal({
       const tx = cx - (cx - baseTx) * ratio
       const ty = cy - (cy - baseTy) * ratio
       setTransform(
-        clampTransform({ scale: clamped, tx, ty }, natW, natH, viewW, viewH),
+        clampTransform({ scale: clamped, tx, ty }, natW, natH, viewW, viewH, variant),
       )
     },
-    [base, natW, natH, viewW, viewH],
+    [base, natW, natH, viewW, viewH, variant],
   )
 
   const pan = Gesture.Pan()
@@ -229,15 +252,15 @@ export default function SeriesListCoverCropModal({
     cw = Math.max(1, Math.min(cw, natW - ox))
     ch = Math.max(1, Math.min(ch, natH - oy))
     // Keep upload aspect: crop then resize to target pixel ratio frame
-    const outW = aspectWidth
-    const outH = aspectHeight
+    const outWFinal = outW
+    const outHFinal = outH
     setBusy(true)
     try {
       const out = await ImageManipulator.manipulateAsync(
         imageUri,
         [
           { crop: { originX: ox, originY: oy, width: cw, height: ch } },
-          { resize: { width: outW, height: outH } },
+          { resize: { width: outWFinal, height: outHFinal } },
         ],
         { compress: 0.92, format: ImageManipulator.SaveFormat.JPEG },
       )
@@ -256,6 +279,8 @@ export default function SeriesListCoverCropModal({
     transform,
     aspectWidth,
     aspectHeight,
+    outW,
+    outH,
     onDone,
   ])
 
@@ -268,13 +293,13 @@ export default function SeriesListCoverCropModal({
         <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
           <View style={styles.header}>
             <Text style={styles.headerTitle} numberOfLines={1}>
-              Position Home cover
+              {isHome ? 'Position Home cover' : 'Position Speak cover'}
             </Text>
           </View>
           <Text style={styles.hint}>
-            Drag to move · pinch to zoom. The curved window is what learners see on
-            Home — the green side stays covered. Speaks tab still uses the full
-            rectangle behind this shape.
+            {isHome
+              ? 'Drag to move · pinch to zoom. The curved window matches the Home continue card — the green side stays covered.'
+              : 'Drag to move · pinch to zoom. Full rectangle is used on the Speak tab locked-series strip.'}
           </Text>
 
           <View
@@ -304,38 +329,45 @@ export default function SeriesListCoverCropModal({
                     resizeMode="stretch"
                   />
 
-                  {/* Panel covers non-sweep; sweep is a hole showing the photo */}
-                  <Svg
-                    width={viewW}
-                    height={viewH}
-                    style={StyleSheet.absoluteFill}
-                    pointerEvents="none"
-                  >
-                    <Path
-                      d={`M0 0 H${viewW} V${viewH} H0 Z ${sweepPath}`}
-                      fill={PANEL}
-                      fillRule="evenodd"
+                  {isHome ? (
+                    <>
+                      <Svg
+                        width={viewW}
+                        height={viewH}
+                        style={StyleSheet.absoluteFill}
+                        pointerEvents="none"
+                      >
+                        <Path
+                          d={`M0 0 H${viewW} V${viewH} H0 Z ${sweepPath}`}
+                          fill={PANEL}
+                          fillRule="evenodd"
+                        />
+                        <Path
+                          d={sweepPath}
+                          fill="none"
+                          stroke={GOLD}
+                          strokeWidth={2}
+                        />
+                      </Svg>
+                      <View style={styles.chrome} pointerEvents="none">
+                        <Text style={styles.lessonNo}>LESSON …</Text>
+                        <Text style={[styles.title, { maxWidth: titleMax }]} numberOfLines={2}>
+                          Home continue card
+                        </Text>
+                        <View style={styles.pill}>
+                          <Text style={styles.pillText}>LESSON PROGRESS</Text>
+                        </View>
+                        <View style={styles.continue}>
+                          <Text style={styles.continueText}>Continue • … min</Text>
+                        </View>
+                      </View>
+                    </>
+                  ) : (
+                    <View
+                      style={[styles.speakFrame, { width: viewW, height: viewH }]}
+                      pointerEvents="none"
                     />
-                    <Path
-                      d={sweepPath}
-                      fill="none"
-                      stroke={GOLD}
-                      strokeWidth={2}
-                    />
-                  </Svg>
-
-                  <View style={styles.chrome} pointerEvents="none">
-                    <Text style={styles.lessonNo}>LESSON …</Text>
-                    <Text style={[styles.title, { maxWidth: titleMax }]} numberOfLines={2}>
-                      Home continue card
-                    </Text>
-                    <View style={styles.pill}>
-                      <Text style={styles.pillText}>LESSON PROGRESS</Text>
-                    </View>
-                    <View style={styles.continue}>
-                      <Text style={styles.continueText}>Continue • … min</Text>
-                    </View>
-                  </View>
+                  )}
                 </View>
               </GestureDetector>
             )}
@@ -410,6 +442,12 @@ const styles = StyleSheet.create({
     backgroundColor: PANEL,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(243,241,233,0.12)',
+  },
+  speakFrame: {
+    ...StyleSheet.absoluteFillObject,
+    borderWidth: 2,
+    borderColor: GOLD,
+    borderRadius: 10,
   },
   chrome: {
     ...StyleSheet.absoluteFillObject,

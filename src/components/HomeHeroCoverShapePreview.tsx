@@ -8,7 +8,7 @@ import {
   type ViewStyle,
 } from 'react-native'
 import Svg, { Path } from 'react-native-svg'
-import { scaleHeroSweepPath } from '../lib/homeHeroSweepClipPath'
+import { scaleHeroSweepPath, HOME_SWEEP_PANEL_TEXT_WIDTH_RATIO } from '../lib/homeHeroSweepClipPath'
 
 const PANEL = '#16281F'
 const CREAM = '#F3F1E9'
@@ -49,7 +49,7 @@ export default function HomeHeroCoverShapePreview({
 }: HomeHeroCoverShapePreviewProps) {
   const [width, setWidth] = useState(320)
   const sweepPath = scaleHeroSweepPath(width, height)
-  const titleMax = Math.round(width * 0.45)
+  const titleMax = Math.round(width * HOME_SWEEP_PANEL_TEXT_WIDTH_RATIO)
 
   const photoStyle = useMemo(() => {
     if (

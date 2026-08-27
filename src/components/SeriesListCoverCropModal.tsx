@@ -13,7 +13,12 @@ import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-g
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as ImageManipulator from 'expo-image-manipulator'
 import Svg, { Path } from 'react-native-svg'
-import { scaleHeroSweepPath, HOME_SWEEP_HOLE_MIN_X_RATIO } from '../lib/homeHeroSweepClipPath'
+import {
+  scaleHeroSweepPath,
+  HOME_SWEEP_HOLE_MIN_X_RATIO,
+  HOME_SWEEP_PANEL_TEXT_WIDTH_RATIO,
+  HOME_SWEEP_VISIBLE_CENTER_X_RATIO,
+} from '../lib/homeHeroSweepClipPath'
 import {
   HOME_CONTINUE_CARD_OUTPUT_HEIGHT,
   HOME_CONTINUE_CARD_OUTPUT_WIDTH,
@@ -67,7 +72,7 @@ function clampTransform(
   const imgH = natH * total
   const minTx = Math.min(0, viewW - imgW)
   const minTy = Math.min(0, viewH - imgH)
-  /** Home: left ~28% is panel — allow shifting photo right so framing matches the curved window. */
+  /** Home: left ~40% is panel — allow shifting photo right so framing matches the curved window. */
   const maxTx = variant === 'home' ? viewW * HOME_SWEEP_HOLE_MIN_X_RATIO : 0
   const tx = Math.max(minTx, Math.min(maxTx, t.tx))
   const ty = Math.max(minTy, Math.min(0, t.ty))
@@ -84,14 +89,13 @@ function centeredCoverTransform(
   const base = coverScale(natW, natH, viewW, viewH)
   const imgW = natW * base
   const imgH = natH * base
-  return clampTransform(
-    { scale: 1, tx: (viewW - imgW) / 2, ty: (viewH - imgH) / 2 },
-    natW,
-    natH,
-    viewW,
-    viewH,
-    variant,
-  )
+  let tx = (viewW - imgW) / 2
+  const ty = (viewH - imgH) / 2
+  if (variant === 'home') {
+    const visibleCenterX = viewW * HOME_SWEEP_VISIBLE_CENTER_X_RATIO
+    tx = visibleCenterX - imgW / 2
+  }
+  return clampTransform({ scale: 1, tx, ty }, natW, natH, viewW, viewH, variant)
 }
 
 /**
@@ -139,7 +143,7 @@ export default function SeriesListCoverCropModal({
 
   const { w: viewW, h: viewH } = viewSize
   const sweepPath = viewW > 0 && viewH > 0 ? scaleHeroSweepPath(viewW, viewH) : ''
-  const titleMax = Math.round(viewW * 0.45)
+  const titleMax = Math.round(viewW * HOME_SWEEP_PANEL_TEXT_WIDTH_RATIO)
 
   useEffect(() => {
     if (!visible || !imageUri) {
@@ -197,7 +201,7 @@ export default function SeriesListCoverCropModal({
       const nextTotal = base * clamped
       if (prevTotal <= 0) return
       const ratio = nextTotal / prevTotal
-      const cx = viewW / 2
+      const cx = variant === 'home' ? viewW * HOME_SWEEP_VISIBLE_CENTER_X_RATIO : viewW / 2
       const cy = viewH / 2
       const tx = cx - (cx - baseTx) * ratio
       const ty = cy - (cy - baseTy) * ratio

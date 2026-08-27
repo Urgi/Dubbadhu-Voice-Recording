@@ -12,10 +12,10 @@ import {
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as ImageManipulator from 'expo-image-manipulator'
+import { captureRef } from 'react-native-view-shot'
 import Svg, { Path } from 'react-native-svg'
 import {
   scaleHeroSweepPath,
-  HOME_SWEEP_HOLE_MIN_X_RATIO,
   HOME_SWEEP_PANEL_TEXT_WIDTH_RATIO,
   HOME_SWEEP_VISIBLE_CENTER_X_RATIO,
 } from '../lib/homeHeroSweepClipPath'
@@ -30,8 +30,11 @@ const CREAM = '#F3F1E9'
 const MUTED = '#BCC9B6'
 const SPROUT_SOFT = '#8FDD97'
 const INK = '#12240F'
-const MIN_USER_SCALE = 1
-const MAX_USER_SCALE = 4
+/** Allow zooming out well below cover-fit — user can leave empty edges under the panel. */
+const MIN_USER_SCALE = 0.2
+const MAX_USER_SCALE = 5
+/** Keep at least this much of the photo intersecting the viewport so it can’t be lost. */
+const MIN_OVERLAP_PX = 48
 
 export type CoverCropVariant = 'speak' | 'home'
 
@@ -63,19 +66,21 @@ function clampTransform(
   natH: number,
   viewW: number,
   viewH: number,
-  variant: CoverCropVariant,
 ): Transform {
   const scale = Math.min(MAX_USER_SCALE, Math.max(MIN_USER_SCALE, t.scale))
   const base = coverScale(natW, natH, viewW, viewH)
   const total = base * scale
   const imgW = natW * total
   const imgH = natH * total
-  const minTx = Math.min(0, viewW - imgW)
-  const minTy = Math.min(0, viewH - imgH)
-  /** Home: left ~40% is panel — allow shifting photo right so framing matches the curved window. */
-  const maxTx = variant === 'home' ? viewW * HOME_SWEEP_HOLE_MIN_X_RATIO : 0
+  const overlapX = Math.min(MIN_OVERLAP_PX, viewW * 0.25)
+  const overlapY = Math.min(MIN_OVERLAP_PX, viewH * 0.25)
+  // Free pan — only keep some photo overlapping the frame (no cover-fill requirement).
+  const minTx = overlapX - imgW
+  const maxTx = viewW - overlapX
+  const minTy = overlapY - imgH
+  const maxTy = viewH - overlapY
   const tx = Math.max(minTx, Math.min(maxTx, t.tx))
-  const ty = Math.max(minTy, Math.min(0, t.ty))
+  const ty = Math.max(minTy, Math.min(maxTy, t.ty))
   return { scale, tx, ty }
 }
 
@@ -95,12 +100,11 @@ function centeredCoverTransform(
     const visibleCenterX = viewW * HOME_SWEEP_VISIBLE_CENTER_X_RATIO
     tx = visibleCenterX - imgW / 2
   }
-  return clampTransform({ scale: 1, tx, ty }, natW, natH, viewW, viewH, variant)
+  return clampTransform({ scale: 1, tx, ty }, natW, natH, viewW, viewH)
 }
 
 /**
- * Cover cropper whose viewport is the Home continue-card sweep — pan/pinch the
- * photo under a fixed curve instead of a rectangular gold frame.
+ * Cover cropper — pan/pinch freely; save captures the viewport so framing matches preview.
  */
 export default function SeriesListCoverCropModal({
   visible,
@@ -129,6 +133,7 @@ export default function SeriesListCoverCropModal({
   const transformRef = useRef(transform)
   transformRef.current = transform
   const didInit = useRef(false)
+  const captureTargetRef = useRef<View>(null)
 
   const viewSize = useMemo(() => {
     if (slotW <= 0 || slotH <= 0) return { w: 0, h: 0 }
@@ -181,17 +186,10 @@ export default function SeriesListCoverCropModal({
   const applyPan = useCallback(
     (tx: number, ty: number, baseTx: number, baseTy: number, scale: number) => {
       setTransform(
-        clampTransform(
-          { scale, tx: baseTx + tx, ty: baseTy + ty },
-          natW,
-          natH,
-          viewW,
-          viewH,
-          variant,
-        ),
+        clampTransform({ scale, tx: baseTx + tx, ty: baseTy + ty }, natW, natH, viewW, viewH),
       )
     },
-    [natW, natH, viewW, viewH, variant],
+    [natW, natH, viewW, viewH],
   )
 
   const applyPinch = useCallback(
@@ -205,9 +203,7 @@ export default function SeriesListCoverCropModal({
       const cy = viewH / 2
       const tx = cx - (cx - baseTx) * ratio
       const ty = cy - (cy - baseTy) * ratio
-      setTransform(
-        clampTransform({ scale: clamped, tx, ty }, natW, natH, viewW, viewH, variant),
-      )
+      setTransform(clampTransform({ scale: clamped, tx, ty }, natW, natH, viewW, viewH))
     },
     [base, natW, natH, viewW, viewH, variant],
   )
@@ -245,48 +241,32 @@ export default function SeriesListCoverCropModal({
 
   const confirm = useCallback(async () => {
     if (!imageUri || natW <= 0 || natH <= 0 || viewW <= 0 || viewH <= 0) return
-    const s = coverScale(natW, natH, viewW, viewH) * transform.scale
-    if (s <= 0) return
-    let ox = Math.round(-transform.tx / s)
-    let oy = Math.round(-transform.ty / s)
-    let cw = Math.round(viewW / s)
-    let ch = Math.round(viewH / s)
-    ox = Math.max(0, Math.min(ox, natW - 1))
-    oy = Math.max(0, Math.min(oy, natH - 1))
-    cw = Math.max(1, Math.min(cw, natW - ox))
-    ch = Math.max(1, Math.min(ch, natH - oy))
-    // Keep upload aspect: crop then resize to target pixel ratio frame
-    const outWFinal = outW
-    const outHFinal = outH
     setBusy(true)
+    setLoadErr(null)
     try {
+      // Capture the exact viewport (photo + panel bg) so save matches what you framed.
+      // Avoids ImageManipulator crop clamping when the photo is panned under the green side
+      // or zoomed out past cover-fill.
+      const uri = await captureRef(captureTargetRef, {
+        format: 'jpg',
+        quality: 0.92,
+        width: outW,
+        height: outH,
+        result: 'tmpfile',
+      })
+      // Normalize via manipulator so upload always gets a clean JPEG file URI.
       const out = await ImageManipulator.manipulateAsync(
-        imageUri,
-        [
-          { crop: { originX: ox, originY: oy, width: cw, height: ch } },
-          { resize: { width: outWFinal, height: outHFinal } },
-        ],
+        uri,
+        [{ resize: { width: outW, height: outH } }],
         { compress: 0.92, format: ImageManipulator.SaveFormat.JPEG },
       )
       onDone(out.uri)
     } catch {
-      setLoadErr('Could not crop image.')
+      setLoadErr('Could not save cover. Try again.')
     } finally {
       setBusy(false)
     }
-  }, [
-    imageUri,
-    natW,
-    natH,
-    viewW,
-    viewH,
-    transform,
-    aspectWidth,
-    aspectHeight,
-    outW,
-    outH,
-    onDone,
-  ])
+  }, [imageUri, natW, natH, viewW, viewH, outW, outH, onDone])
 
   const ready = natW > 0 && natH > 0 && viewW > 0 && viewH > 0 && !loadErr && !busy
 
@@ -302,8 +282,8 @@ export default function SeriesListCoverCropModal({
           </View>
           <Text style={styles.hint}>
             {isHome
-              ? 'Drag to move · pinch to zoom. The curved window matches the Home continue card — the green side stays covered.'
-              : 'Drag to move · pinch to zoom. Full rectangle is used on the Speak tab locked-series strip.'}
+              ? 'Drag to move · pinch to zoom (zoom out freely). The curved window matches the Home continue card.'
+              : 'Drag to move · pinch to zoom (zoom out freely). Full rectangle is used on the Speak tab locked-series strip.'}
           </Text>
 
           <View
@@ -321,17 +301,25 @@ export default function SeriesListCoverCropModal({
             ) : (
               <GestureDetector gesture={composed}>
                 <View style={[styles.viewport, { width: viewW, height: viewH }]}>
-                  <Image
-                    source={{ uri: imageUri }}
-                    style={{
-                      position: 'absolute',
-                      width: imgW,
-                      height: imgH,
-                      left: transform.tx,
-                      top: transform.ty,
-                    }}
-                    resizeMode="stretch"
-                  />
+                  {/* Capture target: photo only (no chrome) — must match final cover JPEG. */}
+                  <View
+                    ref={captureTargetRef}
+                    collapsable={false}
+                    style={[styles.captureLayer, { width: viewW, height: viewH }]}
+                    pointerEvents="none"
+                  >
+                    <Image
+                      source={{ uri: imageUri }}
+                      style={{
+                        position: 'absolute',
+                        width: imgW,
+                        height: imgH,
+                        left: transform.tx,
+                        top: transform.ty,
+                      }}
+                      resizeMode="stretch"
+                    />
+                  </View>
 
                   {isHome ? (
                     <>
@@ -446,6 +434,11 @@ const styles = StyleSheet.create({
     backgroundColor: PANEL,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(243,241,233,0.12)',
+  },
+  captureLayer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: PANEL,
+    overflow: 'hidden',
   },
   speakFrame: {
     ...StyleSheet.absoluteFillObject,

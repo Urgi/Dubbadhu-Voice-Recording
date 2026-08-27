@@ -4,10 +4,10 @@
  */
 /** Keep in sync with learner heroSweepClipPath.js */
 export const HERO_SWEEP_CLIP_PATH_OBJECT =
-  'M0.399,0 C0.621,0.015 0.32,0.791 1,0.729 L1,0 Z'
+  'M0.394,0 C0.788,0.112 0.326,0.666 1,0.729 L1,0 Z'
 
 /** Left edge of visible photo at top (objectBoundingBox x). */
-export const HOME_SWEEP_HOLE_MIN_X_RATIO = 0.399
+export const HOME_SWEEP_HOLE_MIN_X_RATIO = 0.394
 
 /** Left panel text column — keep in sync with ContinueLessonCard textWidth. */
 export const HOME_SWEEP_PANEL_TEXT_WIDTH_RATIO = 0.52

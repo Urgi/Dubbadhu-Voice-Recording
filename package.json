@@ -52,7 +52,8 @@
     "react-native-safe-area-context": "~5.6.2",
     "react-native-screens": "~4.23.0",
     "react-native-svg": "15.15.3",
-    "react-native-video-trim": "^6.1.0"
+    "react-native-video-trim": "^6.1.0",
+    "react-native-view-shot": "4.0.3"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

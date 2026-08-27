@@ -9,6 +9,10 @@ import {
 } from 'react-native'
 import Svg, { Path } from 'react-native-svg'
 import { scaleHeroSweepPath, HOME_SWEEP_PANEL_TEXT_WIDTH_RATIO } from '../lib/homeHeroSweepClipPath'
+import {
+  HOME_CONTINUE_CARD_ASPECT_HEIGHT,
+  HOME_CONTINUE_CARD_ASPECT_WIDTH,
+} from '../lib/homeHeroCover'
 
 const PANEL = '#16281F'
 const CREAM = '#F3F1E9'
@@ -16,6 +20,8 @@ const GOLD = '#D9A441'
 const SPROUT_SOFT = '#8FDD97'
 const INK = '#12240F'
 const MUTED = '#BCC9B6'
+
+const CARD_ASPECT = HOME_CONTINUE_CARD_ASPECT_WIDTH / HOME_CONTINUE_CARD_ASPECT_HEIGHT
 
 /** Crop rect in the same coordinate space as the source image display (fitted). */
 export type HomeHeroLiveCrop = {
@@ -32,6 +38,7 @@ export type HomeHeroCoverShapePreviewProps = {
   imageUri: string | null
   /** When set, pans/scales the photo so this crop fills the card (live crop UI). */
   liveCrop?: HomeHeroLiveCrop | null
+  /** @deprecated Aspect is locked to the learner continue card (520×304). */
   height?: number
   showChrome?: boolean
   style?: StyleProp<ViewStyle>
@@ -39,15 +46,16 @@ export type HomeHeroCoverShapePreviewProps = {
 
 /**
  * Preview of the learner Home continue card: photo clipped by the bezier sweep.
+ * Aspect matches learner ContinueLessonCard + admin crop output.
  */
 export default function HomeHeroCoverShapePreview({
   imageUri,
   liveCrop,
-  height = 200,
   showChrome = true,
   style,
 }: HomeHeroCoverShapePreviewProps) {
   const [width, setWidth] = useState(320)
+  const height = Math.max(1, Math.round(width / CARD_ASPECT))
   const sweepPath = scaleHeroSweepPath(width, height)
   const titleMax = Math.round(width * HOME_SWEEP_PANEL_TEXT_WIDTH_RATIO)
 
@@ -75,7 +83,7 @@ export default function HomeHeroCoverShapePreview({
 
   return (
     <View
-      style={[styles.card, { height }, style]}
+      style={[styles.card, { aspectRatio: CARD_ASPECT }, style]}
       onLayout={(e) => {
         const w = Math.ceil(e.nativeEvent.layout.width)
         if (w > 0 && w !== width) setWidth(w)
@@ -85,7 +93,7 @@ export default function HomeHeroCoverShapePreview({
         <Image
           source={{ uri: imageUri }}
           style={[styles.photo, photoStyle]}
-          resizeMode="cover"
+          resizeMode="stretch"
         />
       ) : (
         <View style={[styles.photoFallback, { width, height }]} />
@@ -125,6 +133,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(243,241,233,0.12)',
     position: 'relative',
+    width: '100%',
   },
   photo: {
     position: 'absolute',

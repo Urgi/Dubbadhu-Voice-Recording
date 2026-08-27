@@ -1503,7 +1503,6 @@ export default function LessonConfigSeriesScreen({ navigation, route }: Props) {
           </Text>
           <HomeHeroCoverShapePreview
             imageUri={homePreviewUri}
-            height={196}
             style={styles.coverHomePreview}
           />
           <View style={styles.coverActionsRow}>

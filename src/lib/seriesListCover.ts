@@ -12,11 +12,12 @@ function base64ToUint8Array(base64: string): Uint8Array {
 /**
  * Speak tab locked-series strip — keep `DISPLAY_SQUASH` in sync with Dubbadhu
  * `features/LessonTab/seriesCoverAssets.js` (`SERIES_LIST_COVER_DISPLAY_SQUASH`).
+ * ~1.93 → display aspect ≈ 2.55 so ~2 Coming Up cards fit under Current.
  */
 export const SERIES_LIST_COVER_ASPECT_WIDTH = 961
 export const SERIES_LIST_COVER_ASPECT_HEIGHT = 726
 
-export const SERIES_LIST_COVER_DISPLAY_SQUASH = 1.1
+export const SERIES_LIST_COVER_DISPLAY_SQUASH = 1.93
 
 /** Width÷height of the learner strip + admin preview (not the legacy bundled 961∶726 PNG ratio alone). */
 export const SERIES_LIST_COVER_DISPLAY_ASPECT_RATIO =

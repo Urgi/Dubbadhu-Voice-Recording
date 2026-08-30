@@ -11,6 +11,7 @@ import AdminHubSectionScreen from './src/screens/AdminHubSectionScreen'
 import AdminAnalyticsScreen from './src/screens/AdminAnalyticsScreen'
 import AdminFreeAccessScreen from './src/screens/AdminFreeAccessScreen'
 import AdminFidelBetaScreen from './src/screens/AdminFidelBetaScreen'
+import AdminSpeakQaScreen from './src/screens/AdminSpeakQaScreen'
 import AdminUsersScreen from './src/screens/AdminUsersScreen'
 import AdminUserTimelineScreen from './src/screens/AdminUserTimelineScreen'
 import AdminPracticeSuggestionsScreen from './src/screens/AdminPracticeSuggestionsScreen'
@@ -102,6 +103,11 @@ function AppStack() {
           name="AdminFidelBeta"
           component={AdminFidelBetaScreen}
           options={{ title: 'Amharic beta' }}
+        />
+        <Stack.Screen
+          name="AdminSpeakQa"
+          component={AdminSpeakQaScreen}
+          options={{ title: 'Speak QA' }}
         />
         <Stack.Screen
           name="AdminPracticeSuggestions"

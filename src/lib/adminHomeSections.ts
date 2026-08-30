@@ -23,6 +23,7 @@ export type HubTileConfig = {
     | 'AdminAnalytics'
     | 'AdminFreeAccess'
     | 'AdminFidelBeta'
+    | 'AdminSpeakQa'
     | 'LessonConfig'
     | 'AdminSeriesList'
     | 'AdminVocabIllustrationReview'
@@ -176,6 +177,12 @@ export function buildSectionTiles(
         lines: ['Fidel Continue allowlist · add/remove by phone'],
         hint: 'Grant Amharic Fidel without a new learner build',
         route: 'AdminFidelBeta',
+      },
+      {
+        title: 'Speak QA',
+        lines: ['complete + testing Speak catalog · add/remove by phone'],
+        hint: 'Employees see unpublished series ready for QA',
+        route: 'AdminSpeakQa',
       },
     ]
   }

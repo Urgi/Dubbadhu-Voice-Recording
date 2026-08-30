@@ -52,6 +52,8 @@ export type RootStackParamList = {
   AdminFreeAccess: undefined
   /** Amharic / Fidel beta allowlist (phone search → grant/revoke). */
   AdminFidelBeta: undefined
+  /** Speak catalog QA allowlist — see complete + testing series (phone search). */
+  AdminSpeakQa: undefined
   /** Curate Practice tab “From the community” picks per WOTD day (max 7). */
   AdminPracticeSuggestions: undefined
   /** Lesson discussion post reports from the learner app. */

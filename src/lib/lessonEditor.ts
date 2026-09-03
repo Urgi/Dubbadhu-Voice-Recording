@@ -3,6 +3,12 @@
  * Screen types align with docs/admin-lesson-editing-types.ts / Dubbadhu registry.
  */
 
+import {
+  dialogueSidesFromTurns,
+  dialogueTurnsFromZippedSides,
+  readDialogueTurnsForEdit,
+} from './dialogueTurns'
+
 export type ScreenType =
   | 'intro'
   | 'firstLook'
@@ -401,7 +407,7 @@ export function audioExposureWordSummaryLines(content: Record<string, unknown>):
   return lines.length ? lines : ['—']
 }
 
-/** One side of a two-person dialogue (Person 1 speaks first; lines alternate with Person 2). */
+/** One side of a two-person dialogue (names + per-turn columns; order lives in `turns`). */
 export function mapDialogueSide(input: Record<string, unknown> | undefined): Record<string, unknown> {
   const name = String(input?.name ?? '').trim()
   const linesSrc = input?.lines
@@ -445,10 +451,34 @@ export function normalizeDialogueContent(content: Record<string, unknown>): Reco
     person1 = mapDialogueSide(undefined)
     person2 = mapDialogueSide(undefined)
   }
+  const fromTurns = Array.isArray(dd.turns)
+    ? readDialogueTurnsForEdit(dd.turns)
+    : null
+  const turns =
+    fromTurns != null
+      ? fromTurns
+      : dialogueTurnsFromZippedSides(
+          person1.lines,
+          person2.lines,
+          person1.translations,
+          person2.translations,
+        )
+  const columns = dialogueSidesFromTurns(turns)
+  person1 = {
+    ...person1,
+    lines: columns.lines1,
+    translations: columns.trans1,
+  }
+  person2 = {
+    ...person2,
+    lines: columns.lines2,
+    translations: columns.trans2,
+  }
   return {
     dialogueData: {
       person1,
       person2,
+      turns,
     },
     // Keep optional dialogue playback clip bounds (not part of speaker data).
     ...(content.fromSecond !== undefined ? { fromSecond: content.fromSecond } : {}),
@@ -1009,9 +1039,23 @@ export function sanitizeScreenContentForPersistence(
           x != null && typeof x === 'object' && !Array.isArray(x)
             ? pickAllowedKeys(x as Record<string, unknown>, sideKeys)
             : { name: '', lines: [''], translations: [] as string[] }
+        const turnsRaw = Array.isArray(md.turns) ? md.turns : []
+        const turns = turnsRaw
+          .filter((row): row is Record<string, unknown> => row != null && typeof row === 'object' && !Array.isArray(row))
+          .map((row) => {
+            const speakerRaw = Number(row.speaker)
+            const speaker = speakerRaw === 1 || speakerRaw === 2 ? speakerRaw : 1
+            return {
+              speaker,
+              text: String(row.text ?? '').trim(),
+              translation: String(row.translation ?? '').trim(),
+            }
+          })
+          .filter((row) => row.text)
         base.dialogueData = {
           person1: shape(md.person1),
           person2: shape(md.person2),
+          turns,
         }
       }
       const fromSec = Number(base.fromSecond)

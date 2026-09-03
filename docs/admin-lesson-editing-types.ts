@@ -74,16 +74,26 @@ export type AudioExposureContent = {
   [k: string]: unknown;
 };
 
-/** One speaker in a two-person dialogue (Person 1 speaks first; lines alternate with Person 2). */
+/** One speaker in a two-person dialogue. Order is `dialogueData.turns`, not line index. */
 export type DialogueSide = {
   name: string;
   lines: string[];
   translations?: Array<string | null>;
   [k: string]: unknown;
 };
-/** Exactly two speakers (`person1`, `person2`). No additional speaker rows. */
+export type DialogueTurn = {
+  speaker: 1 | 2;
+  text: string;
+  translation: string;
+};
+/** Two speakers (`person1`, `person2`) plus ordered `turns` (same speaker may repeat). */
 export type DialogueContent = {
-  dialogueData: { person1: DialogueSide; person2: DialogueSide; [k: string]: unknown };
+  dialogueData: {
+    person1: DialogueSide;
+    person2: DialogueSide;
+    turns?: DialogueTurn[];
+    [k: string]: unknown;
+  };
 };
 
 export type MatchPair = { left: string; right: string; [k: string]: unknown };

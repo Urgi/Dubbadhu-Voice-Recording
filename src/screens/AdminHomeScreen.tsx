@@ -1,11 +1,12 @@
 /** Admin home — control center. */
 import { useFocusEffect } from '@react-navigation/native'
-import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { StackScreenProps } from '@react-navigation/stack'
 import { ADMIN_ACCENT_GOLD } from '../components/lesson-config/AdminLessonConfigChrome'
 import SeriesPipelineBlock from '../components/SeriesPipelineBlock'
 import { useAuth } from '../context/AuthContext'
+import { registerAdminPushToken } from '../lib/adminPushRegistration'
 import {
   ADMIN_HOME_SECTIONS,
   sectionBadge,
@@ -298,6 +299,10 @@ export default function AdminHomeScreen({ navigation }: Props) {
     setFunnel(funnelRes.data)
     setSeriesPipeline(seriesPipelineRes.data)
     setError(errs.join('\n'))
+  }, [])
+
+  useEffect(() => {
+    void registerAdminPushToken()
   }, [])
 
   useFocusEffect(

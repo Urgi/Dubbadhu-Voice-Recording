@@ -37,7 +37,7 @@ import VoiceActorAwaitingApprovalScreen from './src/screens/VoiceActorAwaitingAp
 import QubeeLettersHubScreen from './src/screens/QubeeLettersHubScreen'
 import FidelRecorderHomeScreen from './src/screens/FidelRecorderHomeScreen'
 import FidelLettersHubScreen from './src/screens/FidelLettersHubScreen'
-import { AuthProvider } from './src/context/AuthContext'
+import { AuthProvider, useAuth } from './src/context/AuthContext'
 import type { RootStackParamList } from './src/types'
 
 /** Lazy: load expo-av only when needed — avoids ExponentAV / runtime init races on iOS. */
@@ -47,9 +47,30 @@ const ReviewScreen = lazy(() => import('./src/screens/ReviewScreen'))
 const Stack = createStackNavigator<RootStackParamList>()
 
 function AppStack() {
+  const { role, isLoading } = useAuth()
   const insets = useSafeAreaInsets()
   const statusBarHeight =
     Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : Math.max(insets.top, 0)
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0a0a0a' }}>
+        <ActivityIndicator color="#fff" />
+      </View>
+    )
+  }
+
+  const initialRouteName =
+    role === 'admin'
+      ? 'AdminHome'
+      : role === 'voice'
+        ? 'VoiceActorHome'
+        : role === 'professor'
+          ? 'ProfessorHome'
+          : role === 'fidel'
+            ? 'FidelRecorderHome'
+            : 'Login'
+
   return (
     <Suspense
       fallback={
@@ -59,7 +80,7 @@ function AppStack() {
       }
     >
       <Stack.Navigator
-        initialRouteName="Login"
+        initialRouteName={initialRouteName}
         screenOptions={{
           headerStyle: { backgroundColor: '#0a0a0a' },
           headerTintColor: '#ffffff',

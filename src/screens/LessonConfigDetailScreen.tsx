@@ -22,6 +22,7 @@ import {
 } from '../components/lesson-config/AdminLessonConfigChrome'
 import { LessonScreenEditModal } from '../components/lesson-editor/LessonScreenEditModal'
 import { useAuth } from '../context/AuthContext'
+import { refreshSeriesProgressReminder } from '../lib/seriesProgressReminder'
 import {
   type LessonContentDraft,
   type LessonScreen,
@@ -710,6 +711,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
       }
       clearUnsaved()
       setSavedFlash(true)
+      void refreshSeriesProgressReminder({ seriesId: row.series_id })
       if (role === 'admin' && isLessonStructureFrozen(seriesStatus)) {
         try {
           await syncLiveLessonWordTranslations(content, supabase)
@@ -1065,6 +1067,7 @@ export default function LessonConfigDetailScreen({ navigation, route }: Props) {
   const applyScreenEdit = (idx: number, s: LessonScreen) => {
     if (!draft) return
     markUnsaved()
+    void refreshSeriesProgressReminder({ seriesId: row?.series_id })
     const mergedScreens = syncCelebrateScreensWithAudioExposure(
       draft.screens.map((cur, i) => (i === idx ? s : cur)),
     )

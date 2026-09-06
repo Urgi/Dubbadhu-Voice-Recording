@@ -38,7 +38,6 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-notifications",
       [
         "expo-build-properties",
         {
@@ -53,7 +52,8 @@
         {
           "microphonePermission": "Microphone access is needed to record audio for the language learning app."
         }
-      ]
+      ],
+      "./plugins/withNoPushEntitlements.js"
     ],
     "extra": {
       "EXPO_PUBLIC_SUPABASE_URL": "",
